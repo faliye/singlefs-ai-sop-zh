@@ -602,6 +602,47 @@ else fails=$((fails+1)); bad "install/落后时版本戳被刷成了 9.9.9"
   howto "install.sh 在 STALE 非空时必须直接退出，不许走到写版本戳那一步。"
 fi
 
+# 接管清单：项目自己改过的那几份不该算「落后」——kb 骨架本来就是给项目改的。
+# 少了它，任何一个动过自己 kb 的项目，装完第一次之后版本戳就再也刷不动
+# （实测于 singlefs：12 份「落后」全是项目自己改的，门禁阶段 0 因此长红）。
+mkdir -p "$r2/.claude"
+printf '.claude/kb/decisions.md  # 决策正文归项目，模板只给了格式\n' > "$r2/.claude/install-owned"
+run_scripted "install/接管的那份不算落后" 0 "按 .claude/install-owned 不比对" -- \
+  bash "$pkg2/install.sh" "$r2"
+cases=$((cases+1))
+if [[ "$(cat "$r2/.singlefs-ai-sop-version")" == "9.9.9" ]]; then pass=$((pass+1))
+  [[ -n "${SELFTEST_VERBOSE:-}" ]] && ok "install/接管之后版本戳刷得动了"
+else fails=$((fails+1)); bad "install/接管之后版本戳仍然没刷"
+  howto "接管清单的用处就是让这几份不再算落后。它没生效，这条升级路就还是堵死的。"
+fi
+
+# 清单本身坏了不许放行：一份读不准的接管清单，等于把「落后就不刷戳」那道守卫悄悄关掉。
+printf '.claude/kb/decisions.md\n' > "$r2/.claude/install-owned"
+run_scripted "install/接管清单没写理由要红" 1 "这一条没写理由" -- bash "$pkg2/install.sh" "$r2"
+printf 'research/nowhere.md  # 写了也没用\n' > "$r2/.claude/install-owned"
+run_scripted "install/接管清单写了不铺的路径要红" 1 "install.sh 根本不铺" -- bash "$pkg2/install.sh" "$r2"
+rm -f "$r2/.claude/install-owned"
+
+# 清单坏了必须**挡住**，不只是报一句。
+# 上面两个样本里，就算不挡也照样退 1——因为同时还有内容落后，是那条路让它红的。
+# 变异测试实测：把「清单坏了就 exit 1」整段删掉，那两个样本一起全绿。
+# 所以要一个**没有别的落后**的场景：少了这道拦截，install.sh 会带着一份
+# 读不准的清单把版本戳照刷不误（复核实测）。
+pkg3="$tmpd/inst-own"; cp -a "$SCRIPTS/.." "$pkg3"
+r3="$tmpd/inst-own-proj"; mkdir -p "$r3"
+bash "$pkg3/install.sh" "$r3" >/dev/null 2>&1 || true
+printf '9.9.9\n' > "$pkg3/VERSION"
+mkdir -p "$r3/.claude"
+printf '.claude/kb/decisions.md\n' > "$r3/.claude/install-owned"
+run_scripted "install/清单坏了要挡住（此时没有别的落后）" 1 "接管清单有 1 处不合规" -- \
+  bash "$pkg3/install.sh" "$r3"
+cases=$((cases+1))
+if [[ "$(cat "$r3/.singlefs-ai-sop-version")" != "9.9.9" ]]; then pass=$((pass+1))
+  [[ -n "${SELFTEST_VERBOSE:-}" ]] && ok "install/清单坏了时版本戳确实没动"
+else fails=$((fails+1)); bad "install/清单坏了，版本戳还是被刷成了 9.9.9"
+  howto "接管清单读不准的时候不许放行——那等于把「内容落后就不刷戳」这道守卫悄悄关掉。"
+fi
+
 # ════ lib.sh 的环境守卫（此前零覆盖）═════════════════════
 # 两道守卫都是「判定结果不许随环境变」的前提，坏了不会报错，只会悄悄改判。
 head1 "门禁自检：环境守卫的判别力"

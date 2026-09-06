@@ -22,6 +22,43 @@ VER="$(cat "$PKG/VERSION")"
 head1 "安装 $(basename "$PKG") $VER → $ROOT"
 
 created=0; skipped=0; STALE=()
+SEEDED=(); OWNED_HIT=(); ownfails=0
+declare -A OWNED=()
+
+# ── 项目接管的文件：不再拿它们跟上游模板比 ────────────────
+# `put` 铺下去的 kb 骨架、skill 桩、litmus 是**给项目改的**——kb 尤其如此，
+# 项目不改它才不正常。而 STALE 的判据只是「与上游不同」，分不出
+# 「项目接管了这份」和「项目落后于上游」。
+# 于是任何一个动过自己 kb 的项目，装完第一次之后版本戳就再也刷不动了
+# （实测于 singlefs：12 份全是项目自己改的，版本戳因此卡在旧版，门禁阶段 0 长红）。
+#
+# 所以让项目把接管的那几份**显式写出来**：$ROOT/.claude/install-owned，
+# 一行一条，`<相对路径>  # 为什么`。理由不许省——接管一份文件的代价是
+# **此后上游对它的改动都不会再送到**，写理由的时候要正面对上这一点。
+# 清单一律报进输出：静悄悄少比几份，和这道守卫没实现长得一模一样。
+OWNFILE="$ROOT/.claude/install-owned"
+if [[ -f "$OWNFILE" ]]; then
+  ownline=0
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    ownline=$((ownline+1))
+    [[ -z "${line//[[:space:]]/}" || "${line#"${line%%[![:space:]]*}"}" == \#* ]] && continue
+    if [[ "$line" != *\#* ]]; then
+      bad ".claude/install-owned:$ownline  这一条没写理由：$line"
+      howto "格式： .claude/kb/INDEX.md  # 索引由项目自己维护，模板只是起手" \
+            "理由不许省：接管一份文件之后，上游对它的改动就再也不会送到你这儿了。"
+      ownfails=$((ownfails+1)); continue
+    fi
+    orel="${line%%#*}"; owhy="${line#*#}"
+    orel="${orel#"${orel%%[![:space:]]*}"}"; orel="${orel%"${orel##*[![:space:]]}"}"
+    owhy="${owhy#"${owhy%%[![:space:]]*}"}"; owhy="${owhy%"${owhy##*[![:space:]]}"}"
+    if [[ -z "$orel" || -z "$owhy" ]]; then
+      bad ".claude/install-owned:$ownline  路径或理由是空的：$line"
+      howto "一行一条，形如： .claude/kb/decisions.md  # 决策正文归项目，模板只给了格式"
+      ownfails=$((ownfails+1)); continue
+    fi
+    OWNED["$orel"]="$owhy"
+  done < "$OWNFILE"
+fi
 
 # 溯源标记（generated-from）记的是**这份译文译自哪个版本的源文**，是分发层的账。
 # 抄进使用者的项目就成了一条永远不会更新的陈旧标注，而且贴在一份他马上要动手改的
@@ -33,6 +70,7 @@ strip_stamp() {
 put() { # put <目标相对路径> <内容来源:file|stdin>
   local rel="$1" src="${2:-}"
   local dst="$ROOT/$rel"
+  SEEDED+=("$rel")
   # 先把「应该长什么样」算出来。桩是 heredoc 生成的（$src 为空），
   # 只比对有 $src 的那些，桩里的 description 落后了照样查不出来。
   local want; want="$(mktemp)"
@@ -44,6 +82,8 @@ put() { # put <目标相对路径> <内容来源:file|stdin>
     # ——此刻它在说谎（对抗测试实测，gate 退出码 0）。
     if diff -q "$want" "$dst" >/dev/null 2>&1; then
       warn "已存在，跳过  $rel"
+    elif [[ -n "${OWNED[$rel]:-}" ]]; then
+      warn "已接管，不比对  $rel"; OWNED_HIT+=("$rel")
     else
       warn "已存在但与上游不同  $rel"; STALE+=("$rel")
     fi
@@ -131,6 +171,33 @@ description: $(sed -n 's/^description: //p' "$d/SKILL.md" | head -1)
 **不要把正文抄到这里。** 正文只该有一处，抄一份就多出第二处，两处早晚说不同的话。
 STUB
 done
+
+# 4b. 接管清单的校验：只能写 install.sh 真的会铺的那些路径。
+# 写别的路径不会有任何作用，而清单看起来还是「已经接管了」——
+# 不起作用的条目比没有条目更糟，它让人以为那份文件已经被豁免了。
+for orel in "${!OWNED[@]}"; do
+  hit=0
+  for srel in "${SEEDED[@]}"; do [[ "$srel" == "$orel" ]] && { hit=1; break; }; done
+  if [[ $hit -eq 0 ]]; then
+    bad ".claude/install-owned  这条路径 install.sh 根本不铺，写了也没用：$orel"
+    howto "只能写 install.sh 会铺下去的那些：CLAUDE.md、.claude/kb/*.md、" \
+          ".claude/skills/*/SKILL.md、.claude/agents/*.md、litmus/*.litmus、.claude/scripts/*.sh。" \
+          "路径拼错就改对；那份文件已经不铺了，就把这一行删掉。"
+    ownfails=$((ownfails+1))
+  fi
+done
+if [[ $ownfails -gt 0 ]]; then
+  say ""
+  bad "接管清单有 $ownfails 处不合规，版本戳**没有**刷新"
+  howto "先把 .claude/install-owned 改对再重跑。清单坏了的时候不许放行——" \
+        "一份读不准的接管清单，等于把「内容落后就不刷戳」这道守卫悄悄关掉了。"
+  exit 1
+fi
+if [[ ${#OWNED_HIT[@]} -gt 0 ]]; then
+  say ""
+  warn "按 .claude/install-owned 不比对 ${#OWNED_HIT[@]} 份——项目已接管，上游对它们的改动不会再送到："
+  for orel in "${OWNED_HIT[@]}"; do say "        $orel  —— ${OWNED[$orel]}"; done
+fi
 
 # 5. 版本戳。**有文件落后于上游时不刷**——刷了就等于替项目声明「已经是新版了」，
 # 而它的 skill / 骨架还是旧的。版本戳是项目唯一的「规矩变了」信号，不许让它说谎。
