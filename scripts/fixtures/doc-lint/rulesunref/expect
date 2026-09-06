@@ -1,0 +1,2 @@
+exit=1
+want=这些规则文件存在，但 CLAUDE.md 没有 @ 引用：a.md

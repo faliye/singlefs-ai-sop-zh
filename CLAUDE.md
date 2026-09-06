@@ -35,6 +35,7 @@
 @rules/test-discipline.md
 @rules/evidence-discipline.md
 @rules/verify-before-claiming.md
+@rules/pushback-discipline.md
 @rules/command-safety.md
 @rules/writing-economy.md
 @rules/writing-style.md

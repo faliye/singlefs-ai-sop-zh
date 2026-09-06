@@ -1,0 +1,2 @@
+exit=1
+want=CLAUDE.md 引用了不存在的规则：b.md

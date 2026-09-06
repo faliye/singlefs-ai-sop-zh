@@ -19,6 +19,9 @@
 #   I. 所有给人读的 .md 不许出现翻译腔 / 古风腔 / 过度解释的固定构式
 #      （rules/writing-style.md；同 A、D，只在有词表的语言上跑）
 #   J. $ROOT/.claude/doc-lint-exclude 里的每条排除都要带理由、指向真实目录、且真的有东西被排除
+#   K. rules/*.md 与 CLAUDE.md 里的 @rules/ 引用必须逐项相等——没被引用的规则不进上下文，等于没写
+#   L. .claude/warnings/ 下的警告记录：文件名是 YYYY-MM-DD.md，每个 ## 小节四项齐全
+#      （rules/pushback-discipline.md）
 #
 # 门禁自己的样本（$ROOT/scripts/fixtures/）不扫：那些文件是**故意写坏的**，
 # 排除写成相对本次 ROOT 的路径——selftest 把某个样本目录当 ROOT 跑时，这个前缀不匹配，
@@ -77,11 +80,18 @@ DOC_LANG="$PKG_LANG"
 if [[ -n "${DOC_LINT_LANG:-}" ]]; then DOC_LANG="$DOC_LINT_LANG"; LANG_FORCED=1; fi
 [[ -n "$DOC_LANG" ]] || DOC_LANG=zh
 
+# 警告记录（.claude/warnings/<日期>.md）的四个项名同样是语言相关的字面量，
+# 与 HIST_HEAD 一样按语言取。这是**结构型**判据，不是词表——它认的是固定的项名，
+# 不是靠字形黑名单猜语义，所以三种语言都跑得了，不进 WORDLIST 那一档。
 case "$DOC_LANG" in
-  zh) HIST_HEAD='## 历史版本' ;;
-  en) HIST_HEAD='## Revision history' ;;
-  ja) HIST_HEAD='## 改訂履歴' ;;
-  *)  HIST_HEAD='## 历史版本' ;;
+  zh) HIST_HEAD='## 历史版本'
+      W_ITEMS=('**提议**' '**异议**' '**已知风险**' '**结果**') ;;
+  en) HIST_HEAD='## Revision history'
+      W_ITEMS=('**Proposal**' '**Objection**' '**Known risk**' '**Outcome**') ;;
+  ja) HIST_HEAD='## 改訂履歴'
+      W_ITEMS=('**提案**' '**異議**' '**既知のリスク**' '**結末**') ;;
+  *)  HIST_HEAD='## 历史版本'
+      W_ITEMS=('**提议**' '**异议**' '**已知风险**' '**结果**') ;;
 esac
 
 # 词表型检查（历史陈述 A、上下文指代与自指 D）只有中文词表。
@@ -774,6 +784,90 @@ if [[ -n "$kb_files" ]]; then
   done <<< "$kb_files"
 fi
 
+# ── K. 规则清单：rules/ 与 CLAUDE.md 的 @ 引用必须逐项相等 ──
+# 没被 @ 引用的规则**不会被读进上下文**，等于没写；而它躺在 rules/ 里，
+# 看起来和生效的规则一模一样。反过来，引用了不存在的文件同样无声——
+# 那一行只是不展开，CLAUDE.md 读起来照样完整。
+# 只管仓根这一层的 rules/。项目本地的 .claude/rules/ 是项目自己的事，
+# 由项目自己的门禁阶段管（判据一样，但那批文件不归上游）。
+metafails=0
+if [[ -f "$ROOT/CLAUDE.md" && -d "$ROOT/rules" ]]; then
+  rules_disk="$(find "$ROOT/rules" -maxdepth 1 -name '*.md' -printf '%f\n' | sort)"
+  rules_ref="$(grep -oE '@rules/[A-Za-z0-9._-]+\.md' "$ROOT/CLAUDE.md" | sed 's|.*/||' | sort -u || true)"
+  rules_miss="$(comm -23 <(printf '%s\n' "$rules_disk" | grep -v '^$' || true) \
+                         <(printf '%s\n' "$rules_ref"  | grep -v '^$' || true))"
+  rules_extra="$(comm -13 <(printf '%s\n' "$rules_disk" | grep -v '^$' || true) \
+                          <(printf '%s\n' "$rules_ref"  | grep -v '^$' || true))"
+  if [[ -n "$rules_miss" ]]; then
+    bad "这些规则文件存在，但 CLAUDE.md 没有 @ 引用：$(printf '%s' "$rules_miss" | tr '\n' ' ')"
+    howto "在 CLAUDE.md 的规则清单里补一行 @rules/<文件名>。" \
+          "没被引用的规则不会被读进上下文——它躺在 rules/ 里，看起来却和生效的规则一模一样。"
+    metafails=$((metafails+1))
+  fi
+  if [[ -n "$rules_extra" ]]; then
+    bad "CLAUDE.md 引用了不存在的规则：$(printf '%s' "$rules_extra" | tr '\n' ' ')"
+    howto "把这几行删掉，或者把文件补上。引用不存在的文件不会报错，那一行只是不展开——" \
+          "CLAUDE.md 读起来照样完整，而那条规矩根本没进来。"
+    metafails=$((metafails+1))
+  fi
+fi
+
+# ── L. 警告记录：.claude/warnings/<日期>.md ────────────────
+# 反对过、对方仍然坚持，那条警告要留下来（rules/pushback-discipline.md）。
+# 门禁看不见对话，只能查写下来的这一半：文件名按日期、每个小节四项齐全。
+# 只写一半的记录，三个月后照样没法重新判——那时想问的正是「当初的依据是什么」。
+wdir="$ROOT/.claude/warnings"
+if [[ -d "$wdir" ]]; then
+  while IFS= read -r wf; do
+    [[ -n "$wf" ]] || continue
+    wrel="${wf#"$ROOT"/}"; wb="$(basename "$wf")"
+    if [[ ! "$wb" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}\.md$ ]]; then
+      bad "$wrel  警告记录的文件名必须是 YYYY-MM-DD.md"
+      howto "按日期建文件，一天一个，例： .claude/warnings/2026-09-06.md" \
+            "分日期是为了不用回头改旧文件——警告写下就是当时的记录" \
+            "（rules/evidence-discipline.md：原样保存的证据不许事后改）。"
+      metafails=$((metafails+1)); continue
+    fi
+    whits="$(awk -v P="${W_ITEMS[0]}" -v O="${W_ITEMS[1]}" -v R="${W_ITEMS[2]}" -v C="${W_ITEMS[3]}" '
+      function emit(   miss) {
+        nsec++; miss = ""
+        if (!p) miss = miss " " P
+        if (!o) miss = miss " " O
+        if (!r) miss = miss " " R
+        if (!c) miss = miss " " C
+        if (miss != "") printf "%d\t%s\t%s\n", ln, sec, miss
+      }
+      /^[ \t]*```/ { fence = !fence; next }
+      fence { next }
+      /^## / { if (sec != "") emit(); sec = substr($0, 4); p=o=r=c=0; ln=FNR; next }
+      sec != "" {
+        if (index($0, P)) p=1
+        if (index($0, O)) o=1
+        if (index($0, R)) r=1
+        if (index($0, C)) c=1
+      }
+      END { if (sec != "") emit(); if (nsec == 0) print "0\t\tNOSEC" }
+    ' "$wf")"
+    [[ -z "$whits" ]] && continue
+    while IFS= read -r wh; do
+      wln="$(printf '%s' "$wh" | cut -f1)"; wsec="$(printf '%s' "$wh" | cut -f2)"
+      wmiss="$(printf '%s' "$wh" | cut -f3)"
+      if [[ "$wmiss" == NOSEC ]]; then
+        bad "$wrel  里一个 ## 小节都没有，这份警告记录是空的"
+        howto "一次警告一个 ## 小节，四项都要有：${W_ITEMS[0]} ${W_ITEMS[1]} ${W_ITEMS[2]} ${W_ITEMS[3]}" \
+              "格式见 rules/pushback-discipline.md。建了个空文件比没建更糟：" \
+              "它看起来像「记过了」。"
+      else
+        bad "$wrel:$wln  「$wsec」缺这几项：$wmiss"
+        howto "四项都要有：${W_ITEMS[0]} ${W_ITEMS[1]} ${W_ITEMS[2]} ${W_ITEMS[3]}" \
+              "缺哪一项就少哪一半：没有异议不知道当初反对的是什么，" \
+              "没有已知风险不知道该盯什么现象，没有结果不知道最后到底怎么办了。"
+      fi
+      metafails=$((metafails+1))
+    done <<< "$whits"
+  done < <(find "$wdir" -maxdepth 1 -name '*.md' | sort)
+fi
+
 say ""
 if [[ $WORDLIST -ne 1 ]]; then
   warn "本语言（$DOC_LANG）没有词表，以下检查**未实现**，不是通过："
@@ -784,8 +878,8 @@ if [[ $WORDLIST -ne 1 ]]; then
         "并在 scripts/fixtures/doc-lint/ 下配该语言的红样本与踩边界的绿样本。" \
         "在那之前这两类违规不会被拦——绿灯不代表这两条验过了。"
 fi
-if [[ $fails -gt 0 || $reffails -gt 0 || $numfails -gt 0 || $exfails -gt 0 ]]; then
-  bad "文档铁律检查失败：$fails 个文件违规、$reffails 处编号引用无定义、$numfails 处编号定义/引用不合规、$exfails 条排除项不合规（检查 $checked，跳过 $skipped）"   # gate-lint:summary
+if [[ $fails -gt 0 || $reffails -gt 0 || $numfails -gt 0 || $exfails -gt 0 || $metafails -gt 0 ]]; then
+  bad "文档铁律检查失败：$fails 个文件违规、$reffails 处编号引用无定义、$numfails 处编号定义/引用不合规、$exfails 条排除项不合规、$metafails 处规则清单/警告记录不合规（检查 $checked，跳过 $skipped）"   # gate-lint:summary
   exit 1
 fi
 warn "上下文指代与自指称呼这两条是**启发式**：只认句首或标点之后的常见说法，"

@@ -66,6 +66,15 @@ for f in "$PKG"/templates/kb/*.md; do
   put ".claude/kb/$(basename "$f")" "$f"
 done
 
+# 2b. 警告记录的落点（rules/pushback-discipline.md）
+# 只铺一个指路的占位文件，不铺格式说明——格式只许有一处，在那条规则里
+# （rules/kb-discipline.md 第 4 条：同一个事实只许有一处权威记录）。
+put ".claude/warnings/.keep" <<'KEEP'
+# 警告记录放这里，按日期一天一个 YYYY-MM-DD.md。
+# 反对过而对方仍然坚持时，那条警告写进当天这份文件；别处一律链过来，不抄第二份。
+# 格式与判据只有一处：.claude/singlefs-ai-sop/rules/pushback-discipline.md
+KEEP
+
 # 3. scripts 包装（不写逻辑，只 exec 共享脚本）
 for s in env check gate doc-lint lkmm gate-lint shell-lint; do
   put ".claude/scripts/$s.sh" <<WRAP
