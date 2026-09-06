@@ -18,6 +18,7 @@
 #   H. kb/*.md 里编号形状的记号反复出现（≥3 次）却一处登记位都没有（同上）
 #   I. 所有给人读的 .md 不许出现翻译腔 / 古风腔 / 过度解释的固定构式
 #      （rules/writing-style.md；同 A、D，只在有词表的语言上跑）
+#   J. $ROOT/.claude/doc-lint-exclude 里的每条排除都要带理由、指向真实目录、且真的有东西被排除
 #
 # 门禁自己的样本（$ROOT/scripts/fixtures/）不扫：那些文件是**故意写坏的**，
 # 排除写成相对本次 ROOT 的路径——selftest 把某个样本目录当 ROOT 跑时，这个前缀不匹配，
@@ -33,6 +34,10 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 ROOT="${1:-$(project_root)}"
 [[ -d "$ROOT" ]] || die "找不到项目根：$ROOT" \
   "把项目根作为第一个参数传进来： bash scripts/doc-lint.sh <项目根>"
+# 末尾斜杠要削掉。selftest 传进来的样本目录带 `/`，于是下面 EXCL 里的
+# `$ROOT//<目录>/*` 一个文件都匹配不上——排除项静默失效，而输出里看不出区别
+# （实测：新加的排除样本在直接跑时绿、在 selftest 里红，差别只有这个斜杠）。
+if [[ "$ROOT" != "/" ]]; then ROOT="${ROOT%/}"; fi
 
 tmpd="$(mktemp -d)"; trap 'rm -rf "$tmpd"' EXIT
 
@@ -58,7 +63,18 @@ esac
 # 所以判据按语言取。语言从包的 I18N 的 this= 读；读不到按参照语言（zh）算。
 # **没有词表的语言，对应的检查显式报「未实现」，不静默通过**
 # （rules/show-me-test.md：门禁不许假装通过）。
-DOC_LANG="$(sed -n 's/^this=//p' "$(dirname "${BASH_SOURCE[0]}")/../I18N" 2>/dev/null | head -1)"
+#
+# 判据取哪种语言，另有一处例外：**门禁自己的样本是中文写的**，而它们随 scripts/
+# 逐字节复制进每个语言仓。于是在 en 仓里，同一批样本被拿去跟 `## Revision history`
+# 对判，44 个样本一起假红，而 doc-lint 自己一个字都没坏
+# （实测：en / ja 两仓的门禁从 0.0.25 起一直是红的，根因就是这个）。
+# 样本的语言是**样本的属性**，不是仓的属性，所以要能显式指定：DOC_LINT_LANG。
+# 它只给 scripts/selftest.sh 用。拿它去跑真实项目，等于自己给自己换判据，
+# 所以**设了就打印出来**——改判据的事不许不留痕迹（rules/show-me-test.md）。
+PKG_LANG="$(sed -n 's/^this=//p' "$(dirname "${BASH_SOURCE[0]}")/../I18N" 2>/dev/null | head -1)"
+LANG_FORCED=0
+DOC_LANG="$PKG_LANG"
+if [[ -n "${DOC_LINT_LANG:-}" ]]; then DOC_LANG="$DOC_LINT_LANG"; LANG_FORCED=1; fi
 [[ -n "$DOC_LANG" ]] || DOC_LANG=zh
 
 case "$DOC_LANG" in
@@ -129,6 +145,74 @@ body_of() {
 }
 
 head1 "文档铁律检查"
+
+if [[ $LANG_FORCED -eq 1 ]]; then
+  warn "语言由 DOC_LINT_LANG 指定为 $DOC_LANG（本包是 ${PKG_LANG:-zh}）——这个变量只给门禁自检用"
+  howto "跑真实项目不要设它：判据换成别的语言，等于自己给自己改判据。" \
+        "要让本包换语言，改 I18N 的 this=，别在命令行上盖。"
+fi
+
+# ── 原样保存的证据：扫描要绕开 ──────────────────────────
+# 有些 .md 是**当时原样存下来的**：发给模型的提示、跑出来的原始输出。
+# 它们与产物一一对应，事后改一个字，产物就不再对应它的输入
+# （rules/evidence-discipline.md 的「原样保存的证据不许事后改」）。
+# 这种目录由项目自己声明，一行一条，格式 `<相对目录>  # 为什么`：
+#   $ROOT/.claude/doc-lint-exclude
+# **理由不许省**：排除范围是会被后来人照抄的东西，抄的人得看得见当初为什么排。
+# 排除项一律**报出来**——静悄悄少扫 207 个文件，和这道检查没实现长得一模一样。
+EXFILE="$ROOT/.claude/doc-lint-exclude"
+exfails=0; expaths=(); exwhys=(); exns=(); exskipped=0
+if [[ -f "$EXFILE" ]]; then
+  exline=0
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    exline=$((exline+1))
+    [[ -z "${line//[[:space:]]/}" || "${line#"${line%%[![:space:]]*}"}" == \#* ]] && continue
+    if [[ "$line" != *\#* ]]; then
+      bad ".claude/doc-lint-exclude:$exline  这一条没写理由：$line"
+      howto "每条排除都要写清为什么，格式： research/prompts/  # 原样发给模型的提示，改了产物就对不上输入" \
+            "排除范围会被后来人照抄，抄的人得看得见当初为什么排。"
+      exfails=$((exfails+1)); continue
+    fi
+    expath="${line%%#*}"; exwhy="${line#*#}"
+    expath="${expath#"${expath%%[![:space:]]*}"}"; expath="${expath%"${expath##*[![:space:]]}"}"
+    exwhy="${exwhy#"${exwhy%%[![:space:]]*}"}";   exwhy="${exwhy%"${exwhy##*[![:space:]]}"}"
+    expath="${expath%/}"
+    if [[ -z "$exwhy" ]]; then
+      bad ".claude/doc-lint-exclude:$exline  # 后面是空的，等于没写理由"
+      howto "在 # 后面写清为什么这批文件不许事后改，例：原样发给模型的提示，改了产物就对不上输入。"
+      exfails=$((exfails+1)); continue
+    fi
+    # 路径必须是 ROOT 之下的一个**子**目录。允许 `.` 或绝对路径的话，
+    # 一行就能把整棵树排掉，而门禁照样全绿——那正是这道机制最该拦住的滥用。
+    if [[ -z "$expath" || "$expath" == "." || "$expath" == /* || "$expath" == *..* ]]; then
+      bad ".claude/doc-lint-exclude:$exline  路径不合法：「$expath」"
+      howto "只收 ROOT 之下的相对子目录，例： research/prompts/" \
+            "不收 . 、绝对路径、含 .. 的路径——那些一行就能把整棵树排掉。"
+      exfails=$((exfails+1)); continue
+    fi
+    if [[ ! -d "$ROOT/$expath" ]]; then
+      bad ".claude/doc-lint-exclude:$exline  目录不存在：$expath"
+      howto "排除项烂掉了：要么路径拼错，要么那批文件已经挪走或删了。" \
+            "改成现在的路径，或者把这一行删掉——留着的排除项会让人以为还有东西在被绕开。"
+      exfails=$((exfails+1)); continue
+    fi
+    exn="$(find "$ROOT/$expath" -name '*.md' -not -path '*/.git/*' | wc -l)"
+    if [[ "$exn" -eq 0 ]]; then
+      bad ".claude/doc-lint-exclude:$exline  $expath 下一个 .md 都没有，这条排除没有作用"
+      howto "删掉这一行。不起作用的排除项只会让人以为这批文件被绕开了，" \
+            "而真正该排的那个目录还在被扫。"
+      exfails=$((exfails+1)); continue
+    fi
+    EXCL+=(-not -path "$ROOT/$expath/*")
+    expaths+=("$expath"); exwhys+=("$exwhy"); exns+=("$exn")
+    exskipped=$((exskipped+1))
+  done < "$EXFILE"
+fi
+if [[ ${#expaths[@]} -gt 0 ]]; then
+  n=0; for i in "${!expaths[@]}"; do n=$((n+exns[i])); done
+  warn "按 .claude/doc-lint-exclude 绕开 $n 个 .md —— 原样保存的证据，改了就断证据链："
+  for i in "${!expaths[@]}"; do warn "  ${expaths[$i]}/  （${exns[$i]} 个）—— ${exwhys[$i]}"; done
+fi
 
 while IFS= read -r f; do
   rel="${f#"$ROOT"/}"
@@ -700,8 +784,8 @@ if [[ $WORDLIST -ne 1 ]]; then
         "并在 scripts/fixtures/doc-lint/ 下配该语言的红样本与踩边界的绿样本。" \
         "在那之前这两类违规不会被拦——绿灯不代表这两条验过了。"
 fi
-if [[ $fails -gt 0 || $reffails -gt 0 || $numfails -gt 0 ]]; then
-  bad "文档铁律检查失败：$fails 个文件违规、$reffails 处编号引用无定义、$numfails 处编号定义/引用不合规（检查 $checked，跳过 $skipped）"   # gate-lint:summary
+if [[ $fails -gt 0 || $reffails -gt 0 || $numfails -gt 0 || $exfails -gt 0 ]]; then
+  bad "文档铁律检查失败：$fails 个文件违规、$reffails 处编号引用无定义、$numfails 处编号定义/引用不合规、$exfails 条排除项不合规（检查 $checked，跳过 $skipped）"   # gate-lint:summary
   exit 1
 fi
 warn "上下文指代与自指称呼这两条是**启发式**：只认句首或标点之后的常见说法，"

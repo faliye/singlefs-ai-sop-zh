@@ -1,0 +1,3 @@
+exit=0
+want=按 .claude/doc-lint-exclude 绕开
+want=evidence/  （1 个）—— 原样发给模型的提示

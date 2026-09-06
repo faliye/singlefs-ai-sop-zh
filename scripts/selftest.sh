@@ -114,9 +114,18 @@ run_scripted() { # run_scripted <名> <期望exit> <want...> -- <命令...>
 head1 "门禁自检：doc-lint 的判别力"
 [[ -d "$FX/doc-lint" ]] || { bad "缺样本目录 $FX/doc-lint"
   howto "样本要随仓走。没有样本，下一个改 doc-lint.sh 的人无从复跑。"; exit 1; }
+# ⚠️ **样本一律按 zh 判**。样本是中文写的，而 scripts/ 会逐字节复制进每个语言仓：
+# 不钉住语言的话，en 仓里这批样本被拿去跟 `## Revision history` 对判，44 例一起假红，
+# 而 doc-lint 自己一个字都没坏（实测：en / ja 两仓的门禁从 0.0.25 起一直红着，就是这个）。
+# 语言是**样本的属性**，不是仓的属性。
 for d in "$FX"/doc-lint/*/; do
-  run_fixture "doc-lint/$(basename "$d")" "$d" bash "$SCRIPTS/doc-lint.sh" "$d"
+  run_fixture "doc-lint/$(basename "$d")" "$d" env DOC_LINT_LANG=zh bash "$SCRIPTS/doc-lint.sh" "$d"
 done
+
+# 上面那个口子必须自报。少了那句 warn，谁都能拿 DOC_LINT_LANG 换掉判据而不留痕迹——
+# 而换判据正是这套门禁最该拦住的一件事（rules/show-me-test.md：门禁不许假装通过）。
+run_scripted "doc-lint/语言被覆盖时要自报" 0 "语言由 DOC_LINT_LANG 指定为" -- \
+  env DOC_LINT_LANG=zh bash "$SCRIPTS/doc-lint.sh" "$FX/doc-lint/good"
 
 # ════ gate-lint ══════════════════════════════════════════
 head1 "门禁自检：gate-lint 的判别力"
@@ -601,7 +610,7 @@ head1 "门禁自检：环境守卫的判别力"
 # doc-lint 的编号引用检查会把每处「D1（简称）」都误判成「括注没闭合」（复核实测）。
 # 故意用 LC_ALL=C 跑一个该绿的样本：守卫在 → 绿；守卫没了 → 一片假红。
 run_scripted "lib/LC_ALL 被钉住（C locale 下判定不变）" 0 检查通过 -- \
-  env LC_ALL=C bash "$SCRIPTS/doc-lint.sh" "$FX/doc-lint/good"
+  env LC_ALL=C DOC_LINT_LANG=zh bash "$SCRIPTS/doc-lint.sh" "$FX/doc-lint/good"
 
 # gawk：mawk 的 substr/length 按字节走，同一份 kb 会得出不同判定。
 # 伪造一个自称 mawk 的 awk 摆在 PATH 最前面，门禁必须拒绝跑，而不是照跑。
