@@ -6,7 +6,7 @@
 #   一条只说「不合格」的失败信息，等于把「怎么做才对」留给人猜——
 #   而人只能靠猜的时候，就会去绕过门禁，或者干脆不提交。
 #
-# 查三条：前两条是拒绝的形态，第三条是「通过」的形态。
+# 查四条：前两条与第四条是拒绝的形态，第三条是「通过」的形态。
 #
 # 一、bad：从它那一行起 5 个非注释行内必须出现 howto **命令**。
 #   - bad 认的形态：行首、`;`/`{`/`||`/`&&`/`then`/`else`/`do` 之后、
@@ -26,6 +26,12 @@
 #   「扫到 0 项」不是通过：判据写窄了、对象全被第一步跳过时，末尾照样报绿，
 #   而没有任何人看得出来（singlefs C114：一个阶段的第 3 项就这样绿着）。
 #   只对**报了成功**的脚本判；确实不扫对象的写 `# gate-lint:nocount <理由>`。
+#
+# 四、直接打印的拒绝（`echo "  ✗ …"` / 内嵌 python 的 `print('  ✗ …')`）同样要给出路。
+#   项目本地的阶段多半不 source lib.sh，前两条一条都够不着它们——实测 singlefs 的
+#   本地阶段有 46 处这样的拒绝，此前全部免检（本轮审计）。
+#   窗口是「到下一处拒绝之前」，不是 5 行：python 常常先打 ✗、再循环列明细、最后给出路。
+#   循环里的明细行标 `# gate-lint:detail`，汇总行标 `# gate-lint:summary`，两种都要显式写。
 #
 # 认不出参数个数的形态（消息是变量、或引号被转义拆开）**不判**，
 # 交给 lib.sh 的运行期兜底。这里只拦看得明白的那些——机器管得了哪一半要说清楚。
@@ -144,6 +150,62 @@ while IFS= read -r f; do
       say "        ${L[$i]}"
       howto "从这条拒绝起 $HOWTO_WINDOW 行内加一句 howto \"...\"，写清楚提交者下一步做什么。" \
             "不知道写什么，说明这条检查的判据自己也还没想清楚。"
+      fails=$((fails+1))
+    fi
+  done
+
+  # ── G4 直接打印的拒绝，也要给出路 ───────────────────────
+  # 上面两条只认 lib.sh 的 bad / die。而**项目本地的阶段多半不 source lib.sh**：
+  # 它们直接 `echo "  ✗ …"`，或者在内嵌 python 里 `print('  ✗ …')`。
+  # 这批拒绝一样摆在提交者面前，此前 gate-lint 一条都看不见——
+  # 实测 singlefs 的本地阶段：46 处这样的拒绝，全部免检（本轮审计）。
+  #
+  # 窗口不用 5 行：python 的拒绝常常先打一句 ✗、再用一个循环逐条列明细、
+  # 最后才给出路，5 行窗口会把它们整批误判。判据改成
+  # **「这一处拒绝到下一处拒绝之间（或到文件末），要出现出路」**。
+  #
+  # heredoc 体默认不当代码读（那是生成样本用的），但**解释器 heredoc 是代码**——
+  # `python3 - <<'PY'` 里的 print 是真的会打给提交者看的。所以这一遍
+  # 只对解释器 heredoc 的体照读，别的 heredoc 仍然跳过。
+  #
+  # 两种豁免都得**显式写出来**，猜不着的东西不猜（同汇总行那条）：
+  #   # gate-lint:summary  汇总行
+  #   # gate-lint:detail   循环里逐条列明细的那种行，出路在它的汇总上
+  rej=()
+  inhd=""; hdcode=0
+  for ((i=0; i<${#L[@]}; i++)); do
+    line="${L[$i]}"
+    if [[ -n "$inhd" ]]; then
+      if [[ "$line" == "$inhd" || "$line" =~ ^[[:space:]]*"$inhd"[[:space:]]*$ ]]; then inhd=""; hdcode=0; continue; fi
+      [[ $hdcode -eq 1 ]] || continue
+    elif [[ "$line" =~ \<\<-?[[:space:]]*[\'\"]?([A-Za-z_][A-Za-z0-9_]*) ]]; then
+      inhd="${BASH_REMATCH[1]}"
+      hdcode=0
+      [[ "$line" =~ (python3?|perl|node|gawk|awk)[[:space:]] ]] && hdcode=1
+      continue
+    fi
+    [[ "$line" =~ ^[[:space:]]*# ]] && continue
+    [[ "$line" == *✗* ]] || continue
+    [[ "$line" =~ (echo|printf|print\() ]] || continue
+    rej+=("$i")
+  done
+  for ((k=0; k<${#rej[@]}; k++)); do
+    i="${rej[$k]}"
+    [[ "${L[$i]}" =~ $SUMMARY_RE ]] && continue
+    [[ "${L[$i]}" =~ '#'[[:space:]]*gate-lint:detail ]] && continue
+    checked=$((checked+1))
+    end=${#L[@]}; [[ $((k+1)) -lt ${#rej[@]} ]] && end="${rej[$((k+1))]}"
+    found=0
+    for ((j=i; j<end; j++)); do
+      [[ "${L[$j]}" == *→* || "${L[$j]}" == *怎么办* ]] && { found=1; break; }
+      [[ "${L[$j]}" =~ $HOWTO_RE ]] && { found=1; break; }
+    done
+    if [[ $found -eq 0 ]]; then
+      bad "$rel:$((i+1))  拒绝但没有出路（直接打印的 ✗，到下一处拒绝之前没有「→」）"
+      say "        ${L[$i]}"
+      howto "在这条拒绝后面补一行出路，例： echo '     → 怎么办：<下一步做什么>'" \
+            "循环里逐条列明细的那种行，在行尾标 # gate-lint:detail（出路写在它的汇总上）；" \
+            "汇总行标 # gate-lint:summary。两种豁免都要显式写出来。"
       fails=$((fails+1))
     fi
   done
