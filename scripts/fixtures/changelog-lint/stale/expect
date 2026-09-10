@@ -1,0 +1,3 @@
+exit=1
+want=CHANGELOG 最新一节还停在 0.0.3
+want=缺 2 版：0.0.4 0.0.5

@@ -8,6 +8,7 @@
 改规范本体**必须同时抬 `VERSION`**，否则项目那边的门禁会报版本对不上。
 **哪些路径算「规范本体」，以 `scripts/version-discipline.sh` 里的 `GOVERNED` 为准**，
 清单只有那一处，这里不再抄一份。
+抬了版本就在 `CHANGELOG.md` 顶部给这一版写一节，每一版一节、不许跳号，由 `scripts/changelog-lint.sh` 判。
 
 ## 对话语言
 

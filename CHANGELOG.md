@@ -3,6 +3,18 @@
 规则与门禁的版本历史。`CLAUDE.md` 与 `rules/*.md` 不留历史节（design-doc-discipline），
 历史一律记在这里；逐条改动细节见 `git log`，提交信息即变更说明。
 
+## 0.0.40 — 2026-09-10
+
+**新增门禁阶段「CHANGELOG 连续」（`scripts/changelog-lint.sh`）：每一版都要有自己的一节，最新一节就是 VERSION。**
+版本纪律只管「改了规范本体就抬 VERSION」，不管 CHANGELOG 跟没跟上。实测：0.0.39 那次 VERSION 从 0.0.35
+抬到 0.0.39，三个语言仓的 CHANGELOG 一起跳过了 0.0.36，那一版的两处改动没有任何一节记着；全部门禁照绿，
+是逐段对 diff 才看出来的。
+
+判的是整份文件，不是 diff 窗口：二级标题只许是 `## x.y.z — YYYY-MM-DD`，最后一节可以是「x.y.z 及更早」
+这种不带日期的收尾；最新一节等于 VERSION；相邻两节必须是紧后一版（补丁 +1、次版本 +1 且补丁归 0、
+主版本 +1 其余归 0），跳号、重复、倒序都红；一节都没有也红。只在 SOP 仓自己跑，各语言仓各判各的 CHANGELOG。
+`CLAUDE.md` 首屏补了一句，`skills/gate/SKILL.md` 的「只在 SOP 仓自己跑的阶段」加上了它。
+
 ## 0.0.39 — 2026-09-10
 
 **`rules/verify-before-claiming.md` 新增一节：核了窄的那一句，说出口的却是宽的那一句。**

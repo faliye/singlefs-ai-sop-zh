@@ -144,6 +144,8 @@ if [[ -d "$SCRIPTS/../rules" && -f "$SCRIPTS/manifest.sh" ]]; then
   # 以前这条只是 CLAUDE.md 里的提醒句，拦不住（对抗测试实测）。
   if [[ "$(cd "$ROOT" && pwd)" == "$(cd "$SCRIPTS/.." && pwd)" ]]; then
     run_stage "版本纪律" bash "$SCRIPTS/version-discipline.sh" "$ROOT"
+    # 抬了 VERSION 不等于记了账：0.0.39 那次三个语言仓的 CHANGELOG 一起跳过了 0.0.36，全部门禁照绿。
+    run_stage "CHANGELOG 连续" bash "$SCRIPTS/changelog-lint.sh" "$ROOT"
   fi
 fi
 
