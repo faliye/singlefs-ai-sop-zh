@@ -3,6 +3,48 @@
 规则与门禁的版本历史。`CLAUDE.md` 与 `rules/*.md` 不留历史节（design-doc-discipline），
 历史一律记在这里；逐条改动细节见 `git log`，提交信息即变更说明。
 
+## 0.0.41 — 2026-09-10
+
+**新增 `rules/code-discipline.md`：machine-first 的实施细则。** 原则只有一条：不让过去的最佳实践替我们做决定。
+`machine-first.md` 讲了为什么要重审老规矩、怎么审，没写审完之后代码怎么写；命名那条（名字不限长度、不用缩写）
+写在 `engineering-philosophy.md` 里，是 review 时看的一段说法，不是规则。新的一篇把这些落成细则：名字、分支、类型、
+错误、函数与嵌套、注释，外加一张按出处分组的表——《Clean Code》、SOLID、《重构》、《程序员修炼之道》、
+Rust API 指南、Linux 内核编码风格等流行做法 85 条、分 10 组，逐条给出处置和我们的写法。
+代码层面的审视结果从另两篇挪了过来，那两篇只留理念与设计、流程层面的表；挪过来的示例里的缩写名
+（`dev`、`m`、`Lba`、`commit_txn`、`num_`）一并写全。
+
+同一版里按审阅意见收紧了六处说法：路径数只量控制流，不是验证难度的全部，循环的迭代上界、跨轮状态、
+提前出口要另外写清；禁通配臂的对象是封闭集合，语义上允许未知值的把「未知」做成显式成员，`match` 照样穷举；
+「一个概念一个名字」的单位是语义概念，不是词；名字不靠模块路径补全，写明这是有意让名字带命名空间信息；
+`as_` / `to_` / `into_` 是约定不是保证，以 C-CONV 的表为准；错误成员按调用方要做的决定分，不按底层原因逐个展开。
+`engineering-philosophy.md`、`machine-first.md` 里「路径数有限就能验」的说法跟着改成必要条件。
+
+**新增门禁阶段「命名纪律」（`scripts/naming-lint.sh`）。** 扫项目里每个 `.rs` 中我们自己声明的名字，
+判单字母和常见缩写（词表 144 条，每条带「该写成什么」）。项目在 `.claude/abbreviations` 登记领域缩写，
+也可以按类登记自己的编号（`e<数字>`）；在 `.claude/naming-lint-exclude` 声明不扫的目录或单个文件（回扫旧代码时按文件列、改完一个删一行）；两份都要写理由。
+行内豁免是 `// naming-lint:external <理由>`。trait 实现的方法名、`extern` 块、Cargo 定的文件名不判。
+shell 脚本的名字还没做成检查，`gate.sh` 把它列在未实现的阶段里。
+样本 12 组；在副本上做了 39 条变异（去掉一条豁免、一类声明处、一步剥注释或字符串），全部被样本抓到。
+拿 singlefs 的 research 代码试跑（119 个文件、16792 个名字，未登记任何缩写）报 7246 处；
+抽看各类命中，两类误报已修：Cargo 定的 `lib.rs`，名字中间的英语冠词 `a`。
+
+**`scripts/check.sh` 的 clippy 多带七条编码纪律的 lint**：`wildcard_enum_match_arm`、
+`allow_attributes_without_reason`、`cast_possible_truncation`、`cast_sign_loss`、`cast_possible_wrap`、
+`undocumented_unsafe_blocks`、`shadow_unrelated`。在样本 crate 上实测：每条各放一处写错的，七条都红；
+照细则写的版本，格式、clippy、构建、单测四步全绿。
+
+**`doc-discipline.md`、`writing-economy.md`、`writing-style.md` 合并成 `rules/writing-discipline.md`。**
+三篇管的都是写给人读的文字（写给谁、多长、怎么说）。合并稿逐行对过，三篇的正文一句没丢，
+只删了三篇之间互相指路的话。引用它们的地方一并改指新文件。
+
+**doc-lint 的规则清单检查扩到模板与项目。** 原先只查 SOP 仓的 `CLAUDE.md` 与 `rules/` 逐项相等；
+现在 `templates/CLAUDE.project.md`，以及项目的 `CLAUDE.md` 对装进来的副本，也按同一判据查。
+逼出这一改的是两处实测缺口：模板从 0.0.31 加入 `pushback-discipline` 起就没引用过它；
+singlefs 的 `CLAUDE.md` 从来没 @ 过 `engineering-philosophy`、`sop-first`、`pushback-discipline`、`writing-style`，
+这四条在 singlefs 的会话里一直没读进上下文。模板已补齐。
+
+`GLOSSARY.md` 改了「缩写」「路径数」的说明，新增「缩写登记表」「通配臂」两条。
+
 ## 0.0.40 — 2026-09-10
 
 **新增门禁阶段「CHANGELOG 连续」（`scripts/changelog-lint.sh`）：每一版都要有自己的一节，最新一节就是 VERSION。**

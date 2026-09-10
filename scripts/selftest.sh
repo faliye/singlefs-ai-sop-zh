@@ -283,7 +283,7 @@ mk_gate_pkg() { # mk_gate_pkg <目录> [要让哪个桩失败]
   printf 'family=f\nthis=zh\nreference=zh\ndefault=zh\nlanguages=zh\n' > "$d/I18N"
   printf '# 规则甲\n' > "$d/rules/a.md"
   local n
-  for n in gate-lint selftest shell-lint doc-lint show-me-test check manifest i18n-sync version-discipline changelog-lint lkmm; do
+  for n in gate-lint selftest shell-lint doc-lint naming-lint show-me-test check manifest i18n-sync version-discipline changelog-lint lkmm; do
     if [[ "$n" == "$failing" ]]; then
       printf '#!/usr/bin/env bash\necho "  桩 %s 判红"\nexit 1\n' "$n" > "$d/scripts/$n.sh"
     else
@@ -297,12 +297,12 @@ mk_gate_pkg() { # mk_gate_pkg <目录> [要让哪个桩失败]
 # —— 这几个 want 钉住的是「阶段没被人悄悄从 gate.sh 里删掉」
 r="$tmpd/gate-green"; mk_gate_pkg "$r"
 run_scripted "gate/全绿则退出码 0" 0 \
-  "已实现的门禁阶段全部通过" 门禁自检 门禁判别力 "shell 纪律" 文档铁律 "Show me test" \
+  "已实现的门禁阶段全部通过" 门禁自检 门禁判别力 "shell 纪律" 文档铁律 命名纪律 "Show me test" \
   规则清单 各语言同步 版本纪律 "CHANGELOG 连续" LKMM \
   -- bash "$r/scripts/gate.sh" "$r"
 
 # 任一阶段红 ⇒ 整道门禁必须红。这是判决点，缺了它前面所有检查都白做。
-for st in doc-lint selftest gate-lint shell-lint show-me-test version-discipline changelog-lint manifest; do
+for st in doc-lint naming-lint selftest gate-lint shell-lint show-me-test version-discipline changelog-lint manifest; do
   r="$tmpd/gate-red-$st"; mk_gate_pkg "$r" "$st"
   run_scripted "gate/$st 红则门禁红" 1 门禁未通过 -- bash "$r/scripts/gate.sh" "$r"
 done
@@ -313,6 +313,14 @@ head1 "门禁自检：changelog-lint 的判别力"
   howto "样本要随仓走。没有样本，下一个改 changelog-lint.sh 的人无从复跑。"; exit 1; }
 for d in "$FX"/changelog-lint/*/; do
   run_fixture "changelog-lint/$(basename "$d")" "$d" bash "$SCRIPTS/changelog-lint.sh" "$d"
+done
+
+# ════ naming-lint ════════════════════════════════════════
+head1 "门禁自检：naming-lint 的判别力"
+[[ -d "$FX/naming-lint" ]] || { bad "缺样本目录 $FX/naming-lint"
+  howto "样本要随仓走。没有样本，下一个改 naming-lint.sh 的人无从复跑。"; exit 1; }
+for d in "$FX"/naming-lint/*/; do
+  run_fixture "naming-lint/$(basename "$d")" "$d" bash "$SCRIPTS/naming-lint.sh" "$d"
 done
 
 # ════ version-discipline ═════════════════════════════════

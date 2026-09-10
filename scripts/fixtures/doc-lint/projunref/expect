@@ -1,0 +1,2 @@
+exit=1
+want=装进来的副本里有这些规则，但 CLAUDE.md 没有 @ 引用：b.md

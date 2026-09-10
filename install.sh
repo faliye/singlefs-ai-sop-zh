@@ -62,7 +62,7 @@ fi
 
 # 溯源标记（generated-from）记的是**这份译文译自哪个版本的源文**，是分发层的账。
 # 抄进使用者的项目就成了一条永远不会更新的陈旧标注，而且贴在一份他马上要动手改的
-# 文件上（rules/doc-discipline.md：正文只写现状）。所以铺进项目时剥掉。
+# 文件上（rules/writing-discipline.md：正文只写现状）。所以铺进项目时剥掉。
 strip_stamp() {
   grep -vE '^(<!--|\(\*) generated-from: .+ sha256:[0-9a-f]{64} (-->|\*\))$' "$1" || true
 }
@@ -116,7 +116,7 @@ put ".claude/warnings/.keep" <<'KEEP'
 KEEP
 
 # 3. scripts 包装（不写逻辑，只 exec 共享脚本）
-for s in env check gate doc-lint lkmm gate-lint shell-lint; do
+for s in env check gate doc-lint naming-lint lkmm gate-lint shell-lint; do
   put ".claude/scripts/$s.sh" <<WRAP
 #!/usr/bin/env bash
 # 包装：转发到共享脚本。逻辑不写在这里，写在 .claude/singlefs-ai-sop/scripts/。

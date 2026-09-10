@@ -30,7 +30,8 @@
 @rules/sop-first.md
 @rules/show-me-test.md
 @rules/machine-first.md
-@rules/doc-discipline.md
+@rules/code-discipline.md
+@rules/writing-discipline.md
 @rules/design-doc-discipline.md
 @rules/kb-discipline.md
 @rules/test-discipline.md
@@ -38,8 +39,6 @@
 @rules/verify-before-claiming.md
 @rules/pushback-discipline.md
 @rules/command-safety.md
-@rules/writing-economy.md
-@rules/writing-style.md
 @rules/session-wrapup.md
 
 ## 分工判据

@@ -5,7 +5,7 @@ description: 记录或变更 singlefs 的设计决策。定下一条决策、推
 
 # 记一条设计决策
 
-规则在 `rules/doc-discipline.md`，以及项目本地关于格式/结构演进的规则（若有）。
+规则在 `rules/kb-discipline.md`，以及项目本地关于格式/结构演进的规则（若有）。
 
 ## 状态只有三种
 

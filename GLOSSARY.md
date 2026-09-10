@@ -54,9 +54,11 @@
 | 裸引用 | bare citation | 裸の引用 | 只写编号、不带简称的引用<br>a citation with the number but no short name<br>番号だけで簡称を伴わない引用 |
 | 上下文指代 | dangling reference | 文脈依存の参照 | 「如上所述」这类，kb 里禁止<br>"as stated above" and the like; forbidden in kb<br>「前述のとおり」の類。kb では禁止 |
 | 自指称呼 | self-reference | 自己参照 | 「本条」「该决策」这类指着「此处」的写法，kb 里禁止<br>"this entry", "that decision" — pointing at "here"; forbidden in kb<br>「本項」「当該判断」のように「ここ」を指す書き方。kb では禁止 |
-| 缩写 | abbreviation | 略語 | 函数名里不推荐用的那种；领域专名不算<br>the kind discouraged in function names; domain proper nouns excepted<br>関数名で避けるもの。領域の固有名は除く |
+| 缩写 | abbreviation | 略語 | 我们声明的名字里不许用；登记过的领域缩写与 Rust 关键字除外<br>not allowed in any name we declare; registered domain abbreviations and Rust keywords excepted<br>自前で宣言する名前には使わない。登録済みの領域略語と Rust のキーワードは除く |
+| 缩写登记表 | abbreviation registry | 略語登録表 | 项目根的 `.claude/abbreviations`，每个领域缩写唯一的权威定义<br>`.claude/abbreviations` at the project root: the single authoritative definition of each domain abbreviation<br>プロジェクト直下の `.claude/abbreviations`。領域略語ごとの唯一の権威ある定義 |
 | 上下文约束 | context constraints | 文脈の制約 | 名字里带的前置条件与作用范围<br>the preconditions and scope carried in a name<br>名前に載せる前提条件と作用範囲 |
-| 路径数 | path count | 経路数 | 穷尽覆盖需要多少用例<br>how many cases exhaustive coverage needs<br>網羅に必要なケース数 |
+| 路径数 | path count | 経路数 | 穷尽覆盖控制流需要多少用例；不含循环状态与数据<br>how many cases exhaustive control-flow coverage needs; loop state and data not included<br>制御フローの網羅に必要なケース数。ループの状態とデータは含まない |
+| 通配臂 | wildcard arm | ワイルドカードアーム | `match` 里的 `_ =>`；封闭集合的枚举上不许写<br>the `_ =>` arm of a `match`; not allowed on enums that are closed sets<br>`match` の `_ =>`。閉じた集合の列挙型には書かない |
 | 分支 | branch（实现分支） | 分岐 | **不是 git branch**，是代码路径<br>**not a git branch** — a code path<br>**git branch ではなく**、コード経路 |
 | 意图日志 | intent log | インテントログ | 无界操作的「写意图 → 分批 → 可续做」<br>"write intent → batch → resumable" for unbounded operations<br>非有界操作の「意図を書く → 分割 → 再開可能」 |
 | 无界操作 | unbounded operation | 非有界操作 | 可能修改无限多项的操作<br>an operation that may touch unboundedly many items<br>無限個の項目を変えうる操作 |

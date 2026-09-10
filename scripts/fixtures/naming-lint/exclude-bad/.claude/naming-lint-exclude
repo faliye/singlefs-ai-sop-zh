@@ -1,0 +1,6 @@
+noreason/
+ghost/  # 这个目录不存在
+empty/  # 这个目录里没有 .rs
+../outside  # 越界
+docs/  #
+empty/README.txt  # 不是 .rs，也不是目录

@@ -1,0 +1,9 @@
+# 几种写坏的登记
+lba
+x  # 单字母
+Lba  # 大写
+crc  # cyclic redundancy check
+crc  # 又登记一遍
+id  #
+e<数字>  # 实验编号
+e<数字>  # 又登记一遍

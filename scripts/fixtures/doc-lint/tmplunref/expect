@@ -1,0 +1,2 @@
+exit=1
+want=这些规则文件存在，但 templates/CLAUDE.project.md 没有 @ 引用：b.md

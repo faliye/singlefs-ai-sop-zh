@@ -1,0 +1,2 @@
+exit=1
+want=src/e57_field_authority.rs:1  函数 t06_payload_absolute —— 「t06」是单字母加数字

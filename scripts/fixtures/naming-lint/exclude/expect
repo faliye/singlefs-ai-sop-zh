@@ -1,0 +1,5 @@
+exit=0
+want=按 .claude/naming-lint-exclude 不扫 2 个 .rs
+want=src/legacy_names.rs  （1 个）—— 旧文件回扫未完成
+want=legacy/  （1 个）—— 旧实验代码与产物一一对应
+want=命名纪律通过：查了 1 个 .rs 文件

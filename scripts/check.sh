@@ -18,9 +18,20 @@ cargo fmt --all -- --check || die "格式不合规" \
 ok "格式通过"
 
 head1 "cargo clippy"
-cargo clippy --all-targets --all-features -- -D warnings || die "clippy 有告警（按 -D warnings 视为错误）" \
-  "上面每条告警都指着文件和行号，逐条改。" \
-  "确有必要保留的，在那一处写 #[allow(...)] 并在同行注释里写明为什么——" \
+# 编码纪律里能交给 clippy 的那几条（rules/code-discipline.md「门禁管哪一半」），一条对一条：
+CODE_DISCIPLINE_LINTS=(
+  -D clippy::wildcard_enum_match_arm          # 封闭集合的枚举不写 _ =>
+  -D clippy::allow_attributes_without_reason  # #[allow] 要写 reason = "…"
+  -D clippy::cast_possible_truncation         # 会丢值的 as 转换：截断
+  -D clippy::cast_sign_loss                   # 会丢值的 as 转换：丢符号
+  -D clippy::cast_possible_wrap               # 会丢值的 as 转换：回绕
+  -D clippy::undocumented_unsafe_blocks       # unsafe 块要有 // SAFETY:
+  -D clippy::shadow_unrelated                 # 换了含义的同名遮蔽
+)
+cargo clippy --all-targets --all-features -- -D warnings "${CODE_DISCIPLINE_LINTS[@]}" \
+  || die "clippy 有告警（按 -D warnings 视为错误），或者踩了编码纪律的某一条" \
+  "上面每条告警都指着文件和行号，逐条改。编码纪律那几条的写法见 rules/code-discipline.md。" \
+  "确有必要保留的，在那一处写 #[allow(<lint>, reason = \"为什么\")]，理由写进 reason——" \
   "不要整仓关掉 -D warnings（rules/command-safety.md：警告是最便宜的信号）。"
 ok "clippy 通过"
 

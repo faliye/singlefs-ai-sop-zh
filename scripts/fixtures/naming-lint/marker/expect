@@ -1,0 +1,3 @@
+exit=1
+want=src/lib.rs:2  naming-lint:external 后面没写理由
+want=src/lib.rs:2  变量 crc_seed

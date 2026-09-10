@@ -1,0 +1,7 @@
+exit=1
+want=.claude/naming-lint-exclude:1  这一条没写理由：noreason/
+want=.claude/naming-lint-exclude:2  目录或 .rs 文件不存在：ghost
+want=.claude/naming-lint-exclude:6  目录或 .rs 文件不存在：empty/README.txt
+want=.claude/naming-lint-exclude:3  empty 下一个 .rs 都没有，这条排除没有作用
+want=.claude/naming-lint-exclude:4  路径不合法：「../outside」
+want=.claude/naming-lint-exclude:5  # 后面是空的，等于没写理由

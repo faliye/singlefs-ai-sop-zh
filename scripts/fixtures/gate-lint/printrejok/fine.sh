@@ -4,5 +4,5 @@ n=0
 for f in *.md; do n=$((n+1)); done
 echo "  ✗ 有 $n 份文件不合规："
 for f in *.md; do echo "        $f"; done
-echo "     → 怎么办：照 rules/doc-discipline.md 改，改完重跑本阶段。"
+echo "     → 怎么办：照 rules/writing-discipline.md 改，改完重跑本阶段。"
 exit 1

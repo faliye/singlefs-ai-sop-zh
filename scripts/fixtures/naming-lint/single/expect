@@ -1,0 +1,16 @@
+exit=1
+want=src/lib.rs:2  循环变量 i
+want=src/lib.rs:7  泛型参数 T
+want=src/lib.rs:11  生命周期 'a
+want=src/lib.rs:16  闭包参数 x
+want=src/lib.rs:19  参数 n
+want=src/lib.rs:24  字段 x_offset —— 「x」是单字母
+want=src/lib.rs:28  枚举成员 A
+want=src/lib.rs:35  匹配绑定 e
+want=src/lib.rs:40  变量 t0 —— 「t0」是单字母加数字
+want=src/lib.rs:44  常量 N
+want=src/lib.rs:46  模块 m
+want=src/lib.rs:48  别名 M
+want=src/lib.rs:51  宏变量 x
+want=src/lib.rs:57  标签 'a
+want=src/lib.rs:62  函数 weight_for_side_a —— 「a」是单字母

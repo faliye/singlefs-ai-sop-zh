@@ -1,0 +1,8 @@
+exit=1
+want=.claude/abbreviations:2  这一条没写全称和含义：lba
+want=.claude/abbreviations:3  单字母不许登记：x
+want=.claude/abbreviations:4  缩写要写成小写字母开头的一段字母数字：「Lba」
+want=.claude/abbreviations:6  重复登记：crc（第 5 行已经登记过）
+want=.claude/abbreviations:7  # 后面是空的，等于没写含义：id
+want=.claude/abbreviations:9  重复登记：e<数字>（第 8 行已经登记过）
+want=命名纪律的配置有 6 处不合规

@@ -24,9 +24,10 @@ GATE_BASE=<commit> bash .claude/scripts/gate.sh   # 指定 diff 基准
 | 门禁自检 | 有条拒绝没给出路（`bad` 后面缺 `howto`，或者 `die` 只带了一句话） |
 | 门禁判别力 | 样本判出来跟预期不一样——**门禁自己坏了**，先修它，别的先放着 |
 | shell 纪律 | 脚本里有按模式匹配杀进程，或者靠子 shell 的赋值往外带值 |
-| 文档铁律 | 正文里混了历史陈述，或者 kb 里引用编号没带简称。见 `rules/doc-discipline.md` |
+| 文档铁律 | 正文里混了历史陈述，kb 里引用编号没带简称，或者 CLAUDE.md 没把规则一条条 @ 进来。见 `rules/writing-discipline.md` |
+| 命名纪律 | `.rs` 里我们声明的名字用了单字母或常见缩写，或者 `.claude/abbreviations`、`.claude/naming-lint-exclude` 写得不合规。见 `rules/code-discipline.md` |
 | Show me test | 改了 `crates/*/src` 却没带测试。**这条不许绕**，见 `rules/show-me-test.md` |
-| 构建与单测 | 真的坏了，或者 cargo 没装 |
+| 构建与单测 | 真的坏了，或者 cargo 没装。clippy 按 `-D warnings` 判，另外封闭集合的枚举上不许写 `_ =>` |
 | 项目本地阶段 | `.claude/gate.d/` 里某个本地检查红了，或者读不了 |
 | LKMM | litmus 的判定跟声明对不上，或者某条 Never 没有配对的对照组 |
 

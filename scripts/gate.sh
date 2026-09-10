@@ -101,6 +101,10 @@ run_stage "shell 纪律" bash "$SCRIPTS/shell-lint.sh" "${LINT_EXTRA[@]}"
 # ── 阶段 1：文档铁律 ────────────────────────────────────
 run_stage "文档铁律" bash "$SCRIPTS/doc-lint.sh" "$ROOT"
 
+# ── 阶段 1b：命名纪律 ───────────────────────────────────
+# 名字要让模型光看名字就读得出含义（rules/code-discipline.md）。机器判得了的是单字母和常见缩写那一半。
+run_stage "命名纪律" bash "$SCRIPTS/naming-lint.sh" "$ROOT"
+
 # ── 阶段 2：Show me test ────────────────────────────────
 # 判定逻辑住在 show-me-test.sh（selftest 拿样本仓单独喂它）。退出码 3 = 无对象可判。
 head1 "Show me test"
@@ -208,6 +212,7 @@ NOT_IMPL=(
   "模型对拍          需要 checker 与实现存在（rules/test-discipline.md）"
   "崩溃点重放        需要块层写记录 + checker（rules/test-discipline.md）"
   "QEMU 真实负载     harness 已就绪并自检通过，缺被测对象（盘上格式定案，见项目 kb/decisions.md）"
+  "命名纪律（shell）  只查 .rs 里声明的名字；shell 脚本的名字还没做成检查（rules/code-discipline.md）"
 )
 
 # ── 汇总 ────────────────────────────────────────────────

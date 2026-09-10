@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 文档铁律的自动检查。rules/doc-discipline.md靠这个脚本强制，不靠自觉。
+# 文档铁律的自动检查。rules/writing-discipline.md 和它分出去的 design-doc、kb 两篇靠这个脚本强制，不靠自觉。
 #
 # 检查十二条：
 #   A. 正文（「## 历史版本」之前的部分）不许出现历史陈述与就地废弃标注
@@ -17,9 +17,10 @@
 #   G. kb/*.md 里编号的每一处引用都要带上简称，且与登记位一致（同上）
 #   H. kb/*.md 里编号形状的记号反复出现（≥3 次）却一处登记位都没有（同上）
 #   I. 所有给人读的 .md 不许出现翻译腔 / 古风腔 / 过度解释的固定构式
-#      （rules/writing-style.md；同 A、D，只在有词表的语言上跑）
+#      （rules/writing-discipline.md「说人话」；同 A、D，只在有词表的语言上跑）
 #   J. $ROOT/.claude/doc-lint-exclude 里的每条排除都要带理由、指向真实目录、且真的有东西被排除
-#   K. rules/*.md 与 CLAUDE.md 里的 @rules/ 引用必须逐项相等——没被引用的规则不进上下文，等于没写
+#   K. rules/*.md 与 @ 引用逐项相等：SOP 仓的 CLAUDE.md 与模板，项目的 CLAUDE.md 与装进来的副本
+#      ——没被引用的规则不进上下文，等于没写
 #   L. .claude/warnings/ 下的警告记录：文件名是 YYYY-MM-DD.md，每个 ## 小节四项齐全
 #      （rules/pushback-discipline.md）
 #
@@ -128,7 +129,7 @@ PATTERNS=(
   '已被[[:space:]]*[DECIAO][0-9]\{1,3\}[^，。；]\{0,4\}覆盖'  '正文不许就地标注被某条覆盖，删掉并写进「历史版本」'
 )
 
-# ── I. 文风：翻译腔与古风腔的固定构式（rules/writing-style.md）──────
+# ── I. 文风：翻译腔与古风腔的固定构式（rules/writing-discipline.md「说人话」）──────
 # 只查**词表里那些固定说法**。句子顺不顺、转折多不多余、解释啰不啰嗦，机器判不了，
 # 那半靠人念一遍——词表全绿不代表这条守住了，只代表没踩到最明显的几个坑。
 # 与 A/D 同样是词表型检查，所以同样只在有词表的语言上跑。
@@ -247,7 +248,7 @@ while IFS= read -r f; do
   if [[ "$base" == "CLAUDE.md" && $has_hist -eq 1 ]]; then
     bad "$rel  CLAUDE.md 不许有「$HIST_HEAD」节，历史外置到 kb/ 或 CHANGELOG.md"
     howto "把这一节整段挪到 CHANGELOG.md 或 kb/。CLAUDE.md 每次开工都要通读，" \
-          "混进历史会稀释它（rules/doc-discipline.md）。"
+          "混进历史会稀释它（rules/design-doc-discipline.md）。"
     structfail=1
   fi
   if [[ ( "$f" == */rules/*.md || "$f" == */agents/*.md ) && $has_hist -eq 1 ]]; then
@@ -267,7 +268,7 @@ while IFS= read -r f; do
       */kb/*)
         bad "$rel  rule-definition 标记不许出现在 kb 里"
         howto "删掉文件头的 <!-- doc-lint:rule-definition -->。kb 是给模型检索的内容，" \
-              "必须受检；规则定义住在 rules/，不住在 kb（rules/doc-discipline.md）。"
+              "必须受检；规则定义住在 rules/，不住在 kb（rules/writing-discipline.md）。"
         checked=$((checked+1)); fails=$((fails+1)); continue ;;
       */CLAUDE.md|*/rules/*.md|*/agents/*.md|*/skills/*/SKILL.md)
         if [[ $structfail -eq 1 ]]; then
@@ -336,7 +337,7 @@ while IFS= read -r f; do
     i=$((i+2))
   done
 
-  # 文风（rules/writing-style.md）。所有给人读的 .md 都查，不只 kb。
+  # 文风（rules/writing-discipline.md「说人话」）。所有给人读的 .md 都查，不只 kb。
   if [[ $WORDLIST -eq 1 ]]; then
     j=0
     while [[ $j -lt ${#STYLE[@]} ]]; do
@@ -348,7 +349,7 @@ while IFS= read -r f; do
           bad "$rel:$ln  $swhy"
           say "        > $(printf '%s' "$txt" | cut -c1-80)"
           howto "换成平时说话会用的说法。判据是「这句你会对同事说出口吗」——" \
-                "不会就改（rules/writing-style.md）。"
+                "不会就改（rules/writing-discipline.md「说人话」）。"
           filefail=1
         done <<< "$shits"
       fi
@@ -784,32 +785,63 @@ if [[ -n "$kb_files" ]]; then
   done <<< "$kb_files"
 fi
 
-# ── K. 规则清单：rules/ 与 CLAUDE.md 的 @ 引用必须逐项相等 ──
+# ── K. 规则清单：rules/ 与 @ 引用必须逐项相等 ─────────────
 # 没被 @ 引用的规则**不会被读进上下文**，等于没写；而它躺在 rules/ 里，
 # 看起来和生效的规则一模一样。反过来，引用了不存在的文件同样无声——
 # 那一行只是不展开，CLAUDE.md 读起来照样完整。
-# 只管仓根这一层的 rules/。项目本地的 .claude/rules/ 是项目自己的事，
-# 由项目自己的门禁阶段管（判据一样，但那批文件不归上游）。
+# 同一个判据管三处：
+#   SOP 仓的 CLAUDE.md ↔ rules/
+#   SOP 仓的 templates/CLAUDE.project.md ↔ rules/：install.sh 拿它铺新项目的 CLAUDE.md，
+#     模板漏一条，新项目从第一天起就少读一条（实测：pushback-discipline 从 0.0.31 起就不在模板里）
+#   项目的 CLAUDE.md ↔ 装进来的副本 .claude/<族名>/rules/
+#     （实测 singlefs：engineering-philosophy、sop-first、pushback-discipline、writing-style 四条从没被引用过）
+# 项目本地的 .claude/rules/ 是项目自己的事，由项目自己的门禁阶段管（判据一样，但那批文件不归上游）。
 metafails=0
-if [[ -f "$ROOT/CLAUDE.md" && -d "$ROOT/rules" ]]; then
-  rules_disk="$(find "$ROOT/rules" -maxdepth 1 -name '*.md' -printf '%f\n' | sort)"
-  rules_ref="$(grep -oE '@rules/[A-Za-z0-9._-]+\.md' "$ROOT/CLAUDE.md" | sed 's|.*/||' | sort -u || true)"
-  rules_miss="$(comm -23 <(printf '%s\n' "$rules_disk" | grep -v '^$' || true) \
-                         <(printf '%s\n' "$rules_ref"  | grep -v '^$' || true))"
-  rules_extra="$(comm -13 <(printf '%s\n' "$rules_disk" | grep -v '^$' || true) \
-                          <(printf '%s\n' "$rules_ref"  | grep -v '^$' || true))"
-  if [[ -n "$rules_miss" ]]; then
-    bad "这些规则文件存在，但 CLAUDE.md 没有 @ 引用：$(printf '%s' "$rules_miss" | tr '\n' ' ')"
-    howto "在 CLAUDE.md 的规则清单里补一行 @rules/<文件名>。" \
-          "没被引用的规则不会被读进上下文——它躺在 rules/ 里，看起来却和生效的规则一模一样。"
+FAMILY="$(sed -n 's/^family=//p' "$(dirname "${BASH_SOURCE[0]}")/../I18N" 2>/dev/null | head -1)"
+[[ -n "$FAMILY" ]] || FAMILY=singlefs-ai-sop
+check_rule_refs() { # check_rule_refs <被查的 md，相对 ROOT> <@ 之后的前缀> <rules 目录> <sop|template|project>
+  local md_rel="$1" prefix="$2" rules_dir="$3" which="$4" on_disk referenced missing extra
+  on_disk="$(find "$rules_dir" -maxdepth 1 -name '*.md' -printf '%f\n' | sort)"
+  referenced="$(grep -oE "@${prefix//./\\.}[A-Za-z0-9._-]+\.md" "$ROOT/$md_rel" | sed 's|.*/||' | sort -u || true)"
+  missing="$(comm -23 <(printf '%s\n' "$on_disk" | grep -v '^$' || true) \
+                      <(printf '%s\n' "$referenced" | grep -v '^$' || true))"
+  extra="$(comm -13 <(printf '%s\n' "$on_disk" | grep -v '^$' || true) \
+                    <(printf '%s\n' "$referenced" | grep -v '^$' || true))"
+  if [[ -n "$missing" ]]; then
+    case "$which" in
+      sop) bad "这些规则文件存在，但 CLAUDE.md 没有 @ 引用：$(printf '%s' "$missing" | tr '\n' ' ')"
+           howto "在 CLAUDE.md 的规则清单里补一行 @rules/<文件名>。" \
+                 "没被引用的规则不会被读进上下文——它躺在 rules/ 里，看起来却和生效的规则一模一样。" ;;
+      template) bad "这些规则文件存在，但 $md_rel 没有 @ 引用：$(printf '%s' "$missing" | tr '\n' ' ')"
+           howto "在 $md_rel 的规则清单里补一行 @$prefix<文件名>。" \
+                 "install.sh 拿它铺新项目的 CLAUDE.md：模板漏一条，新项目从第一天起就少读一条规则。" ;;
+      project) bad "装进来的副本里有这些规则，但 CLAUDE.md 没有 @ 引用：$(printf '%s' "$missing" | tr '\n' ' ')"
+           howto "在 CLAUDE.md 的规则清单里补一行 @$prefix<文件名>。" \
+                 "副本里有、CLAUDE.md 没 @ 的规则不会被读进上下文——装了等于没装。" ;;
+    esac
     metafails=$((metafails+1))
   fi
-  if [[ -n "$rules_extra" ]]; then
-    bad "CLAUDE.md 引用了不存在的规则：$(printf '%s' "$rules_extra" | tr '\n' ' ')"
-    howto "把这几行删掉，或者把文件补上。引用不存在的文件不会报错，那一行只是不展开——" \
-          "CLAUDE.md 读起来照样完整，而那条规矩根本没进来。"
+  if [[ -n "$extra" ]]; then
+    case "$which" in
+      sop) bad "CLAUDE.md 引用了不存在的规则：$(printf '%s' "$extra" | tr '\n' ' ')"
+           howto "把这几行删掉，或者把文件补上。引用不存在的文件不会报错，那一行只是不展开——" \
+                 "CLAUDE.md 读起来照样完整，而那条规矩根本没进来。" ;;
+      template) bad "$md_rel 引用了不存在的规则：$(printf '%s' "$extra" | tr '\n' ' ')"
+           howto "把这几行删掉，或者改成现在的文件名。模板里悬空的引用会原样铺进新项目。" ;;
+      project) bad "CLAUDE.md 引用了副本里没有的规则：$(printf '%s' "$extra" | tr '\n' ' ')"
+           howto "上游多半把这条规则合并或改名了：看 .claude/$FAMILY/CHANGELOG.md 里是哪一版动的，" \
+                 "把这一行换成现在的文件名，或者删掉。悬空的引用不报错，那条规矩根本没进来。" ;;
+    esac
     metafails=$((metafails+1))
   fi
+}
+if [[ -d "$ROOT/rules" ]]; then
+  if [[ -f "$ROOT/CLAUDE.md" ]]; then check_rule_refs CLAUDE.md "rules/" "$ROOT/rules" sop; fi
+  if [[ -f "$ROOT/templates/CLAUDE.project.md" ]]; then
+    check_rule_refs templates/CLAUDE.project.md ".claude/$FAMILY/rules/" "$ROOT/rules" template
+  fi
+elif [[ -d "$ROOT/.claude/$FAMILY/rules" && -f "$ROOT/CLAUDE.md" ]]; then
+  check_rule_refs CLAUDE.md ".claude/$FAMILY/rules/" "$ROOT/.claude/$FAMILY/rules" project
 fi
 
 # ── L. 警告记录：.claude/warnings/<日期>.md ────────────────

@@ -8,15 +8,15 @@
 @.claude/singlefs-ai-sop/rules/sop-first.md
 @.claude/singlefs-ai-sop/rules/show-me-test.md
 @.claude/singlefs-ai-sop/rules/machine-first.md
-@.claude/singlefs-ai-sop/rules/doc-discipline.md
+@.claude/singlefs-ai-sop/rules/code-discipline.md
+@.claude/singlefs-ai-sop/rules/writing-discipline.md
 @.claude/singlefs-ai-sop/rules/design-doc-discipline.md
 @.claude/singlefs-ai-sop/rules/kb-discipline.md
 @.claude/singlefs-ai-sop/rules/test-discipline.md
 @.claude/singlefs-ai-sop/rules/evidence-discipline.md
 @.claude/singlefs-ai-sop/rules/verify-before-claiming.md
+@.claude/singlefs-ai-sop/rules/pushback-discipline.md
 @.claude/singlefs-ai-sop/rules/command-safety.md
-@.claude/singlefs-ai-sop/rules/writing-economy.md
-@.claude/singlefs-ai-sop/rules/writing-style.md
 @.claude/singlefs-ai-sop/rules/session-wrapup.md
 
 **文件系统设计特有的规则**（事务、崩溃一致性、盘上格式那一类）放 `.claude/rules/`，
@@ -51,6 +51,7 @@ bash .claude/scripts/lkmm.sh          # 内存序（herd7 + litmus/）
 bash .claude/scripts/qemu.sh --selftest    # QEMU harness 自检
 bash .claude/scripts/gate-lint.sh     # 门禁自身：每条拒绝是否都给了下一步
 bash .claude/scripts/shell-lint.sh    # shell 纪律：按模式杀进程、子 shell 赋值往外带值
+bash .claude/scripts/naming-lint.sh   # 命名纪律：.rs 里的单字母名与常见缩写
 bash .claude/scripts/env.sh           # 环境自检
 ```
 
