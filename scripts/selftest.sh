@@ -450,6 +450,31 @@ bash "$b/f-zh/scripts/manifest.sh" --update >/dev/null
 cp "$b/f-zh/MANIFEST.sha256" "$b/f-en/SOURCE-MANIFEST.sha256"   # 抄了清单却没重译
 run_scripted "i18n-sync/抄了清单没重译" 1 溯源标记与源文对不上 -- bash "$b/f-zh/scripts/i18n-sync.sh" "$b"
 
+# --update 替译本仓刷新 SOURCE-MANIFEST：逐篇溯源都对上才抄，有一篇没重译就不抄。
+# 以前这一步靠人手抄，漏抄时 --update 整个被「落后」拒掉（2026-09-11 发 0.0.42 时实测）。
+b="$tmpd/i18n-autosm"; mk_pair "$b"
+printf '改了一句\n' >> "$b/f-zh/rules/a.md"
+bash "$b/f-zh/scripts/manifest.sh" --update >/dev/null
+printf '改了一句（已重译）\n' >> "$b/f-en/rules/a.md"
+bash "$b/f-zh/scripts/i18n-sync.sh" --stamp en rules/a.md >/dev/null
+run_scripted "i18n-sync/重译并盖章后 --update 自己抄 SOURCE-MANIFEST" 0 \
+  "SOURCE-MANIFEST 已照本仓清单刷新" 逐篇溯源对得上 -- bash "$b/f-zh/scripts/i18n-sync.sh" --update "$b"
+run_scripted "i18n-sync/抄出来的 SOURCE-MANIFEST 与清单逐字节一致" 0 -- \
+  cmp "$b/f-zh/MANIFEST.sha256" "$b/f-en/SOURCE-MANIFEST.sha256"
+
+b="$tmpd/i18n-autosm-stale"; mk_pair "$b"
+printf '改了一句\n' >> "$b/f-zh/rules/a.md"
+bash "$b/f-zh/scripts/manifest.sh" --update >/dev/null
+cp "$b/f-en/SOURCE-MANIFEST.sha256" "$tmpd/i18n-autosm-stale.before"
+run_scripted "i18n-sync/没重译时 --update 不替它抄 SOURCE-MANIFEST" 1 \
+  "SOURCE-MANIFEST 不替它抄" "译自旧版源文，需重译: rules/a.md" -- bash "$b/f-zh/scripts/i18n-sync.sh" --update "$b"
+run_scripted "i18n-sync/没重译时 SOURCE-MANIFEST 一个字节都没动" 0 -- \
+  cmp "$tmpd/i18n-autosm-stale.before" "$b/f-en/SOURCE-MANIFEST.sha256"
+
+b="$tmpd/i18n-autosm-missing"; mk_pair "$b"; rm -f "$b/f-en/SOURCE-MANIFEST.sha256"
+run_scripted "i18n-sync/缺 SOURCE-MANIFEST 时 --update 替它补上" 0 \
+  "SOURCE-MANIFEST 已照本仓清单刷新" -- bash "$b/f-zh/scripts/i18n-sync.sh" --update "$b"
+
 b="$tmpd/i18n-missing"; mk_pair "$b"
 rm -f "$b/f-en/rules/a.md"                            # 少一篇译文
 run_scripted "i18n-sync/少一篇译文" 1 缺 -- bash "$b/f-zh/scripts/i18n-sync.sh" "$b"

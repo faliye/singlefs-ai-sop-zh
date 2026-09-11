@@ -177,8 +177,9 @@ git clone https://<host>/singlefs-ai-sop-ja .claude/singlefs-ai-sop
 `CLAUDE.md`、`rules/`、`agents/`、`skills/`、`templates/`（连 `*.litmus` 一起）。
 判据只有一条：**里面有没有给人读的散文。** 有就翻译，没有就原样复制。
 两边都不沾的会被 `scripts/manifest.sh` 的覆盖率检查拦下来，「忘了纳入」不许静默通过。
-其余语言的仓各抄一份存成 `SOURCE-MANIFEST.sha256`，
-之后比两份清单就知道哪几篇落后了。
+其余语言的仓各存一份 `SOURCE-MANIFEST.sha256`，之后比两份清单就知道哪几篇落后了。
+这份不用手抄：在本仓跑 `bash scripts/i18n-sync.sh --update`，逐篇溯源都对上的译本仓，它照本仓的清单刷新；
+有一篇没重译就不抄，并列出是哪几篇。
 这个仓因此只多 `MANIFEST.sha256` 和 `I18N` **两个小文件**，还是单语言、还是薄的。
 
 改了清单覆盖的任何一篇，就要跑 `bash scripts/manifest.sh --update`，

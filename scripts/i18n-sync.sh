@@ -4,7 +4,8 @@
 # 其余语言的仓拿到的是它的原样复制。default 是给使用者的默认版本。
 #
 #   i18n-sync.sh [各语言仓所在目录]        默认找本仓的兄弟目录
-#   i18n-sync.sh --update [目录]           把共享部分原样复制到各语言仓
+#   i18n-sync.sh --update [目录]           把共享部分原样复制到各语言仓；逐篇溯源都对上的译本仓，
+#                                          顺手把本仓 MANIFEST.sha256 抄成它的 SOURCE-MANIFEST.sha256
 #   i18n-sync.sh --stamp <语言> <篇>...    给已重译好的那几篇盖上溯源标记
 #
 # --stamp 要求把篇目一个个写出来，不提供「全部盖章」。
@@ -88,6 +89,27 @@ stamp_read() { # stamp_read <文件>
         printf "%s %s\n", substr(t, 1, i - 1), substr(t, i + 8, 64)
       }
     }' "$1"
+}
+
+# 逐篇溯源：列出译本仓里与当前清单对不上的篇目，一行一条「<哪种对不上>: <路径>」，全对上时什么都不打印。
+# 判据只写这一处：--update 决定能不能替译本仓抄 SOURCE-MANIFEST，与下面第 5 项逐篇比对，用的是同一个函数。
+stale_articles() { # stale_articles <译本仓>
+  local repo="$1" hash path tf gp gh
+  while read -r hash path; do
+    tf="$repo/$path"
+    [[ -f "$tf" ]] || { printf '缺: %s\n' "$path"; continue; }
+    # 没有标记时 stamp_read 无输出，read 返回非 0 —— set -e 会让脚本在这里静默退出，
+    # 而「静默退出」正是本门禁要拦的那种失败。所以吃掉退出码，靠 $gh 空不空判。
+    gp=''; gh=''
+    read -r gp gh < <(stamp_read "$tf") || true
+    if [[ -z "$gh" ]]; then
+      printf '首行缺 generated-from 标记: %s\n' "$path"
+    elif [[ "$gp" != "$path" ]]; then
+      printf '溯源标记指向别的源文（%s）: %s\n' "$gp" "$path"
+    elif [[ "$gh" != "$hash" ]]; then
+      printf '译自旧版源文，需重译: %s\n' "$path"
+    fi
+  done < "$MF"
 }
 
 # 原样复制到各语言仓的部分：**只有不含面向人的散文的东西**——脚本与配置。
@@ -178,9 +200,31 @@ for lang in $LANGS; do
     fails=$((fails+1)); continue
   fi
   sm="$repo/SOURCE-MANIFEST.sha256"
+  # --update 顺手替译本仓刷新 SOURCE-MANIFEST，但只在逐篇溯源全都对上时。
+  # 以前这一步靠人手抄，漏抄时 --update 整个被下面的「落后」拒掉，共享部分一份都没同步过去
+  # （2026-09-11 发 0.0.42 时实测卡在这里）。不能无条件抄：抄了清单却没重译，译本仓就被说成跟上了。
+  if [[ $UPDATE -eq 1 ]] && ! cmp -s "$MF" "$sm"; then
+    [[ -d "$repo/.git" ]] || { bad "$lang  $repo 不是 git 仓，拒绝往里写 SOURCE-MANIFEST"
+      howto "只往 git 仓里写——写错地方无从回退。" \
+            "确认路径，或用 bash scripts/i18n-sync.sh --update /path/to/repos 指定。"
+      fails=$((fails+1)); continue; }
+    articles="$(stale_articles "$repo")"
+    if [[ -n "$articles" ]]; then
+      bad "$lang  还有 $(grep -c . <<< "$articles") 篇译文没跟上当前源文，SOURCE-MANIFEST 不替它抄"
+      sed 's/^/        /' <<< "$articles"
+      howto "按当前源文重译这几篇并盖章： bash scripts/i18n-sync.sh --stamp $lang <篇目>…" \
+            "再跑 bash scripts/i18n-sync.sh --update，逐篇对上了它自己抄 SOURCE-MANIFEST。"
+      fails=$((fails+1)); continue
+    fi
+    cp "$MF" "$sm"
+    cmp -s "$MF" "$sm" || { bad "$lang  SOURCE-MANIFEST 抄完回读与本仓清单对不上"
+      howto "看 $sm 是不是只读、或者磁盘满了；修好后重跑 bash scripts/i18n-sync.sh --update"
+      fails=$((fails+1)); continue; }
+    ok "$lang  SOURCE-MANIFEST 已照本仓清单刷新（$(wc -l < "$MF") 篇逐篇溯源都对得上）"
+  fi
   if [[ ! -f "$sm" ]]; then
     bad "$lang  译本仓缺 SOURCE-MANIFEST.sha256"
-    howto "更新该语言时把本仓的 MANIFEST.sha256 抄过去存成这个名字。"
+    howto "跑 bash scripts/i18n-sync.sh --update：逐篇溯源都对上时，它自己把本仓的 MANIFEST.sha256 抄成这个名字。"
     fails=$((fails+1)); continue
   fi
   if ! diff -q "$MF" "$sm" >/dev/null 2>&1; then
@@ -191,7 +235,7 @@ for lang in $LANGS; do
     # 不截断：截断的话，重译的人照着列表做完仍然红，而他看不出还差哪几篇
     # （本轮实测：20 篇里只显示了 10 篇）。
     diff "$MF" "$sm" | grep '^<' | awk '{print $3}' | sed 's/^/        待重译: /' || true
-    howto "把上面这几篇在该语言仓里改到位，然后把本仓的 MANIFEST.sha256 抄成它的 SOURCE-MANIFEST.sha256。" \
+    howto "把上面这几篇在该语言仓里重译并盖章（--stamp），再跑 bash scripts/i18n-sync.sh --update，它逐篇对上后自己抄 SOURCE-MANIFEST。" \
           "只抄清单不重译拦得住：下一项逐篇比对译文首行的 generated-from 哈希。"
     fails=$((fails+1)); continue
   fi
@@ -271,22 +315,10 @@ for lang in $LANGS; do
   # 逐篇溯源：译文首行记着它译自源文的哪个版本。
   # 只比两份清单的话，「抄了清单却没重译」会绿——那是最危险的一种绿：
   # 版本号、清单、门禁三样都说「最新」，而那一篇正文还是旧的。
-  miss=0; stale=0
-  while read -r hash path; do
-    tf="$repo/$path"
-    [[ -f "$tf" ]] || { miss=$((miss+1)); say "        缺: $path"; continue; }
-    # 没有标记时 sed 无输出，read 返回非 0 —— set -e 会让脚本在这里静默退出，
-    # 而「静默退出」正是本门禁要拦的那种失败。所以吃掉退出码，靠 $gh 空不空判。
-    gp=''; gh=''
-    read -r gp gh < <(stamp_read "$tf") || true
-    if [[ -z "$gh" ]]; then
-      stale=$((stale+1)); say "        首行缺 generated-from 标记: $path"
-    elif [[ "$gp" != "$path" ]]; then
-      stale=$((stale+1)); say "        溯源标记指向别的源文（$gp）: $path"
-    elif [[ "$gh" != "$hash" ]]; then
-      stale=$((stale+1)); say "        译自旧版源文，需重译: $path"
-    fi
-  done < "$MF"
+  articles="$(stale_articles "$repo")"
+  [[ -z "$articles" ]] || sed 's/^/        /' <<< "$articles"
+  miss="$(grep -c '^缺: ' <<< "$articles" || true)"
+  stale="$(grep -c -v -e '^缺: ' -e '^$' <<< "$articles" || true)"
   if [[ $miss -gt 0 ]]; then
     bad "$lang  清单一致但缺 $miss 个文件"
     howto "补齐这几篇译文。声明了这种语言却不给全，等于给人一份残缺的规则。"
