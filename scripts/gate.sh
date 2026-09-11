@@ -10,6 +10,42 @@
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 SCRIPTS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# ── --staged：只拿「HEAD + 暂存区」跑整道门禁 ─────────────
+# 几个会话共写一个仓时，工作区里混着别人没收尾的改动与未跟踪文件，门禁在工作区上判的红分不清是谁的
+# （rules/session-wrapup.md 第 4 条）。这里在临时 worktree 上把 `git diff --cached` 套到 HEAD 上，
+# 再对那棵树跑一遍整道门禁：别人的未提交改动与未跟踪文件都不进来，红的就是这一次提交带进来的。
+# 规范副本不进 git 时（项目常把 .claude/<包名>/ 放进 .gitignore）原样拷进 worktree，否则项目里的包装脚本转发不到。
+# worktree 里的构建从零开始；要复用构建产物，自己设 CARGO_TARGET_DIR 之类的环境变量。
+if [[ "${1:-}" == --staged ]]; then
+  shift
+  src_root="$(cd "${1:-$(project_root)}" 2>/dev/null && pwd)" || die "找不到项目根：${1:-当前目录}" \
+    "在项目根跑，或把它作为第二个参数传进来： bash .claude/scripts/gate.sh --staged <项目根>"
+  git -C "$src_root" rev-parse --git-dir >/dev/null 2>&1 || die "--staged 要在 git 仓里跑，而 $src_root 不是" \
+    "去掉 --staged 直接跑，或者到仓里再跑。"
+  staged_base="$(mktemp -d)"; staged_tree="$staged_base/tree"
+  if ! git -C "$src_root" diff --cached --binary > "$staged_base/staged.patch"; then
+    rm -rf "${staged_base:?}"; die "取不到暂存区的 diff" "确认 git 可用，再跑一次。"
+  fi
+  if ! git -C "$src_root" worktree add --detach "$staged_tree" HEAD >/dev/null 2>&1; then
+    rm -rf "${staged_base:?}"; die "建临时 worktree 失败" "先跑 git worktree prune 清掉残留的登记，再跑一次。"
+  fi
+  if [[ -s "$staged_base/staged.patch" ]] && ! git -C "$staged_tree" apply --index "$staged_base/staged.patch"; then
+    git -C "$src_root" worktree remove --force "$staged_tree" >/dev/null 2>&1; rm -rf "${staged_base:?}"
+    die "暂存区的 diff 套不上 HEAD" "先 git status 看暂存区是不是基于当前 HEAD，再跑一次。"
+  fi
+  staged_family="$(sed -n 's/^family=//p' "$SCRIPTS/../I18N" 2>/dev/null)"; staged_family="${staged_family:-singlefs-ai-sop}"
+  if [[ -d "$src_root/.claude/$staged_family" && ! -d "$staged_tree/.claude/$staged_family" ]]; then
+    mkdir -p "$staged_tree/.claude"; cp -r "$src_root/.claude/$staged_family" "$staged_tree/.claude/"
+  fi
+  head1 "只拿 HEAD + 暂存区跑（--staged）"
+  ok "临时 worktree：$staged_tree（跑完删掉）"
+  ok "不进这一轮的：工作区里没暂存的 $(git -C "$src_root" diff --name-only | wc -l) 个文件、未跟踪的 $(git -C "$src_root" ls-files --others --exclude-standard | wc -l) 个文件"
+  GATE_STAGED_FROM="$src_root" bash "$SCRIPTS/gate.sh" "$staged_tree"; staged_rc=$?
+  git -C "$src_root" worktree remove --force "$staged_tree" >/dev/null 2>&1
+  rm -rf "${staged_base:?}"
+  exit "$staged_rc"
+fi
 ROOT="${1:-$(project_root)}"
 [[ -d "$ROOT" ]] || die "找不到项目根：$ROOT" \
   "在项目根跑，或把它作为第一个参数传进来： bash .claude/scripts/gate.sh <项目根>"
@@ -57,7 +93,8 @@ fi
 up_ver=""; up_dir=""
 fam="$(sed -n 's/^family=//p' "$SCRIPTS/../I18N" 2>/dev/null || echo singlefs-ai-sop)"
 for lang in $(sed -n 's/^languages=//p' "$SCRIPTS/../I18N" 2>/dev/null); do
-  cand="$(cd "$ROOT/.." 2>/dev/null && pwd)/$fam-$lang"
+  # --staged 时 ROOT 是临时 worktree，兄弟目录要从原来的项目根找
+  cand="$(cd "${GATE_STAGED_FROM:-$ROOT}/.." 2>/dev/null && pwd)/$fam-$lang"
   if [[ -f "$cand/VERSION" ]]; then up_ver="$(cat "$cand/VERSION")"; up_dir="$cand"; break; fi
 done
 inst_ver="$(cat "$ROOT/.claude/$fam/VERSION" 2>/dev/null || echo "")"

@@ -307,6 +307,25 @@ for st in doc-lint naming-lint selftest gate-lint shell-lint show-me-test versio
   run_scripted "gate/$st 红则门禁红" 1 门禁未通过 -- bash "$r/scripts/gate.sh" "$r"
 done
 
+# --staged：别的会话没暂存的改动不算，暂存了的算（rules/session-wrapup.md 第 4 条）。
+# 同一处改动不带 --staged 时要算进来——少了这一例，「--staged 的绿」分不清是没算进来还是那个阶段根本不红。
+mk_staged_project() { # mk_staged_project <目录>：带一个项目本地阶段的最小项目仓，kb/ 里出现 BAD 就红
+  local p="$1"
+  mkdir -p "$p/.claude/gate.d" "$p/kb"
+  printf '0.0.0\n' > "$p/.singlefs-ai-sop-version"
+  printf '#!/usr/bin/env bash\n# gate-stage: 样本\ncd "${1:-.}" || exit 2\nif grep -rq BAD kb/; then echo "  ✗ kb 里有 BAD"; echo "     → 删掉"; exit 1; fi\necho "  ✓ kb 里没有 BAD"\n' > "$p/.claude/gate.d/50-sample.sh"
+  printf '干净\n' > "$p/kb/a.md"; printf '干净\n' > "$p/kb/b.md"
+  git -C "$p" init -q && git -C "$p" add -A && git -C "$p" -c user.name=t -c user.email=t@t commit -qm base
+}
+r="$tmpd/gate-staged"; mk_gate_pkg "$r/pkg"; mk_staged_project "$r/proj"
+printf 'BAD（别的会话没暂存的）\n' >> "$r/proj/kb/a.md"
+printf '这一轮的\n' >> "$r/proj/kb/b.md"; git -C "$r/proj" add kb/b.md
+run_scripted "gate/--staged 不算没暂存的改动" 0 "只拿 HEAD + 暂存区跑" "已实现的门禁阶段全部通过" \
+  -- bash "$r/pkg/scripts/gate.sh" --staged "$r/proj"
+run_scripted "gate/不带 --staged 时同一处要算进来" 1 门禁未通过 -- bash "$r/pkg/scripts/gate.sh" "$r/proj"
+printf 'BAD（这一轮的）\n' >> "$r/proj/kb/b.md"; git -C "$r/proj" add kb/b.md
+run_scripted "gate/--staged 算暂存了的改动" 1 门禁未通过 -- bash "$r/pkg/scripts/gate.sh" --staged "$r/proj"
+
 # ════ changelog-lint ═════════════════════════════════════
 head1 "门禁自检：changelog-lint 的判别力"
 [[ -d "$FX/changelog-lint" ]] || { bad "缺样本目录 $FX/changelog-lint"
