@@ -3,6 +3,12 @@
 规则与门禁的版本历史。`CLAUDE.md` 与 `rules/*.md` 不留历史节（design-doc-discipline），
 历史一律记在这里；逐条改动细节见 `git log`，提交信息即变更说明。
 
+## 0.0.45 — 2026-09-11
+
+**`gate.sh --staged` 跑到一半被打断也清掉临时 worktree。** 此前 Ctrl-C 打断时 worktree 留在仓里，下一次要手工
+`git worktree prune`；现在建好 worktree 之后挂 INT / TERM 的 trap，清掉再退出。selftest 加一例：睡 20 秒的项目阶段
+跑到一半给整组发 INT，打断之后仓里只许剩一个 worktree 登记；删掉 trap 这一例判红。
+
 ## 0.0.44 — 2026-09-11
 
 **`gate.sh --staged`：只拿「HEAD + 暂存区」跑整道门禁。** 几个会话共写一个仓时，工作区里混着别人没收尾的改动与未跟踪文件，

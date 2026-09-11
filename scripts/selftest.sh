@@ -326,6 +326,28 @@ run_scripted "gate/不带 --staged 时同一处要算进来" 1 门禁未通过 -
 printf 'BAD（这一轮的）\n' >> "$r/proj/kb/b.md"; git -C "$r/proj" add kb/b.md
 run_scripted "gate/--staged 算暂存了的改动" 1 门禁未通过 -- bash "$r/pkg/scripts/gate.sh" --staged "$r/proj"
 
+# --staged 跑到一半被打断（Ctrl-C）也要清掉临时 worktree：留下的会一直登记在仓里，下一次还得手工 git worktree prune。
+# 一个睡 20 秒的项目阶段，worktree 建起来之后给整组发 INT；开 job control（set -m）是为了让后台那一组收得到 INT。
+# 写成独立的 bash 程序：run_scripted 经 timeout 执行命令，timeout 看不见 shell 函数。
+staged_interrupt=(bash -c '
+  pkg="$1" proj="$2"
+  set -m
+  bash "$pkg/scripts/gate.sh" --staged "$proj" >/dev/null 2>&1 &
+  job="$!"
+  for _ in $(seq 1 100); do
+    [[ "$(git -C "$proj" worktree list --porcelain | grep -c "^worktree ")" -ge 2 ]] && break
+    sleep 0.1
+  done
+  kill -INT -- -"$job" 2>/dev/null; wait "$job" 2>/dev/null
+  left="$(git -C "$proj" worktree list --porcelain | grep -c "^worktree ")"
+  echo "打断之后仓里登记的 worktree：$left 个"
+  [[ "$left" == 1 ]]' staged_interrupt)
+r="$tmpd/gate-staged-interrupt"; mk_gate_pkg "$r/pkg"; mk_staged_project "$r/proj"
+printf '#!/usr/bin/env bash\n# gate-stage: 慢样本\nsleep 20\n' > "$r/proj/.claude/gate.d/60-slow.sh"
+git -C "$r/proj" add .claude/gate.d/60-slow.sh
+run_scripted "gate/--staged 跑到一半被打断也清掉临时 worktree" 0 "打断之后仓里登记的 worktree：1 个" \
+  -- "${staged_interrupt[@]}" "$r/pkg" "$r/proj"
+
 # ════ changelog-lint ═════════════════════════════════════
 head1 "门禁自检：changelog-lint 的判别力"
 [[ -d "$FX/changelog-lint" ]] || { bad "缺样本目录 $FX/changelog-lint"

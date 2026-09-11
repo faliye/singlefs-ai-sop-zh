@@ -30,8 +30,12 @@ if [[ "${1:-}" == --staged ]]; then
   if ! git -C "$src_root" worktree add --detach "$staged_tree" HEAD >/dev/null 2>&1; then
     rm -rf "${staged_base:?}"; die "建临时 worktree 失败" "先跑 git worktree prune 清掉残留的登记，再跑一次。"
   fi
+  # 跑到一半被打断（Ctrl-C）或被杀时也要删掉临时 worktree：留下的会一直登记在仓里，下一次还得手工 git worktree prune。
+  staged_cleanup() { git -C "$src_root" worktree remove --force "$staged_tree" >/dev/null 2>&1; rm -rf "${staged_base:?}"; }
+  trap 'staged_cleanup; exit 130' INT
+  trap 'staged_cleanup; exit 143' TERM
   if [[ -s "$staged_base/staged.patch" ]] && ! git -C "$staged_tree" apply --index "$staged_base/staged.patch"; then
-    git -C "$src_root" worktree remove --force "$staged_tree" >/dev/null 2>&1; rm -rf "${staged_base:?}"
+    trap - INT TERM; staged_cleanup
     die "暂存区的 diff 套不上 HEAD" "先 git status 看暂存区是不是基于当前 HEAD，再跑一次。"
   fi
   staged_family="$(sed -n 's/^family=//p' "$SCRIPTS/../I18N" 2>/dev/null)"; staged_family="${staged_family:-singlefs-ai-sop}"
@@ -42,8 +46,8 @@ if [[ "${1:-}" == --staged ]]; then
   ok "临时 worktree：$staged_tree（跑完删掉）"
   ok "不进这一轮的：工作区里没暂存的 $(git -C "$src_root" diff --name-only | wc -l) 个文件、未跟踪的 $(git -C "$src_root" ls-files --others --exclude-standard | wc -l) 个文件"
   GATE_STAGED_FROM="$src_root" bash "$SCRIPTS/gate.sh" "$staged_tree"; staged_rc=$?
-  git -C "$src_root" worktree remove --force "$staged_tree" >/dev/null 2>&1
-  rm -rf "${staged_base:?}"
+  trap - INT TERM
+  staged_cleanup
   exit "$staged_rc"
 fi
 ROOT="${1:-$(project_root)}"
