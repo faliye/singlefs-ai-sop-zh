@@ -708,6 +708,85 @@ p="$tmpd/mani-exempt/f-zh"; mkdir -p "$(dirname "$p")"; mk_pkg "$p" f
 printf '# 门面\n' > "$p/README.md"; printf '# 历史\n' > "$p/CHANGELOG.md"
 run_scripted "manifest/显式豁免的不算漏" 0 没有漏归属 -- bash "$p/scripts/manifest.sh"
 
+# ════ push-all ═══════════════════════════════════════════
+head1 "门禁自检：push-all 的判别力"
+# 三个语言仓各带一个没推的提交，各配一个本地裸仓当远端；gate.sh 用桩，红绿由参数定。
+# 走的是真实路径：在 zh 里 git push → pre-push 钩子 → push-all.sh → 推 ja、en → 放行 zh。
+mk_push_family() { # mk_push_family <目录> [门禁判红的语言]
+  local root="$1" red_language="${2:-}" language clone
+  mkdir -p "$root"
+  for language in zh en ja; do
+    clone="$root/fam-$language"
+    git init -q --bare -b master "$root/remote-$language.git"
+    git init -q -b master "$clone"
+    mkdir -p "$clone/scripts/githooks"
+    cp "$SCRIPTS/push-all.sh" "$SCRIPTS/lib.sh" "$clone/scripts/"
+    cp "$SCRIPTS/githooks/pre-push" "$clone/scripts/githooks/"
+    if [[ "$language" == "$red_language" ]]; then
+      printf '#!/usr/bin/env bash\necho "  桩门禁判红"\nexit 1\n' > "$clone/scripts/gate.sh"
+    else
+      printf '#!/usr/bin/env bash\nexit 0\n' > "$clone/scripts/gate.sh"
+    fi
+    printf 'family=fam\nthis=%s\nreference=zh\ndefault=en\nlanguages=zh ja en\n' "$language" > "$clone/I18N"
+    echo 0.0.1 > "$clone/VERSION"
+    git -C "$clone" add -A
+    git -C "$clone" -c user.name=selftest -c user.email=selftest@invalid commit -qm 起点
+    git -C "$clone" remote add origin "$root/remote-$language.git"
+    git -C "$clone" push -q origin master
+    echo 0.0.2 > "$clone/VERSION"
+    git -C "$clone" -c user.name=selftest -c user.email=selftest@invalid commit -qam 待推
+    git -C "$clone" config core.hooksPath scripts/githooks
+  done
+}
+# 远端 master 与本地 HEAD 逐仓比：all = 三个都到了，none = 一个都没到。
+# 写成独立的 bash 程序而不是函数：run_scripted 经 timeout 执行命令，timeout 看不见 shell 函数（退出码 127）。
+remotes_state=(bash -c '
+  root="$1" want="$2" matched=0
+  for language in zh en ja; do
+    [[ "$(git -C "$root/fam-$language" rev-parse HEAD)" == "$(git -C "$root/remote-$language.git" rev-parse master)" ]] \
+      && matched=$((matched+1))
+  done
+  echo "远端对上本地的仓：$matched 个"
+  if [[ "$want" == all ]]; then [[ $matched == 3 ]]; else [[ $matched == 0 ]]; fi' remotes_state)
+
+r="$tmpd/push-green"; mk_push_family "$r"
+run_scripted "push-all/三仓全绿：在 zh 里 git push 就三个一起推" 0 "放行 zh 这次推送" "ja：已推" "en：已推" -- \
+  git -C "$r/fam-zh" push origin master
+run_scripted "push-all/全绿之后三个远端都到了本地的提交" 0 "远端对上本地的仓：3 个" -- "${remotes_state[@]}" "$r" all
+
+r="$tmpd/push-dirty"; mk_push_family "$r"; echo 没提交 > "$r/fam-en/stray"
+run_scripted "push-all/有一个仓工作区不干净就一个都不推" 1 "en：工作区不干净" "一个仓都没推" -- \
+  git -C "$r/fam-zh" push origin master
+run_scripted "push-all/工作区不干净时三个远端都没动" 0 "远端对上本地的仓：0 个" -- "${remotes_state[@]}" "$r" none
+
+r="$tmpd/push-version"; mk_push_family "$r"; echo 0.0.3 > "$r/fam-ja/VERSION"
+git -C "$r/fam-ja" -c user.name=selftest -c user.email=selftest@invalid commit -qam 版本漂了
+run_scripted "push-all/VERSION 不一致就拒" 1 "ja：VERSION 是 0.0.3，而 zh 是 0.0.2" -- \
+  git -C "$r/fam-zh" push origin master
+
+r="$tmpd/push-gate-red"; mk_push_family "$r" ja
+run_scripted "push-all/任一仓门禁红就拒" 1 "ja：门禁没过" "桩门禁判红" -- \
+  git -C "$r/fam-zh" push origin master
+run_scripted "push-all/门禁红时三个远端都没动" 0 "远端对上本地的仓：0 个" -- "${remotes_state[@]}" "$r" none
+
+# 在 git worktree 里推：git 给钩子的 GIT_DIR 是 zh 的绝对路径，它压过 `git -C`。
+# push-all.sh 开头不清掉它的话，对 ja、en 的查验和推送都会落在 zh 上，这两个远端就到不了。
+r="$tmpd/push-worktree"; mk_push_family "$r"
+git -C "$r/fam-zh" switch -q -c parking
+git -C "$r/fam-zh" worktree add -q "$r/worktree-zh" master
+run_scripted "push-all/在 git worktree 里推也三个一起推" 0 "放行 zh 这次推送" "ja：已推" "en：已推" -- \
+  git -C "$r/worktree-zh" push origin master
+run_scripted "push-all/worktree 里推完三个远端都到了本地的提交" 0 "远端对上本地的仓：3 个" -- "${remotes_state[@]}" "$r" all
+
+# 推到一半失败：en 的远端有一个本地没有的提交 ⇒ ja 已推、en 被拒、zh 不推，而且要报出已推的是哪些
+r="$tmpd/push-partial"; mk_push_family "$r"
+git clone -q "$r/remote-en.git" "$r/other-en"
+echo 别处 > "$r/other-en/elsewhere"; git -C "$r/other-en" add elsewhere
+git -C "$r/other-en" -c user.name=selftest -c user.email=selftest@invalid commit -qm 别处的提交
+git -C "$r/other-en" push -q origin master
+run_scripted "push-all/推到一半被拒要报出已推的仓" 1 "en：推送失败" "已经推上去的：ja" -- \
+  git -C "$r/fam-zh" push origin master
+
 # ── 汇总 ────────────────────────────────────────────────
 say ""
 [[ $cases -gt 0 ]] || { bad "一个用例都没跑"

@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# git 的 pre-push 钩子：推任何一个语言仓，都交给 push-all.sh 把全部语言仓一起验、一起推。
+#   启用（每个语言仓各一次）：git config core.hooksPath scripts/githooks
+# push-all.sh 推其余语言仓时带着 SOP_PUSH_ALL_INNER=1，那几次推送在这里直接放行，不再反过来推本仓。
+[[ "${SOP_PUSH_ALL_INNER:-}" == 1 ]] && exit 0
+cat > /dev/null   # git 把要推的 ref 从标准输入喂进来；这里不按 ref 区分，一律全部语言仓一起验
+exec bash "$(dirname "${BASH_SOURCE[0]}")/../push-all.sh" --from-hook

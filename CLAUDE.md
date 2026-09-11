@@ -20,6 +20,10 @@
 **改规则就得把所有已发布的语言版本一起改、一起合并**，一致性由改的人自己保证：
 门禁只看得出哈希对不上，看不出各版本说的是不是一回事。
 
+**推送走钩子，全部语言仓一起验、一起推。** 每个语言仓各跑一次 `git config core.hooksPath scripts/githooks`，
+之后在任何一个仓里 `git push`，都先把全部语言仓验一遍（在 master、工作区干净、VERSION 相同、门禁全绿），
+全过了才一起推。做法见 `scripts/push-all.sh`。
+
 **什么要翻译、什么原样复制**，判据是「里面有没有给人读的散文」。
 清单在 `scripts/manifest.sh`（`translated_paths` 和 `not_translated_re` 两张表）。
 两边都不沾的文本会被覆盖率检查拦下来。
