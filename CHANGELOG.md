@@ -3,6 +3,20 @@
 规则与门禁的版本历史。`CLAUDE.md` 与 `rules/*.md` 不留历史节（design-doc-discipline），
 历史一律记在这里；逐条改动细节见 `git log`，提交信息即变更说明。
 
+## 0.0.47 — 2026-09-13
+
+**0.0.46 三语核对，修正 4 处译文问题和 1 处中文自身的漂移。** 派四个 agent 逐段核对
+`evidence-discipline.md`、`show-me-test.md`、`test-discipline.md`、`verify-before-claiming.md`
+的中英日三语是否语义一致（show-me-test 未发现问题）。修正：
+`verify-before-claiming.md` 英文丢了一处粗体强调（「不等于你知道它定的是什么」）；
+同一篇「别人提出的事实性更正」被英文和日文都窄化译成了「the user / 利用者」，
+与 `pushback-discipline.md` 里同一句的译法（someone else / 他人）不一致，改回一致；
+`test-discipline.md` 英文把「作废条款」（discard clause）与「失败条款」（failure clause）
+两个不同术语混成了一个词，改回 `discard clause`；
+`evidence-discipline.md` 日文「门禁」一词前后分别译成「門番」和「ゲート」两种说法，统一成「ゲート」；
+英文「判据」一词有一处走样译成「Test」，改回「Criterion」。
+另发现中文源文自身的漂移：「自问表」在历次追加后已有 6 行，正文却仍写「这四条」，改成「这六条」。
+
 ## 0.0.46 — 2026-09-13
 
 **四条规则补七处 2026-09-13 的实测教训，门禁不动。** `evidence-discipline.md`：「不许先有结论再建模型」的自问表加一行
