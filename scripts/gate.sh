@@ -6,7 +6,7 @@
 #   2. 任何阶段都能失败——不存在只会成功的检查
 #   3. 退出码：0 = 全部已实现阶段通过；非 0 = 有阶段失败
 #
-# 注意：本门禁当前**尚未覆盖崩溃一致性**。绿色不等于验证充分，见文末未实现清单。
+# 注意：共享阶段不覆盖崩溃一致性，要靠项目本地阶段接上并声明（# gate-covers:）。绿色不等于验证充分，见文末未实现清单。
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 SCRIPTS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -136,7 +136,7 @@ run_stage "门禁自检" bash "$SCRIPTS/gate-lint.sh" "${LINT_EXTRA[@]}"
 # 后者靠样本证明（rules/sop-first.md：没有自检能力的门禁是摆设）。
 run_stage "门禁判别力" bash "$SCRIPTS/selftest.sh"
 # command-safety.md 里可机检的那几条：按模式匹配杀进程、子 shell 赋值往外带值。
-# 以前它们只是文档里的提醒句，而本仓自己的 qemu/run.sh 违反了其中一条整整一轮。
+# 以前它们只是文档里的提醒句，而本仓当时自带的 QEMU harness 就违反了其中一条整整一轮。
 run_stage "shell 纪律" bash "$SCRIPTS/shell-lint.sh" "${LINT_EXTRA[@]}"
 
 # ── 阶段 1：文档铁律 ────────────────────────────────────
@@ -194,15 +194,32 @@ if [[ -d "$SCRIPTS/../rules" && -f "$SCRIPTS/manifest.sh" ]]; then
   fi
 fi
 
+# ── 未实现的验证手段：共享门禁带不了、要项目自己接的 ─────
+# 键 → 缺的是什么。项目本地阶段在头部写 `# gate-covers: <键>`（一行一个，字面照抄键），
+# 它这一轮跑了而且通过，汇总里这一项才换成「由哪个阶段覆盖」；跑红了、退 77 了，都照旧列在未实现里。
+# 覆盖只说明「有一个阶段在做这件事，这一轮过了」，它做到多大范围，看那个阶段自己的名字与说明。
+# 清单写死的时候，singlefs 每次门禁都跑崩溃点重放与真设备阶段，汇总却照样打印「缺被测对象」。
+NOT_IMPL_KEYS=("模型对拍" "崩溃点重放" "QEMU 真实负载" "QEMU 崩溃注入" "命名纪律（shell）")
+declare -A NOT_IMPL_WHAT=(
+  ["模型对拍"]="同一串随机操作分别施加到理想模型与实现上，比结果（rules/test-discipline.md）"
+  ["崩溃点重放"]="记下块层的全部写请求，逐个崩溃点截断、重放、跑 checker（rules/test-discipline.md）"
+  ["QEMU 真实负载"]="被测程序在虚机里的真块设备上跑；共享门禁不带虚机装置（rules/show-me-test.md「最终判据是 QEMU/KVM 压测」）"
+  ["QEMU 崩溃注入"]="虚机里跑真实负载加崩溃注入、跑完 checker 全绿，准入的最终判据（同上）"
+  ["命名纪律（shell）"]="只查 .rs 里声明的名字；shell 脚本的名字还没做成检查（rules/code-discipline.md）"
+)
+declare -A COVERED_BY=()
+
 # ── 阶段 3c：项目本地阶段（.claude/gate.d/*.sh）─────────
 # 共享门禁管不了「这个项目自己的 kb 该长什么样」这类检查，但那类检查同样必须**会红**，
 # 不能只写在文档里当提醒句（rules/show-me-test.md：踩过的坑要做成会失败的检查）。
 # 所以留一个挂载点：项目把自己的检查丢进 .claude/gate.d/，门禁按文件名排序逐个当阶段跑。
 #
-# 三条纪律与其余阶段一致：
+# 五条纪律与其余阶段一致：
 #   1. 目录不存在 ⇒ 说「项目没有本地阶段」，不记阶段——那不是「通过」，是「没有」
 #   2. 脚本存在但跑不起来（没有执行位、语法错、找不到解释器）⇒ **判红**，不许当成跳过
 #   3. 阶段名取脚本头部的 `# gate-stage: <名字>`，没写就用文件名——名字要出现在汇总里
+#   4. 退出码 77 = 这一轮无对象可判 ⇒ 记「本次未跑」，不记通过。exit 0 的跳过在汇总里与「判过了」一模一样
+#   5. 头部 `# gate-covers: <键>` 声明它覆盖上面未实现清单里的哪一项；只有这一轮通过才算数，键写错判红
 head1 "项目本地阶段"
 GATE_D="$ROOT/.claude/gate.d"
 LOCAL_FILES=()
@@ -228,7 +245,31 @@ else
     # 取阶段名。读得到才走到这里，但仍然兜一层——名字取不到不该让门禁失去汇总。
     sname="$(sed -n 's/^# gate-stage:[[:space:]]*//p' "$f" 2>/dev/null | head -1 || true)"
     [[ -n "$sname" ]] || sname="$(basename "$f" .sh)"
-    run_stage "$sname" bash "$f" "$ROOT"
+    covered_keys=()
+    while IFS= read -r covered_key; do
+      if [[ -n "$covered_key" ]]; then covered_keys+=("$covered_key"); fi
+    done < <(sed -n 's/^# gate-covers:[[:space:]]*//p' "$f" 2>/dev/null | sed 's/[[:space:]]*$//' || true)
+    head1 "$sname"
+    stage_rc=0; GATE_IN_STAGE=1 bash "$f" "$ROOT" || stage_rc=$?
+    case "$stage_rc" in
+      0)  record "$sname" PASS ;;
+      77) NOT_RUN+=("$sname    本次未跑：阶段报了这一轮无对象可判（退出码 77），原因见上方它的输出") ;;
+      *)  record "$sname" FAIL ;;
+    esac
+    unknown_keys=()
+    for covered_key in "${covered_keys[@]}"; do
+      if [[ -z "${NOT_IMPL_WHAT[$covered_key]+set}" ]]; then
+        unknown_keys+=("$covered_key")
+      elif [[ $stage_rc -eq 0 ]]; then
+        COVERED_BY["$covered_key"]+="${COVERED_BY[$covered_key]:+、}$sname"
+      fi
+    done
+    if [[ ${#unknown_keys[@]} -gt 0 ]]; then
+      bad "$sname 的 gate-covers 写了清单里没有的项：$(printf '「%s」' "${unknown_keys[@]}")"
+      howto "只认这几个键，一行一个，字面照抄：$(printf '「%s」' "${NOT_IMPL_KEYS[@]}")" \
+            "写错一个字，那一项就一直列在未实现里，而写的人以为已经覆盖了。"
+      record "覆盖声明（$sname）" FAIL
+    fi
   done
 fi
 
@@ -240,21 +281,6 @@ else
   ok "项目没有 litmus/ 目录，本阶段不适用"
   record "LKMM" PASS
 fi
-
-# ── 阶段 5：QEMU harness 自检（默认不跑，太慢）──────────
-if [[ -n "${GATE_QEMU:-}" ]]; then
-  run_stage "QEMU harness" bash "$SCRIPTS/qemu/run.sh" --selftest "$ROOT"
-else
-  NOT_RUN+=("QEMU harness 自检   本次未跑（要两次虚机启动）。跑： GATE_QEMU=1 bash .claude/scripts/gate.sh")
-fi
-
-# ── 未实现的阶段（必须显式列出）────────────────────────
-NOT_IMPL=(
-  "模型对拍          需要 checker 与实现存在（rules/test-discipline.md）"
-  "崩溃点重放        需要块层写记录 + checker（rules/test-discipline.md）"
-  "QEMU 真实负载     harness 已就绪并自检通过，缺被测对象（盘上格式定案，见项目 kb/decisions.md）"
-  "命名纪律（shell）  只查 .rs 里声明的名字；shell 脚本的名字还没做成检查（rules/code-discipline.md）"
-)
 
 # ── 汇总 ────────────────────────────────────────────────
 head1 "门禁结果"
@@ -271,7 +297,17 @@ if [[ ${#NOT_RUN[@]} -gt 0 ]]; then
 fi
 
 printf '\n%s未实现的门禁阶段（绿色不代表验证充分）：%s\n' "$C_YEL" "$C_RST"
-for s in "${NOT_IMPL[@]}"; do warn "$s"; done
+uncovered_count=0
+for key in "${NOT_IMPL_KEYS[@]}"; do
+  if [[ -z "${COVERED_BY[$key]:-}" ]]; then warn "$key：${NOT_IMPL_WHAT[$key]}"; uncovered_count=$((uncovered_count+1)); fi
+done
+if [[ $uncovered_count -eq 0 ]]; then ok "清单里每一项都有项目阶段覆盖，见下"; fi
+if [[ ${#COVERED_BY[@]} -gt 0 ]]; then
+  printf '\n%s由项目本地阶段覆盖（这一轮跑过且通过；覆盖到多大范围，看那个阶段自己的说明）：%s\n' "$C_YEL" "$C_RST"
+  for key in "${NOT_IMPL_KEYS[@]}"; do
+    if [[ -n "${COVERED_BY[$key]:-}" ]]; then ok "$key ← ${COVERED_BY[$key]}"; fi
+  done
+fi
 
 say ""
 if [[ $failed -gt 0 ]]; then
@@ -288,4 +324,8 @@ fi
 ok "已实现的门禁阶段全部通过（共 ${#STAGES[@]} 个）"
 warn "Gate proves evidence requirements, not semantic correctness."
 warn "门禁证明的是证据要求被满足，不是代码语义正确——绿灯之后仍要看「测的是不是对的东西」。"
-warn "另：崩溃一致性尚未纳入门禁，此结果不足以证明写路径正确。"
+if [[ -n "${COVERED_BY[崩溃点重放]:-}" ]]; then
+  warn "另：崩溃点重放由「${COVERED_BY[崩溃点重放]}」覆盖，只说到它枚举过的那些写路径为止，别的写路径照样没验过。"
+else
+  warn "另：崩溃一致性尚未纳入门禁，此结果不足以证明写路径正确。"
+fi

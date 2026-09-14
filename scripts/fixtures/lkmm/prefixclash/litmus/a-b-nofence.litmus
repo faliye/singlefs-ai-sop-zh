@@ -1,0 +1,27 @@
+C a-b-nofence
+
+(*
+ * 样本：a-b 的对照组。
+ *
+ * singlefs-expect: Sometimes
+ *)
+
+{}
+
+P0(int *data, int *other)
+{
+	WRITE_ONCE(*data, 1);
+	WRITE_ONCE(*other, 1);
+}
+
+P1(int *data, int *other)
+{
+	int r0;
+	int r1;
+
+	r0 = READ_ONCE(*other);
+	smp_rmb();
+	r1 = READ_ONCE(*data);
+}
+
+exists (1:r0=1 /\ 1:r1=0)

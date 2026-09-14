@@ -1,0 +1,2 @@
+exit=1
+want=litmus/a.litmus  没有配对的对照组：同名前缀的 Sometimes 都不是它去掉屏障的形态

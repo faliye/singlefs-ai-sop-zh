@@ -1,0 +1,2 @@
+exit=1
+want=singlefs-models 指的 crates/demo/src/gone.rs 不存在

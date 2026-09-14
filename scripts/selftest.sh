@@ -155,12 +155,17 @@ run_scripted "gate-lint/默认扫到包根" 1 "rootscript.sh:3" -- bash "$r/scri
 r="$tmpd/scan-sl"; mk_scan_pkg "$r" "$FX/scan/root-pkill.sh"
 run_scripted "shell-lint/默认扫到包根" 1 "rootscript.sh:4" -- bash "$r/scripts/shell-lint.sh"
 
-# ════ lkmm（静态检查与对照组；herd7 不在场也判得了这两层）══
+# ════ lkmm（声明、对照组、代码绑定；这几层不需要 herd7）══
+# 一律加 --static-only：样本的判定不该随这台机器装没装 herd7 变。它全过也退 3，绿样本的 expect 写 exit=3。
 head1 "门禁自检：lkmm 静态检查的判别力"
 for d in "$FX"/lkmm/*/; do
   [[ -d "$d" ]] || continue
-  run_fixture "lkmm/$(basename "$d")" "$d" bash "$SCRIPTS/lkmm.sh" "$d"
+  run_fixture "lkmm/$(basename "$d")" "$d" bash "$SCRIPTS/lkmm.sh" "$d" --static-only
 done
+# 模板那一对是 install.sh 铺进每个新项目的第一份 litmus，它自己得先过这几层（译本仓的模板带溯源标记，也要过）。
+r="$tmpd/lkmm-templates"; mkdir -p "$r/litmus"; cp "$SCRIPTS"/../templates/litmus/*.litmus "$r/litmus/"
+run_scripted "lkmm/模板那一对过得了静态检查" 3 "静态检查全过" "0 条绑到代码、1 条声明不对应代码" -- \
+  bash "$SCRIPTS/lkmm.sh" "$r" --static-only
 
 # ════ shell-lint ═════════════════════════════════════════
 head1 "门禁自检：shell-lint 的判别力"
@@ -277,7 +282,7 @@ run_scripted "show-me-test/无对象可判" 3 无对象可判 -- bash "$SCRIPTS/
 head1 "门禁自检：gate.sh 判决逻辑的判别力"
 mk_gate_pkg() { # mk_gate_pkg <目录> [要让哪个桩失败]
   local d="$1" failing="${2:-}"
-  mkdir -p "$d/scripts/qemu" "$d/rules"
+  mkdir -p "$d/scripts" "$d/rules"
   cp "$SCRIPTS/lib.sh" "$SCRIPTS/gate.sh" "$d/scripts/"
   printf '0.0.0\n' > "$d/VERSION"
   printf 'family=f\nthis=zh\nreference=zh\ndefault=zh\nlanguages=zh\n' > "$d/I18N"
@@ -290,7 +295,6 @@ mk_gate_pkg() { # mk_gate_pkg <目录> [要让哪个桩失败]
       printf '#!/usr/bin/env bash\nexit 0\n' > "$d/scripts/$n.sh"
     fi
   done
-  printf '#!/usr/bin/env bash\nexit 0\n' > "$d/scripts/qemu/run.sh"
 }
 
 # 全绿：退出码 0，且每个阶段名都要出现在汇总里
@@ -347,6 +351,36 @@ printf '#!/usr/bin/env bash\n# gate-stage: 慢样本\nsleep 20\n' > "$r/proj/.cl
 git -C "$r/proj" add .claude/gate.d/60-slow.sh
 run_scripted "gate/--staged 跑到一半被打断也清掉临时 worktree" 0 "打断之后仓里登记的 worktree：1 个" \
   -- "${staged_interrupt[@]}" "$r/pkg" "$r/proj"
+
+# 未实现清单由项目阶段声明覆盖（# gate-covers:）。四个方向各一例：
+# 通过 ⇒ 那一项换成「由谁覆盖」、收尾那句跟着换；跑红 ⇒ 照旧列着；退 77 ⇒ 记本次未跑、照旧列着；键写错 ⇒ 判红。
+# 「列着 / 没列着」只看未实现那一段：收尾那句与 howto 里也会出现同一个词。
+mk_covers_project() { # mk_covers_project <目录> <本地阶段的退出码> <gate-covers 的键>
+  mkdir -p "$1/.claude/gate.d"
+  printf '0.0.0\n' > "$1/.singlefs-ai-sop-version"
+  printf '#!/usr/bin/env bash\n# gate-stage: 样本重放\n# gate-covers: %s\necho "  样本阶段跑完"\nexit %s\n' "$3" "$2" \
+    > "$1/.claude/gate.d/54-sample.sh"
+}
+gate_with_not_impl_section=(bash -c '
+  bash "$1/scripts/gate.sh" "$2" > "$3" 2>&1; rc=$?
+  cat "$3"
+  listed="$(sed -n "/未实现的门禁阶段/,/^\$/p" "$3" | sed -n "s/^ *! \([^：]*\)：.*/\1/p" | tr -d " " | paste -sd " " -)"
+  echo "未实现段：$listed"
+  exit "$rc"' gate_with_not_impl_section)
+r="$tmpd/gate-covers-pass"; mk_gate_pkg "$r/pkg"; mk_covers_project "$r/proj" 0 崩溃点重放
+run_scripted "gate/覆盖声明的阶段通过，那一项换成由谁覆盖" 0 "崩溃点重放 ← 样本重放" \
+  "未实现段：模型对拍 QEMU真实负载" "崩溃点重放由「样本重放」覆盖" \
+  -- "${gate_with_not_impl_section[@]}" "$r/pkg" "$r/proj" "$r/out.txt"
+r="$tmpd/gate-covers-fail"; mk_gate_pkg "$r/pkg"; mk_covers_project "$r/proj" 1 崩溃点重放
+run_scripted "gate/覆盖声明的阶段跑红，那一项照旧列着" 1 门禁未通过 "未实现段：模型对拍 崩溃点重放 QEMU真实负载" \
+  -- "${gate_with_not_impl_section[@]}" "$r/pkg" "$r/proj" "$r/out.txt"
+r="$tmpd/gate-covers-77"; mk_gate_pkg "$r/pkg"; mk_covers_project "$r/proj" 77 崩溃点重放
+run_scripted "gate/本地阶段退 77 记本次未跑，不算覆盖" 0 "本次未跑：阶段报了这一轮无对象可判（退出码 77）" \
+  "未实现段：模型对拍 崩溃点重放 QEMU真实负载" "崩溃一致性尚未纳入门禁" \
+  -- "${gate_with_not_impl_section[@]}" "$r/pkg" "$r/proj" "$r/out.txt"
+r="$tmpd/gate-covers-typo"; mk_gate_pkg "$r/pkg"; mk_covers_project "$r/proj" 0 崩溃重放
+run_scripted "gate/gate-covers 写了清单里没有的项要红" 1 "gate-covers 写了清单里没有的项：「崩溃重放」" \
+  -- "${gate_with_not_impl_section[@]}" "$r/pkg" "$r/proj" "$r/out.txt"
 
 # ════ changelog-lint ═════════════════════════════════════
 head1 "门禁自检：changelog-lint 的判别力"
@@ -724,6 +758,28 @@ if [[ "$(cat "$r3/.singlefs-ai-sop-version")" != "9.9.9" ]]; then pass=$((pass+1
 else fails=$((fails+1)); bad "install/清单坏了，版本戳还是被刷成了 9.9.9"
   howto "接管清单读不准的时候不许放行——那等于把「内容落后就不刷戳」这道守卫悄悄关掉。"
 fi
+
+# 退役的包装：共享 QEMU harness 删掉之后，项目里一字未改的 qemu.sh 包装要被点名、版本戳不刷；
+# 项目自己改过的同名文件不归 install.sh 管，照常刷戳。
+pkg4="$tmpd/inst-retired"; cp -a "$SCRIPTS/.." "$pkg4"
+r4="$tmpd/inst-retired-proj"; mkdir -p "$r4"
+bash "$pkg4/install.sh" "$r4" >/dev/null 2>&1 || true
+printf '%s\n' '#!/usr/bin/env bash' \
+  '# 包装：转发到共享脚本。逻辑不写在这里，写在 .claude/singlefs-ai-sop/scripts/qemu/。' \
+  'exec bash "$(dirname "${BASH_SOURCE[0]}")/../singlefs-ai-sop/scripts/qemu/run.sh" "$@"' \
+  > "$r4/.claude/scripts/qemu.sh"
+printf '9.9.9\n' > "$pkg4/VERSION"
+run_scripted "install/一字未改的退役包装要点名" 1 "份包装上游已经不提供了" ".claude/scripts/qemu.sh" -- \
+  bash "$pkg4/install.sh" "$r4"
+cases=$((cases+1))
+if [[ "$(cat "$r4/.singlefs-ai-sop-version")" != "9.9.9" ]]; then pass=$((pass+1))
+  [[ -n "${SELFTEST_VERBOSE:-}" ]] && ok "install/留着退役包装时版本戳确实没动"
+else fails=$((fails+1)); bad "install/留着退役包装，版本戳还是被刷成了 9.9.9"
+  howto "退役包装还在时不许刷戳：戳说「新版」，项目里却留着一个转发到已删脚本的包装。"
+fi
+printf '# 项目自己加的一行\n' >> "$r4/.claude/scripts/qemu.sh"
+run_scripted "install/改过的同名文件不归它管" 0 "版本戳  .singlefs-ai-sop-version = 9.9.9" -- \
+  bash "$pkg4/install.sh" "$r4"
 
 # ════ lib.sh 的环境守卫（此前零覆盖）═════════════════════
 # 两道守卫都是「判定结果不许随环境变」的前提，坏了不会报错，只会悄悄改判。

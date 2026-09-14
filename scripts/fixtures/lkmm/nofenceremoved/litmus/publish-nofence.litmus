@@ -1,0 +1,28 @@
+C publish-nofence
+
+(*
+ * 样本：publish 的对照组，去掉写者一侧的屏障。
+ *
+ * singlefs-expect: Sometimes
+ *)
+
+{}
+
+P0(int *data, int *flag)
+{
+	WRITE_ONCE(*data, 1);
+	smp_wmb();
+	WRITE_ONCE(*flag, 1);
+}
+
+P1(int *data, int *flag)
+{
+	int r0;
+	int r1;
+
+	r0 = READ_ONCE(*flag);
+	smp_rmb();
+	r1 = READ_ONCE(*data);
+}
+
+exists (1:r0=1 /\ 1:r1=0)

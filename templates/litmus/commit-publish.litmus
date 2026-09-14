@@ -10,6 +10,8 @@ C commit-publish
  * P0 = 写者（提交事务）；P1 = 读者（挂载或并发读）。
  *
  * singlefs-expect: Never
+ * singlefs-models: none —— 模板：演示一条 Never 怎么配它的对照组，不对应任何代码。
+ *   项目写出实现这条序的代码之后，把这一行换成 <仓内路径>::<函数名>，再写一个读这个文件的测试。
  *)
 
 {}

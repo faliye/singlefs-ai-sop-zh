@@ -44,11 +44,9 @@
 
 ```bash
 bash .claude/scripts/gate.sh          # 准入门禁，提交前必跑
-GATE_QEMU=1 bash .claude/scripts/gate.sh   # 再加 QEMU harness 自检
 
 bash .claude/scripts/check.sh         # 快速反馈（格式/lint/构建/单测）
-bash .claude/scripts/lkmm.sh          # 内存序（herd7 + litmus/）
-bash .claude/scripts/qemu.sh --selftest    # QEMU harness 自检
+bash .claude/scripts/lkmm.sh          # 内存序（herd7 + litmus/；每条 Never 要有对照组、要绑到代码）
 bash .claude/scripts/gate-lint.sh     # 门禁自身：每条拒绝是否都给了下一步
 bash .claude/scripts/shell-lint.sh    # shell 纪律：按模式杀进程、子 shell 赋值往外带值
 bash .claude/scripts/naming-lint.sh   # 命名纪律：.rs 里的单字母名与常见缩写

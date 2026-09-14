@@ -1,0 +1,26 @@
+C publish-nofence
+
+(*
+ * 样本：publish 的对照组，release / acquire 放宽成 ONCE。
+ *
+ * singlefs-expect: Sometimes
+ *)
+
+{}
+
+P0(int *data, int *flag)
+{
+	WRITE_ONCE(*data, 1);
+	WRITE_ONCE(*flag, 1);
+}
+
+P1(int *data, int *flag)
+{
+	int r0;
+	int r1;
+
+	r0 = READ_ONCE(*flag);
+	r1 = READ_ONCE(*data);
+}
+
+exists (1:r0=1 /\ 1:r1=0)

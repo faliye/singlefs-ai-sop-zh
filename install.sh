@@ -125,13 +125,21 @@ WRAP
   chmod +x "$ROOT/.claude/scripts/$s.sh" 2>/dev/null || true
 done
 
-# 3b. qemu 包装（在子目录里，单独处理）
-put ".claude/scripts/qemu.sh" <<'WRAP'
+# 3b. 退役的包装：上游已经不提供、项目里却还一字未改地留着的那几份。
+# 共享的 QEMU harness 删掉之后（虚机装置归项目本地，rules/show-me-test.md「最终判据是 QEMU/KVM 压测」），
+# 项目里的 qemu.sh 包装转发到一个不存在的脚本，谁跑谁撞上「没有这个文件」。
+# 只认与当年铺下去的内容一字不差的那份：项目自己改过、写了自己逻辑的同名文件不归这里管。
+RETIRED=()
+retired_if_untouched() { # retired_if_untouched <相对路径>，当年铺下去的内容从 stdin 进
+  local rel="$1" old_content
+  old_content="$(cat)"
+  if [[ -f "$ROOT/$rel" && "$(cat "$ROOT/$rel")" == "$old_content" ]]; then RETIRED+=("$rel"); fi
+}
+retired_if_untouched ".claude/scripts/qemu.sh" <<'WRAP'
 #!/usr/bin/env bash
 # 包装：转发到共享脚本。逻辑不写在这里，写在 .claude/singlefs-ai-sop/scripts/qemu/。
 exec bash "$(dirname "${BASH_SOURCE[0]}")/../singlefs-ai-sop/scripts/qemu/run.sh" "$@"
 WRAP
-chmod +x "$ROOT/.claude/scripts/qemu.sh" 2>/dev/null || true
 
 # 3c. litmus 骨架（内存序声明，项目本地）
 for f in "$PKG"/templates/litmus/*.litmus; do
@@ -201,6 +209,7 @@ fi
 
 # 5. 版本戳。**有文件落后于上游时不刷**——刷了就等于替项目声明「已经是新版了」，
 # 而它的 skill / 骨架还是旧的。版本戳是项目唯一的「规矩变了」信号，不许让它说谎。
+stamp_blocked=0
 if [[ ${#STALE[@]} -gt 0 ]]; then
   say ""
   bad "${#STALE[@]} 份内容落后于上游，版本戳**没有**刷新（仍是 $(cat "$ROOT/.singlefs-ai-sop-version" 2>/dev/null || echo 无)）："
@@ -209,8 +218,19 @@ if [[ ${#STALE[@]} -gt 0 ]]; then
         "diff <(sed '/generated-from/d' $PKG/<对应源文>) <这份文件>" \
         "改完再跑一次 install.sh；全部对齐了版本戳才会刷到 $VER。" \
         "不刷戳是有意的：戳说「新版」而内容是旧的，比不装还糟。"
-  exit 1
+  stamp_blocked=1
 fi
+# 退役的包装还在，同样不刷：戳说「新版」，项目里却留着一个转发到已删脚本的包装。
+if [[ ${#RETIRED[@]} -gt 0 ]]; then
+  say ""
+  bad "${#RETIRED[@]} 份包装上游已经不提供了，版本戳**没有**刷新："
+  printf '%s\n' "${RETIRED[@]}" | sed 's/^/        /'
+  howto "它转发到的共享脚本已经删掉，留着只会让跑它的人撞上「没有这个文件」。" \
+        "先确认项目里没有别处在调它（grep -rn 它的文件名），删掉它，再跑一次 install.sh。" \
+        "为什么删、那件事现在归谁，见 .claude/singlefs-ai-sop/CHANGELOG.md 里删它的那一版。"
+  stamp_blocked=1
+fi
+[[ $stamp_blocked -eq 0 ]] || exit 1
 printf '%s\n' "$VER" > "$ROOT/.singlefs-ai-sop-version"
 [[ "$(cat "$ROOT/.singlefs-ai-sop-version")" == "$VER" ]] || die "版本戳回读不一致" \
   "版本戳写进去和读出来不一样，此刻项目声明的版本是错的，门禁会拿它去比对。" \

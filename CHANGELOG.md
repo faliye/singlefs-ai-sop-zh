@@ -3,6 +3,33 @@
 规则与门禁的版本历史。`CLAUDE.md` 与 `rules/*.md` 不留历史节（design-doc-discipline），
 历史一律记在这里；逐条改动细节见 `git log`，提交信息即变更说明。
 
+## 0.0.48 — 2026-09-14
+
+**singlefs 的 `crates/` 有了代码，LKMM 与 QEMU 两道门禁跟着改。**
+
+LKMM（`scripts/lkmm.sh`）：
+- **对照组按内容认**，不再只按文件名：去掉注释与首行之后，对照组只许比 Never 那条少几行屏障，
+  或把 `smp_store_release` / `smp_load_acquire` 放宽成 `WRITE_ONCE` / `READ_ONCE`，至少一处。
+  只按文件名认时，换一个 exists、换一个读者的「对照组」照样过闸；名字前缀撞车（`a` 与 `a-b`）时，`a-b` 的对照还会被算成 `a` 的。
+- **每条 Never 要绑到代码**：头部写 `singlefs-models: <路径>::<函数名>`，门禁查文件在、`fn` 在、`crates/` 下有 `.rs` 写出这个 litmus 的文件名；
+  不对应代码的写 `none —— <理由>`。herd7 只判 litmus 写下的形态，代码改了顺序而 litmus 没跟，判定照样是 Never。模板 `commit-publish.litmus` 写成 `none`。
+- 新增 `--static-only`：只跑不需要 herd7 的检查，全过也退 3。selftest 用它喂样本，样本的判定不再随机器装没装 herd7 变。
+
+QEMU：
+- **删掉共享的 `scripts/qemu/run.sh` 与门禁阶段「QEMU harness 自检」（`GATE_QEMU`）。** 它不挂盘、只收 shell 脚本、不抓结果，
+  singlefs 为此另写了虚机装置，门禁 55 用的是那一份——共享那份的自检证明的是一个没人用的东西。
+  虚机装置归项目，装置要守的规矩仍在 `rules/command-safety.md`。
+- `install.sh` 不再铺 `.claude/scripts/qemu.sh`；项目里一字未改的旧包装会被点名，删掉之前不刷版本戳。
+
+`gate.sh`：
+- **未实现清单由项目声明覆盖**：本地阶段头部写 `# gate-covers: <项>`，这一轮跑了且通过，那一项才换成「由哪个阶段覆盖」；
+  写了清单里没有的项判红。清单拆出「QEMU 崩溃注入」（准入的最终判据），与「QEMU 真实负载」分开。
+  此前清单写死：singlefs 每次门禁都跑崩溃点重放与真设备阶段，汇总仍打印「缺被测对象」「崩溃一致性尚未纳入门禁」。
+- 本地阶段退出码 77 记「本次未跑」，不记通过、不算覆盖。
+
+规则跟着改：`show-me-test.md`（虚机装置归项目、覆盖声明、退出码 77）、`machine-first.md`（对照组按内容认、litmus 要绑代码）；
+skill `crash-test`、`gate` 与项目模板同步。
+
 ## 0.0.47 — 2026-09-13
 
 **0.0.46 三语核对，修正 4 处译文问题和 1 处中文自身的漂移。** 派四个 agent 逐段核对
