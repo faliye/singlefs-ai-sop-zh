@@ -329,6 +329,39 @@ run_scripted "gate/--staged 不算没暂存的改动" 0 "只拿 HEAD + 暂存区
 run_scripted "gate/不带 --staged 时同一处要算进来" 1 门禁未通过 -- bash "$r/pkg/scripts/gate.sh" "$r/proj"
 printf 'BAD（这一轮的）\n' >> "$r/proj/kb/b.md"; git -C "$r/proj" add kb/b.md
 run_scripted "gate/--staged 算暂存了的改动" 1 门禁未通过 -- bash "$r/pkg/scripts/gate.sh" --staged "$r/proj"
+# 判红的那一次也要清掉临时 worktree。外层在 set -e 下跑里层，写成「里层; rc=$?」时里层一红外层就当场退出，
+# 清理走不到——判红正是最要看结果的时候（0.0.48 收尾时实测：判红一次，仓里就多一个 detached worktree）。
+staged_red_cleanup=(bash -c '
+  bash "$1/scripts/gate.sh" --staged "$2" >/dev/null 2>&1; rc=$?
+  left="$(git -C "$2" worktree list --porcelain | grep -c "^worktree ")"
+  echo "判红（退出码 $rc）之后仓里登记的 worktree：$left 个"
+  [[ "$rc" == 1 && "$left" == 1 ]]' staged_red_cleanup)
+run_scripted "gate/--staged 判红也清掉临时 worktree" 0 "判红（退出码 1）之后仓里登记的 worktree：1 个" \
+  -- "${staged_red_cleanup[@]}" "$r/pkg" "$r/proj"
+
+# 项目根要认得出 git worktree（它的 .git 是文件）。只认目录的话，在 worktree 里不带参数跑，门禁零输出退 1。
+r="$tmpd/gate-in-worktree"; mk_gate_pkg "$r/pkg"
+git -C "$r/pkg" init -q && git -C "$r/pkg" add -A && git -C "$r/pkg" -c user.name=t -c user.email=t@t commit -qm base
+git -C "$r/pkg" worktree add --detach "$r/wt" HEAD >/dev/null 2>&1
+run_scripted "gate/在 git worktree 里不带参数也找得到项目根" 0 "已实现的门禁阶段全部通过" -- \
+  bash -c 'cd "$1" && bash scripts/gate.sh' in_worktree "$r/wt"
+# 真找不到项目根时要说出来，不许零输出退出。
+mkdir -p "$tmpd/no-project"
+run_scripted "gate/找不到项目根要说出来" 1 "往上找不到项目根" -- \
+  bash -c 'cd "$1" && bash "$2/scripts/gate.sh"' no_project "$tmpd/no-project" "$r/pkg"
+
+# 「副本与上游同版本」分两个方向，出路相反：副本比上游新，去更新上游；副本落后上游，去重拷副本。
+mk_versioned_project() { # mk_versioned_project <目录> <兄弟目录里上游的版本>
+  mk_gate_pkg "$1/proj/.claude/f"
+  printf '0.0.1\n' > "$1/proj/.claude/f/VERSION"; printf '0.0.1\n' > "$1/proj/.singlefs-ai-sop-version"
+  mkdir -p "$1/f-zh"; printf '%s\n' "$2" > "$1/f-zh/VERSION"
+}
+r="$tmpd/gate-upstream-older"; mk_versioned_project "$r" 0.0.0
+run_scripted "gate/上游比副本旧要说上游旧" 1 "上游比副本旧：副本 0.0.1，上游 0.0.0" -- \
+  bash "$r/proj/.claude/f/scripts/gate.sh" "$r/proj"
+r="$tmpd/gate-upstream-newer"; mk_versioned_project "$r" 0.0.2
+run_scripted "gate/副本落后上游照旧说落后" 1 "副本落后上游：副本 0.0.1，上游 0.0.2" -- \
+  bash "$r/proj/.claude/f/scripts/gate.sh" "$r/proj"
 
 # --staged 跑到一半被打断（Ctrl-C）也要清掉临时 worktree：留下的会一直登记在仓里，下一次还得手工 git worktree prune。
 # 一个睡 20 秒的项目阶段，worktree 建起来之后给整组发 INT；开 job control（set -m）是为了让后台那一组收得到 INT。
@@ -780,6 +813,21 @@ fi
 printf '# 项目自己加的一行\n' >> "$r4/.claude/scripts/qemu.sh"
 run_scripted "install/改过的同名文件不归它管" 0 "版本戳  .singlefs-ai-sop-version = 9.9.9" -- \
   bash "$pkg4/install.sh" "$r4"
+
+# 接管清单里登记了、项目又删掉了的那份，不许重铺：put 只管不覆盖已有的文件，删掉的模板 litmus
+# 下一次 install.sh 又会被铺回来（0.0.48 收尾时查出）。
+pkg5="$tmpd/inst-owned-absent"; cp -a "$SCRIPTS/.." "$pkg5"
+r5="$tmpd/inst-owned-absent-proj"; mkdir -p "$r5"
+bash "$pkg5/install.sh" "$r5" >/dev/null 2>&1 || true
+rm "$r5/litmus/commit-publish.litmus"
+printf 'litmus/commit-publish.litmus  # 项目的 litmus 另写了一套，这份模板删掉\n' > "$r5/.claude/install-owned"
+run_scripted "install/接管清单里删掉的那份不重铺" 0 "已接管，项目删掉了它，不重铺" -- bash "$pkg5/install.sh" "$r5"
+cases=$((cases+1))
+if [[ ! -e "$r5/litmus/commit-publish.litmus" ]]; then pass=$((pass+1))
+  [[ -n "${SELFTEST_VERBOSE:-}" ]] && ok "install/删掉又登记接管的那份确实没被铺回来"
+else fails=$((fails+1)); bad "install/删掉又登记接管的那份，被 install.sh 铺回来了"
+  howto "put() 在目标不存在、路径又在 install-owned 里时要跳过，不许新建。"
+fi
 
 # ════ lib.sh 的环境守卫（此前零覆盖）═════════════════════
 # 两道守卫都是「判定结果不许随环境变」的前提，坏了不会报错，只会悄悄改判。

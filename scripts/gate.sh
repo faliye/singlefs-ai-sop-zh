@@ -45,7 +45,9 @@ if [[ "${1:-}" == --staged ]]; then
   head1 "只拿 HEAD + 暂存区跑（--staged）"
   ok "临时 worktree：$staged_tree（跑完删掉）"
   ok "不进这一轮的：工作区里没暂存的 $(git -C "$src_root" diff --name-only | wc -l) 个文件、未跟踪的 $(git -C "$src_root" ls-files --others --exclude-standard | wc -l) 个文件"
-  GATE_STAGED_FROM="$src_root" bash "$SCRIPTS/gate.sh" "$staged_tree"; staged_rc=$?
+  # 退出码要在 if 里取：lib.sh 开着 set -e，写成「里层; staged_rc=$?」的话，里层一判红外层就在这一行退出，
+  # 下面的清理走不到，每次判红都在仓里留下一个临时 worktree——而判红正是最要看结果的时候（0.0.48 收尾时实测）。
+  if GATE_STAGED_FROM="$src_root" bash "$SCRIPTS/gate.sh" "$staged_tree"; then staged_rc=0; else staged_rc=$?; fi
   trap - INT TERM
   staged_cleanup
   exit "$staged_rc"
@@ -115,6 +117,14 @@ elif [[ -z "$up_ver" ]]; then
   # 而这一项既不在通过列表里也不在未跑列表里——它就这么从结论里消失了
   # （本轮审计实测）。设计原则第 1 条要求显式报告，汇总才是人会看的那一处。
   NOT_RUN+=("副本与上游同版本    本次未检查：兄弟目录里没有上游仓。clone 到 $(cd "$ROOT/.." 2>/dev/null && pwd)/$fam-<语言> 再跑")
+elif [[ "$up_ver" != "$pkg_ver" && "$(printf '%s\n' "$up_ver" "$pkg_ver" | sort -V | tail -1)" == "$pkg_ver" ]]; then
+  # 副本比上游新：兄弟目录里的上游仓没更新到这一版（没拉，或者副本是从一份还没提交的上游拷的）。
+  # 出路与「落后」相反；报成「落后」会把人支去重拷副本，拷回来的是旧版（0.0.48 收尾时实测）。
+  bad "上游比副本旧：副本 $pkg_ver，上游 $up_ver（$up_dir）"
+  howto "兄弟目录里的上游仓还停在旧版：它没更新（git -C $up_dir pull），" \
+        "或者副本是从一份还没提交的上游拷过来的——先把上游那一版提交，再跑这一项。" \
+        "别把副本退回旧版去凑齐：副本里的规矩才是这个项目现在守的。"
+  record "副本与上游同版本" FAIL
 elif [[ "$up_ver" != "$pkg_ver" ]]; then
   bad "副本落后上游：副本 $pkg_ver，上游 $up_ver（$up_dir）"
   howto "副本是拷贝不是链接，上游抬了版本副本不会自己跟。" \

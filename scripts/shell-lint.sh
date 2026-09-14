@@ -97,9 +97,9 @@ while IFS= read -r f; do
     done <<< "$hits"
   fi
 
-  if hits="$(grep -nE "$S3_RE" "$f" | grep -vE '^[0-9]+:[[:space:]]*#' | grep -E 'xargs|kill' || true)"; [[ -n "$hits" ]]; then
+  if hits="$(grep -nE "$S3_RE" "$f" | grep -vE '^[0-9]+:[[:space:]]*#' | grep -E 'xargs|kill|until|while|if' || true)"; [[ -n "$hits" ]]; then  # 接 kill 会误杀自己；放在 if / while / until 里会命中自己、永远为真
     while IFS= read -r h; do
-      bad "$rel:${h%%:*}  pgrep 的全模式匹配接 kill —— 与 pkill -f 同一个自杀风险"
+      bad "$rel:${h%%:*}  pgrep 的全模式匹配 —— 接 kill 与 pkill -f 同一个自杀风险，放进等待循环会命中自己、永远不退出"
       say "        $(printf '%s' "${h#*:}" | cut -c1-80)"
       howto "模式串会命中 wrapper 自己的命令行，把自己的 shell 一起杀掉。" \
             "先 ps 列出来看清楚，再用**字面量 pid** 分第二条命令杀（rules/command-safety.md）。"

@@ -52,15 +52,20 @@ die()   { bad "$1"; shift
 # 各写一份的结果：shell-lint 的那份含 `(){}`，gate-lint 的那份没有，于是
 # `( bad "不合格" )` 与 `eval bad "..."` 两种形态整体漏检（对抗测试实测）。
 # 同一个事实只许有一处权威记录（rules/kb-discipline.md 第 4 条）——就是这里。
-CMD_POS='(^[[:space:]]*|[;&|(){}`][[:space:]]*|(then|else|do|sudo|env|xargs|exec|eval|command|time)[[:space:]]+)'
+CMD_POS='(^[[:space:]]*|[;&|(){}`!][[:space:]]*|(then|else|do|if|while|until|sudo|env|xargs|exec|eval|command|time)[[:space:]]+)'
 
 # 找到项目根：向上找到含 .singlefs-ai-sop-version 或 .git 的目录
+# （.git 可以是文件：git worktree 里它是一个指路的文件，gate.sh --staged 的临时树就是这种。）
+# 找不到要说出来：调用方都写成 ROOT="${1:-$(project_root)}"，在 set -e 下这里静默返回 1，
+# 门禁就一句话都没有地退出了。说明写到 stderr，stdout 只留路径——调用方是拿 $(…) 接的。
 project_root() {
   local d="${1:-$PWD}"
   while [[ "$d" != "/" ]]; do
-    [[ -f "$d/.singlefs-ai-sop-version" || -d "$d/.git" ]] && { printf '%s' "$d"; return 0; }
+    [[ -f "$d/.singlefs-ai-sop-version" || -e "$d/.git" ]] && { printf '%s' "$d"; return 0; }
     d="$(dirname "$d")"
   done
+  { bad "从 ${1:-$PWD} 往上找不到项目根（含 .singlefs-ai-sop-version 或 .git 的目录）"
+    howto "在项目目录里跑，或者把项目根作为第一个参数传进来。"; } >&2
   return 1
 }
 

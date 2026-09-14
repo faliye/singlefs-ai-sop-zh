@@ -1,0 +1,2 @@
+exit=1
+want=pgrep 的全模式匹配

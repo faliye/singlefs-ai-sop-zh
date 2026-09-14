@@ -36,6 +36,7 @@ declare -A OWNED=()
 # 一行一条，`<相对路径>  # 为什么`。理由不许省——接管一份文件的代价是
 # **此后上游对它的改动都不会再送到**，写理由的时候要正面对上这一点。
 # 清单一律报进输出：静悄悄少比几份，和这道守卫没实现长得一模一样。
+# 登记了的那份项目要是删掉了，也不重铺：删掉是项目的决定（判据在 put）。
 OWNFILE="$ROOT/.claude/install-owned"
 if [[ -f "$OWNFILE" ]]; then
   ownline=0
@@ -87,6 +88,12 @@ put() { # put <目标相对路径> <内容来源:file|stdin>
     else
       warn "已存在但与上游不同  $rel"; STALE+=("$rel")
     fi
+    rm -f "$want"; skipped=$((skipped+1)); return 0
+  fi
+  # 接管清单里登记了、项目又删掉了的那份，不重铺：删掉是项目的决定（例：模板 litmus 被项目自己那一套取代）。
+  # 不这么判，下一次 install.sh 会安静地把它铺回来，铺回来的那份又被门禁拿去判（0.0.48 收尾时查出）。
+  if [[ -n "${OWNED[$rel]:-}" ]]; then
+    warn "已接管，项目删掉了它，不重铺  $rel"; OWNED_HIT+=("$rel")
     rm -f "$want"; skipped=$((skipped+1)); return 0
   fi
   mkdir -p "$(dirname "$dst")"
