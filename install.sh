@@ -26,7 +26,7 @@ SEEDED=(); OWNED_HIT=(); ownfails=0
 declare -A OWNED=()
 
 # ── 项目接管的文件：不再拿它们跟上游模板比 ────────────────
-# `put` 铺下去的 kb 骨架、skill 桩、litmus 是**给项目改的**——kb 尤其如此，
+# `put` 铺下去的 kb 骨架、skill 桩是**给项目改的**——kb 尤其如此，
 # 项目不改它才不正常。而 STALE 的判据只是「与上游不同」，分不出
 # 「项目接管了这份」和「项目落后于上游」。
 # 于是任何一个动过自己 kb 的项目，装完第一次之后版本戳就再也刷不动了
@@ -65,7 +65,7 @@ fi
 # 抄进使用者的项目就成了一条永远不会更新的陈旧标注，而且贴在一份他马上要动手改的
 # 文件上（rules/writing-discipline.md：正文只写现状）。所以铺进项目时剥掉。
 strip_stamp() {
-  grep -vE '^(<!--|\(\*) generated-from: .+ sha256:[0-9a-f]{64} (-->|\*\))$' "$1" || true
+  grep -vE '^<!-- generated-from: .+ sha256:[0-9a-f]{64} -->$' "$1" || true
 }
 
 put() { # put <目标相对路径> <内容来源:file|stdin>
@@ -90,7 +90,7 @@ put() { # put <目标相对路径> <内容来源:file|stdin>
     fi
     rm -f "$want"; skipped=$((skipped+1)); return 0
   fi
-  # 接管清单里登记了、项目又删掉了的那份，不重铺：删掉是项目的决定（例：模板 litmus 被项目自己那一套取代）。
+  # 接管清单里登记了、项目又删掉了的那份，不重铺：删掉是项目的决定（例：kb 骨架被项目自己的那一份取代）。
   # 不这么判，下一次 install.sh 会安静地把它铺回来，铺回来的那份又被门禁拿去判（0.0.48 收尾时查出）。
   if [[ -n "${OWNED[$rel]:-}" ]]; then
     warn "已接管，项目删掉了它，不重铺  $rel"; OWNED_HIT+=("$rel")
@@ -98,6 +98,9 @@ put() { # put <目标相对路径> <内容来源:file|stdin>
   fi
   mkdir -p "$(dirname "$dst")"
   mv "$want" "$dst"
+  # mktemp 造出来的是 0600，mv 原样保留：铺下去的 CLAUDE.md、kb、skill 桩全是「只有我自己读得了」，
+  # 而它们是给整个项目看的（审计实测：装出来的项目里 13 份都是 600）。包装脚本随后再 chmod +x。
+  chmod 644 "$dst" 2>/dev/null || true
   [[ -s "$dst" ]] || die "写入后回读为空：$rel" \
     "写进去的文件读回来是空的——多半是磁盘满了或目标目录只读。" \
     "看 df -h 与该目录权限，修好后重跑 install.sh（已存在的文件不会被覆盖）。"
@@ -123,38 +126,57 @@ put ".claude/warnings/.keep" <<'KEEP'
 KEEP
 
 # 3. scripts 包装（不写逻辑，只 exec 共享脚本）
-for s in env check gate doc-lint naming-lint lkmm gate-lint shell-lint; do
-  put ".claude/scripts/$s.sh" <<WRAP
+# 包装全文只写在 wrapper_text 这一处：铺新包装、认出退役包装，比的是同一份文本。
+WRAPPED_SCRIPTS=(env check gate doc-lint naming-lint gate-lint shell-lint)
+wrapper_text() { # wrapper_text <共享脚本名，不带 .sh>
+  local s="$1"
+  cat <<WRAP
+#!/usr/bin/env bash
+# 包装：转发到共享脚本。逻辑不写在这里，写在 .claude/singlefs-ai-sop/scripts/。
+# 只多做一件事：副本不在时说清怎么办。副本被 .gitignore 挡着，新 clone 出来的仓里它不存在，
+# 而 exec 一个不存在的路径只会得到 bash 的「No such file or directory」，一句出路都没有。
+shared="\$(dirname "\${BASH_SOURCE[0]}")/../singlefs-ai-sop/scripts/$s.sh"
+if [[ ! -f "\$shared" ]]; then
+  echo "  ✗ 找不到共享脚本：\$shared"
+  echo "     → 怎么办： 规范副本没装（它被 .gitignore 挡着，不随仓库走）。"
+  echo "                把 singlefs-ai-sop-<语言> 仓拷进 .claude/singlefs-ai-sop/，再跑它的 install.sh。"
+  exit 1
+fi
+exec bash "\$shared" "\$(cd "\$(dirname "\${BASH_SOURCE[0]}")/../.." && pwd)" "\$@"
+WRAP
+}
+# 0.0.49 及以前铺的包装是三行，不管副本在不在。认退役包装时两种形态都要认（审核实测：只认现行形态时，旧形态的退役包装一声不响、照常刷戳）。
+wrapper_text_before_0_0_50() { # wrapper_text_before_0_0_50 <共享脚本名，不带 .sh>
+  local s="$1"
+  cat <<WRAP
 #!/usr/bin/env bash
 # 包装：转发到共享脚本。逻辑不写在这里，写在 .claude/singlefs-ai-sop/scripts/。
 exec bash "\$(dirname "\${BASH_SOURCE[0]}")/../singlefs-ai-sop/scripts/$s.sh" "\$(cd "\$(dirname "\${BASH_SOURCE[0]}")/../.." && pwd)" "\$@"
 WRAP
+}
+for s in "${WRAPPED_SCRIPTS[@]}"; do
+  put ".claude/scripts/$s.sh" < <(wrapper_text "$s")
   chmod +x "$ROOT/.claude/scripts/$s.sh" 2>/dev/null || true
 done
 
-# 3b. 退役的包装：上游已经不提供、项目里却还一字未改地留着的那几份。
-# 共享的 QEMU harness 删掉之后（虚机装置归项目本地，rules/show-me-test.md「最终判据是 QEMU/KVM 压测」），
-# 项目里的 qemu.sh 包装转发到一个不存在的脚本，谁跑谁撞上「没有这个文件」。
-# 只认与当年铺下去的内容一字不差的那份：项目自己改过、写了自己逻辑的同名文件不归这里管。
+# 3a. 退役的包装：这一版不再铺、项目里却还一字未改地留着的那几份。
+# 共享脚本删掉之后（例：0.0.50 把 lkmm.sh 交给了 singlefs 自己管），项目里的包装转发到一个不存在的脚本，
+# 跑它的人看到的出路是「规范副本没装」，而副本明明装着（审核实测）。
+# 只认与包装模板（现行或 0.0.49 以前的形态）一字不差、而且它转发的共享脚本这一版里确实没有的那份：
+# 项目改过、写了自己逻辑的同名文件不归这里管；项目照模板给一个还在的共享脚本（例如 bump.sh）自己加的包装也不算退役。
+# 这一版铺的那几份，共享脚本都在，所以不用另外排除。
 RETIRED=()
-retired_if_untouched() { # retired_if_untouched <相对路径>，当年铺下去的内容从 stdin 进
-  local rel="$1" old_content
-  old_content="$(cat)"
-  if [[ -f "$ROOT/$rel" && "$(cat "$ROOT/$rel")" == "$old_content" ]]; then RETIRED+=("$rel"); fi
-}
-retired_if_untouched ".claude/scripts/qemu.sh" <<'WRAP'
-#!/usr/bin/env bash
-# 包装：转发到共享脚本。逻辑不写在这里，写在 .claude/singlefs-ai-sop/scripts/qemu/。
-exec bash "$(dirname "${BASH_SOURCE[0]}")/../singlefs-ai-sop/scripts/qemu/run.sh" "$@"
-WRAP
-
-# 3c. litmus 骨架（内存序声明，项目本地）
-for f in "$PKG"/templates/litmus/*.litmus; do
-  [[ -e "$f" ]] || continue
-  put "litmus/$(basename "$f")" "$f"
+for f in "$ROOT"/.claude/scripts/*.sh; do
+  [[ -f "$f" ]] || continue
+  s="$(basename "$f" .sh)"
+  if [[ -f "$PKG/scripts/$s.sh" ]]; then continue; fi
+  content="$(cat "$f")"
+  if [[ "$content" == "$(wrapper_text "$s")" || "$content" == "$(wrapper_text_before_0_0_50 "$s")" ]]; then
+    RETIRED+=(".claude/scripts/$s.sh")
+  fi
 done
 
-# 3d. agent 桩（与 skill 同构：正文只在共享层一处）
+# 3b. agent 桩（与 skill 同构：正文只在共享层一处）
 for f in "$PKG"/agents/*.md; do
   [[ -e "$f" ]] || continue
   n="$(basename "$f" .md)"
@@ -196,7 +218,7 @@ for orel in "${!OWNED[@]}"; do
   if [[ $hit -eq 0 ]]; then
     bad ".claude/install-owned  这条路径 install.sh 根本不铺，写了也没用：$orel"
     howto "只能写 install.sh 会铺下去的那些：CLAUDE.md、.claude/kb/*.md、" \
-          ".claude/skills/*/SKILL.md、.claude/agents/*.md、litmus/*.litmus、.claude/scripts/*.sh。" \
+          ".claude/skills/*/SKILL.md、.claude/agents/*.md、.claude/scripts/*.sh。" \
           "路径拼错就改对；那份文件已经不铺了，就把这一行删掉。"
     ownfails=$((ownfails+1))
   fi
@@ -230,14 +252,25 @@ fi
 # 退役的包装还在，同样不刷：戳说「新版」，项目里却留着一个转发到已删脚本的包装。
 if [[ ${#RETIRED[@]} -gt 0 ]]; then
   say ""
-  bad "${#RETIRED[@]} 份包装上游已经不提供了，版本戳**没有**刷新："
+  bad "${#RETIRED[@]} 份包装这一版已经不铺了，版本戳**没有**刷新："
   printf '%s\n' "${RETIRED[@]}" | sed 's/^/        /'
-  howto "它转发到的共享脚本已经删掉，留着只会让跑它的人撞上「没有这个文件」。" \
+  howto "它转发到的共享脚本已经不在这一版里；跑它会报「找不到共享脚本」，那句出路说的「副本没装」并不是原因。" \
         "先确认项目里没有别处在调它（grep -rn 它的文件名），删掉它，再跑一次 install.sh。" \
-        "为什么删、那件事现在归谁，见 .claude/singlefs-ai-sop/CHANGELOG.md 里删它的那一版。"
+        "项目还要这件事，就把它改写成项目自己的脚本；为什么删、那件事现在归谁，见 .claude/singlefs-ai-sop/CHANGELOG.md。"
   stamp_blocked=1
 fi
 [[ $stamp_blocked -eq 0 ]] || exit 1
+# 戳只许往上走。副本比戳旧时（另一个人拷了旧副本、或者拷到一半），照写就是把戳**降级**，
+# 而戳是入库的：降级会顺着提交传给所有人，门禁从此按旧规矩判（审计实测这条路是通的）。
+old_ver="$(cat "$ROOT/.singlefs-ai-sop-version" 2>/dev/null || true)"
+if [[ -n "$old_ver" && "$old_ver" != "$VER" \
+      && "$(printf '%s\n' "$old_ver" "$VER" | sort -V | tail -1)" == "$old_ver" ]]; then
+  bad "不给版本戳降级：项目现在声明 $old_ver，而这份副本是 $VER"
+  howto "副本比项目声明的版本旧——多半是拷了一份旧的，或者拷到一半。" \
+        "先把副本换成 $old_ver 或更新的那一版（从兄弟目录的上游仓拷），再跑 install.sh。" \
+        "真要退回旧版，先手工把 .singlefs-ai-sop-version 改成 $VER，再跑一次。"
+  exit 1
+fi
 printf '%s\n' "$VER" > "$ROOT/.singlefs-ai-sop-version"
 [[ "$(cat "$ROOT/.singlefs-ai-sop-version")" == "$VER" ]] || die "版本戳回读不一致" \
   "版本戳写进去和读出来不一样，此刻项目声明的版本是错的，门禁会拿它去比对。" \

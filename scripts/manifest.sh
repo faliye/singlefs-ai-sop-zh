@@ -18,8 +18,9 @@ CF="$PKG/I18N"
 
 # 清单只在参照仓里生成与校验。别的语言仓拿到的是原样复制的脚本，
 # 它们那边的对账依据是 SOURCE-MANIFEST.sha256，不是这份。
-THIS="$(sed -n 's/^this=//p' "$CF" 2>/dev/null)"
-REF="$(sed -n 's/^reference=//p' "$CF" 2>/dev/null)"
+# `|| true`：I18N 不在时 sed 退 2，set -e 会当场把脚本带走、一个字都不打（审核实测）。
+THIS="$(sed -n 's/^this=//p' "$CF" 2>/dev/null || true)"
+REF="$(sed -n 's/^reference=//p' "$CF" 2>/dev/null || true)"
 if [[ -n "$THIS" && -n "$REF" && "$THIS" != "$REF" ]]; then
   head1 "规则清单"
   ok "本仓是 $THIS 版，清单以 $REF 仓为准，本阶段不适用"
@@ -33,7 +34,6 @@ fi
 # TRANSLATED：逐篇翻译、逐篇溯源。
 #   skills/ 与 templates/ 曾经走复制，于是日语仓的 skill 正文与项目骨架全是中文，
 #   而 templates/CLAUDE.project.md 会被 install.sh 写成使用者项目根的 CLAUDE.md。
-#   templates/litmus/*.litmus 的注释同样是给人读的，一并进来。
 # `|| true` 不能省：目录不存在时 find 退出码非 0，而 2>/dev/null 只藏消息不藏退出码——
 # 在 set -e + pipefail 下整条 gen 会被带走，`--update` 退出码 1 而**一个字都不打印**
 # （selftest 拿一个没有 agents/ 的样本仓喂进来才露出来）。
@@ -43,7 +43,7 @@ translated_paths() {
   find rules      -maxdepth 1 -name '*.md'                    2>/dev/null || true
   find agents     -maxdepth 1 -name '*.md'                    2>/dev/null || true
   find skills     -maxdepth 2 -name '*.md'                    2>/dev/null || true
-  find templates  \( -name '*.md' -o -name '*.litmus' \)       2>/dev/null || true
+  find templates  -name '*.md'       2>/dev/null || true
 }
 
 # NOT_TRANSLATED：显式豁免 + 理由。改这张表就是改分发策略，不许顺手加。
@@ -57,7 +57,9 @@ not_translated_re='^(README\.md|CHANGELOG\.md|GLOSSARY\.md)$'
 # cd 要落在 gen 自己身上：translated_paths 在管道里跑，它的 cd 只在子 shell 里生效，
 # 而 xargs sha256sum 在原来的 cwd 里。从仓根跑时 cwd 恰好就是 PKG，所以看不出来——
 # selftest 拿样本仓一喂就露了（rules/command-safety.md：子 shell 里的赋值传不回父进程）。
-gen() { cd "$PKG" && translated_paths | sort | xargs sha256sum; }
+# 排序显式钉成 C：清单的行序就是判据的一部分，locale 一换（lib.sh 那三个 UTF-8 名字都没有时会沿用用户的）
+# 行序就变，各语言仓与副本之间凭空多出「清单不一致」「SOURCE-MANIFEST 落后」的假红。
+gen() { cd "$PKG" && translated_paths | LC_ALL=C sort | xargs sha256sum; }
 
 # ── 覆盖率：面向人的文本，两边都不沾就红 ────────────────
 # 这条是「空缺」的可机检形态：新加一份 .md 而忘了决定它翻不翻译，
@@ -70,13 +72,13 @@ coverage() {
     local n; n="$(find "$PKG/agents" -maxdepth 1 -name '*.md' -not -name 'INDEX.md' | wc -l)"
     [[ "$n" -eq 0 ]] && warn "本层已纳入治理，当前为空：agents/（约定见 agents/INDEX.md）"
   fi
-  listed="$(translated_paths | sort -u)"
-  missed="$(cd "$PKG" && find . -name '*.md' -o -name '*.litmus' \
+  listed="$(translated_paths | LC_ALL=C sort -u)"
+  missed="$(cd "$PKG" && find . -name '*.md' \
               | sed 's|^\./||' \
               | grep -v '^scripts/fixtures/' \
               | grep -vE "$not_translated_re" \
-              | sort -u \
-              | comm -23 - <(printf '%s\n' "$listed" | sort -u))"
+              | LC_ALL=C sort -u \
+              | comm -23 - <(printf '%s\n' "$listed" | LC_ALL=C sort -u))"
   [[ -z "$missed" ]] && return 0
   bad "有面向人的文本既没进清单、也没显式豁免："
   printf '%s\n' "$missed" | sed 's/^/        /'

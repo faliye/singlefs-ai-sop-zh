@@ -3,12 +3,12 @@
 #
 # 为什么要有它（rules/sop-first.md）：
 #   「注意别在 X 时候做 Y」拦不住手敲命令，一个在那时直接拒绝的检查才拦得住。
-#   command-safety.md 里的纪律以前全是提醒句——而本轮审计在**本仓自己的**
-#   qemu/run.sh 里挖出了其中一条的实例：日志路径靠子 shell 里的赋值往外带，
+#   command-safety.md 里的纪律以前全是提醒句——而本轮审计在一个测试装置
+#   里挖出了其中一条的实例：日志路径靠子 shell 里的赋值往外带，
 #   父进程拿到的是未定义，五处失败分支在打印诊断之前就被 set -u 带走。
 #   一条写在文档里的纪律，被写文档的人自己违反了整整一轮——所以它要变成检查。
 #
-# 查两条：
+# 查五条：
 #
 #   S1 子 shell 里的赋值传不回父进程
 #      三个条件同时成立才判红，误报面很窄：
@@ -19,6 +19,10 @@
 #
 #   S2 pkill -f / killall
 #      模式串会匹配到 wrapper 自己的命令行，杀掉自己的 shell。
+#
+#   S3 pgrep 的全模式匹配（pgrep -f）
+#      接 kill 是 pkill -f 的另一种拼法；放进等待循环会命中循环自己所在的命令行、永远不退出；
+#      先赋给变量、下一行再 kill 是同一件事拆成两行。命令位置上出现就红，不看同一行还有什么。
 #
 #   S4 会静默丢掉未提交改动的 git 命令（checkout / restore / clean / reset --hard）
 #      脚本跑的时候没人在旁边看 git status，而这些命令没有 undo。
@@ -62,7 +66,13 @@ S4_RESET="$CMD_POS"'git[[:space:]]+((-C[[:space:]]+[^[:space:]]+[[:space:]]+)?)r
 # S5：`rm -rf "$VAR/..."` —— 变量为空时它会从根目录往下删。
 # 只判**变量后面还跟着路径**的那种：`rm -rf "$d"` 变量为空是 `rm -rf ""`，rm 自己会拒；
 # 而 `rm -rf "$d/x"` 变量为空就成了 `rm -rf /x`。守卫写成 `${d:?}` 就行。
-S5_RE='rm[[:space:]]+(-[[:alnum:]]*[rR][[:alnum:]]*[[:space:]]+)+"?\$\{?[A-Za-z_][A-Za-z0-9_]*\}?/'
+#
+# 分两步判，不写成一整条正则：一整条只认得第一个参数，而且靠「整行含 :? 就跳过」来放过守卫，
+# 于是 `rm -rf "$d"/x`、`rm -rf -- "$d/x"`、`rm -rf "${a:?}/x" "$b/y"` 三种全绿（审计实测）。
+# 第一步挑出命令位置上的 rm -r…，第二步在行内逐个参数找**没守卫**的变量路径：
+# 守卫形态是 `${名字:?}`，它的 `}` 前面有 `:?`，下面两个分支都匹配不上。
+S5_CMD="$CMD_POS"'rm([[:space:]]+-[[:alnum:]-]+)*[[:space:]]+-[[:alnum:]-]*[rR]'
+S5_ARG='\$(\{[A-Za-z_][A-Za-z0-9_]*\}|[A-Za-z_][A-Za-z0-9_]*)"?/'
 
 # 命令位置的定义在 lib.sh 的 CMD_POS 一处，与 gate-lint 共用。
 #
@@ -72,12 +82,17 @@ S5_RE='rm[[:space:]]+(-[[:alnum:]]*[rR][[:alnum:]]*[[:space:]]+)+"?\$\{?[A-Za-z_
 # 六种写法整体漏检（对抗测试实测）——它们是同一条命令的另一种拼法。
 PK='([A-Za-z0-9_/.-]*/)?'
 S2_RE="$CMD_POS$PK"'(pkill([[:space:]]+-[[:alnum:]-]*)*[[:space:]]+(-[[:alnum:]]*f[[:alnum:]]*|--full)|killall)([[:space:]]|$)'
-# pgrep -f … | xargs kill 是同一个自杀风险的另一种写法，单列一条
+# S3：pgrep -f 单列一条。此前命中后还要同一行有 xargs / kill / if / while / until 才红：
+# `pids=$(pgrep -f X)` 下一行 `kill $pids`、`while` 与 `pgrep -f` 分两行写，都全绿；
+# 反过来 `pgrep -f notify` 因为含子串 if 被判成等待循环（审计实测）。所以命令位置上出现就红。
 S3_RE="$CMD_POS$PK"'pgrep([[:space:]]+-[[:alnum:]-]*)*[[:space:]]+(-[[:alnum:]]*f[[:alnum:]]*|--full)'
 
 fails=0; checked=0
 for BASE in "${SCANS[@]}"; do
-EXCL=(-not -path "$BASE/scripts/fixtures/*" -not -path "$BASE/fixtures/*")
+# 装进项目的 SOP 副本不扫：它由上游自己的门禁管，而它带着一整套**故意写坏的**样本——
+# 项目里单跑 `bash .claude/scripts/shell-lint.sh`（README 就是这么写的）时，那些样本会被当成项目自己的违规报出来（审计实测）。
+LINT_FAMILY="$(sed -n 's/^family=//p' "$SCRIPTS/../I18N" 2>/dev/null || true)"
+EXCL=(-not -path "$BASE/scripts/fixtures/*" -not -path "$BASE/fixtures/*" -not -path "$BASE/.claude/${LINT_FAMILY:-singlefs-ai-sop}/*")
 while IFS= read -r f; do
   rel="${f#"$BASE"/}"
   checked=$((checked+1))
@@ -97,12 +112,13 @@ while IFS= read -r f; do
     done <<< "$hits"
   fi
 
-  if hits="$(grep -nE "$S3_RE" "$f" | grep -vE '^[0-9]+:[[:space:]]*#' | grep -E 'xargs|kill|until|while|if' || true)"; [[ -n "$hits" ]]; then  # 接 kill 会误杀自己；放在 if / while / until 里会命中自己、永远为真
+  if hits="$(grep -nE "$S3_RE" "$f" | grep -vE '^[0-9]+:[[:space:]]*#' || true)"; [[ -n "$hits" ]]; then
     while IFS= read -r h; do
-      bad "$rel:${h%%:*}  pgrep 的全模式匹配 —— 接 kill 与 pkill -f 同一个自杀风险，放进等待循环会命中自己、永远不退出"
+      bad "$rel:${h%%:*}  pgrep 的全模式匹配 —— 与 pkill -f 同一个自杀风险，放进等待循环还会命中自己、永远不退出"
       say "        $(printf '%s' "${h#*:}" | cut -c1-80)"
-      howto "模式串会命中 wrapper 自己的命令行，把自己的 shell 一起杀掉。" \
-            "先 ps 列出来看清楚，再用**字面量 pid** 分第二条命令杀（rules/command-safety.md）。"
+      howto "模式串会命中 wrapper 自己的命令行：接 kill 是把自己的 shell 一起杀掉，放进 if / while / until 是永远为真；" \
+            "先赋给变量再 kill、只是数一数，都一样。要杀先 ps 看清楚再用**字面量 pid** 分第二条命令杀；" \
+            "等进程结束用写死的 pid（kill -0）或 wait；统计类改用 /proc 并排掉自己这一支进程树（rules/command-safety.md）。"
       fails=$((fails+1))
     done <<< "$hits"
   fi
@@ -121,9 +137,13 @@ while IFS= read -r f; do
   fi
 
   # ── S5 rm -rf 作用在变量路径上，没有空值守卫 ─────────────
-  if hits="$(grep -nE "$S5_RE" "$f" | grep -vE '^[0-9]+:[[:space:]]*#' | grep -v ':?}' || true)"; [[ -n "$hits" ]]; then
+  if hits="$(grep -nE "$S5_CMD" "$f" | grep -vE '^[0-9]+:[[:space:]]*#' || true)"; [[ -n "$hits" ]]; then
     while IFS= read -r h; do
-      bad "$rel:${h%%:*}  rm -rf 作用在变量路径上，变量为空时会从根目录往下删"
+      # 行内逐个参数看有没有没守卫的。不用 `| head -1`：head 会让上游 grep 拿 SIGPIPE，pipefail 下整条管道退 141。
+      unguarded="$(printf '%s\n' "${h#*:}" | grep -oE "$S5_ARG" || true)"
+      unguarded="${unguarded%%$'\n'*}"
+      [[ -n "$unguarded" ]] || continue
+      bad "$rel:${h%%:*}  rm -rf 作用在变量路径上（$unguarded），变量为空时会从根目录往下删"
       say "        $(printf '%s' "${h#*:}" | cut -c1-80)"
       howto '加空值守卫：把 "$d/x" 写成 "${d:?}/x" —— 变量为空时 shell 直接报错退出，' \
             '而不是把 rm -rf 指到 /x（rules/command-safety.md）。'
@@ -140,16 +160,14 @@ while IFS= read -r f; do
           "改法：让调用方把这个值**作为参数传进去**，或者由函数落到文件、" \
           "调用方读文件——不要靠变量往外带（rules/command-safety.md）。"
     fails=$((fails+1))
-  done < <(awk '
+  done < <(awk -v HD_RE="$HEREDOC_RE" '
     # heredoc 体不是代码：`/payload.sh; rc=$?` 写在 initramfs 的 init 脚本里，
     # 按代码读会误判成「函数里给 rc 赋值」（写这条检查时实测到的第一个假红）。
+    # 判「这行开了 heredoc」用 lib.sh 的 HEREDOC_RE 一处定义，注释行不判：反过来写的话，
+    # 注释里一句 `# 用法示例： cat <<EOF` 就让其后整个文件当成 heredoc 体、一条都不再检查（审计实测）。
     {
       if (hd != "") { if ($0 == hd || $0 ~ ("^[ \t]*" hd "[ \t]*$")) hd = ""; L[NR] = ""; next }
-      if (match($0, /<<-?[ \t]*['"'"'"]?[A-Za-z_][A-Za-z0-9_]*['"'"'"]?/)) {
-        w = substr($0, RSTART, RLENGTH)
-        sub(/^<<-?[ \t]*/, "", w); gsub(/['"'"'"]/, "", w)
-        hd = w
-      }
+      if ($0 !~ /^[ \t]*#/ && match($0, HD_RE, hdm)) hd = hdm[2]
       L[NR] = $0
     }
     END {

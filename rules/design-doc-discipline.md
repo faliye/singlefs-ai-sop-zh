@@ -35,7 +35,7 @@
 `CLAUDE.md` 和 `rules/*.md` **连文末的历史版本都不留**，历史一律放 `CHANGELOG.md`。
 它们是每次开工都要通读的规矩，混进历史会冲淡。
 
-由 `scripts/doc-lint.sh` 强制。
+正文里的历史陈述与历史节的位置由 `scripts/doc-lint.sh` 强制，它只扫 `.md`；代码注释那一条靠 review。
 
 ## 2. 长度要配得上改动的重量
 

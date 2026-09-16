@@ -92,11 +92,24 @@ mapfile -t HEADS < <(awk '
 ' "$CL")
 
 fails=0; n=0; top=""; top_ln=""; prev=""; prev_ln=""
+# 日期的下界：这个仓第一个提交往前宽限几天。起点算一次就够，别在循环里每节算一遍。
+CHANGELOG_START_DATE="$(project_start_date "$(dirname "$CL")")"; CHANGELOG_START_DATE="${CHANGELOG_START_DATE:-$SOP_START_DATE}"
+require_date_arithmetic
 last=$(( ${#HEADS[@]} - 1 ))
 for idx in "${!HEADS[@]}"; do
   read -r ln kind v <<< "${HEADS[$idx]}"
   case "$kind" in
-    dated) ;;
+    dated)
+      # 日期不许是编的：比这个仓第一个提交早出宽限、或者比最晚时区的今天还晚，都不可能是真发生过的事。
+      # 判据在 lib.sh 的 date_out_of_range 一处，doc-lint 用的是同一个（实测踩过：样本里写着 2026-01-01）。
+      section_date="$(sed -n "${ln}p" "$CL" | grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2}' || true)"
+      section_date="${section_date%%$'\n'*}"
+      if [[ -n "$section_date" ]] && section_why="$(date_out_of_range "$section_date" "$CHANGELOG_START_DATE")"; then
+        bad "CHANGELOG.md:$ln  这一节的日期 $section_date 不可能：$section_why"
+        howto "写那一版实际改动的那一天。不知道是哪天就去查（git log 那几个提交），别填占位日期——" \
+              "占位日期读起来和真日期一模一样，而后面每一个引用它的人都会当真。"
+        fails=$((fails+1))
+      fi ;;
     tail)
       if [[ $idx -ne $last ]]; then
         bad "CHANGELOG.md:$ln  不带日期的收尾节只许是最后一节：$(sed -n "${ln}p" "$CL")"

@@ -11,8 +11,7 @@
 # 造一处真实的文档违规，gate.sh 退出码是 0，而自检 69 例全绿（复核实测）。
 #
 # **等价变异分开记，不算盲区**（`rules/test-discipline.md`）。复核跑了 126 个变异，
-# 现在只剩 5 个门禁察觉不到，逐个验过都是等价的：
-#   - lkmm 两段静态检查中途的 `exit 1` 删掉——最终汇总仍按 fails>0 判红，退出码不变
+# 剩下门禁察觉不到的，逐个验过都是等价的：
 #   - shell-lint 赋值循环里的 local/declare 跳过删掉——`loc[]` 预扫已经收了那些名字
 #   - show-me-test 的 `test_files` 正则不再要求 .rs——内容级检查兜住
 #   - i18n-sync 的「缺 SOURCE-MANIFEST」检查删掉——被下游的清单比对级联兜住
@@ -34,7 +33,7 @@
 #
 # ⚠️ **want 必须指着那条检查自己的消息，不能是几条检查共用的片段。**
 # 本轮审计的变异测试实测：doc-lint 的整组历史陈述模式删光、CLAUDE.md 历史节检查
-# 删光、kb 历史节检查删光、gate-lint 的窗口从 5 改成 99、lkmm 的两条静态检查删光、
+# 删光、kb 历史节检查删光、gate-lint 的窗口从 5 改成 99、
 # show-me-test 的标注集缩到只认 #[test]——**每一条都全绿**。
 # 根因是 blind 样本一次触发六类违规，而它的 want 写成了「正文不许」，
 # 上下文指代那条消息也含这四个字。所以：一个样本触发多类违规时，
@@ -44,6 +43,9 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 SCRIPTS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FX="$SCRIPTS/fixtures"
 tmpd="$(mktemp -d)"; trap 'rm -rf "$tmpd"' EXIT
+# 样本仓不受用户全局 git 配置影响。`commit.gpgsign=true` 之类会让第一个样本仓就建不起来，
+# 而 set -e 在那里把整个自检带走——「判错 0 条」加一行 git 的报错，看着不像自检失败（审计实测 rc=128）。
+export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 
 pass=0; fails=0; cases=0
 
@@ -76,6 +78,10 @@ judge() { # judge <名> <期望exit> <实际exit> <输出文件> [want片段...]
   return 0
 }
 
+# 两种跑法起子进程时都清掉 GATE_BASE 与 GATE_STAGED_FROM：gate.sh 把本脚本当一个阶段跑，
+# 用户指定的 diff 基准、--staged 的握手变量都在环境里；子进程继承了，嵌套跑的 gate.sh / show-me-test.sh
+# 就按外面那个项目的基准与兄弟目录判（审计实测：GATE_STAGED_FROM 在环境里时「上游比副本旧」两例反红，
+# GATE_BASE=HEAD 时 show-me-test 两例退 3）。清的动作只在这两行，对应的用例在 gate 那一节。
 # ── 样本目录跑法：expect 文件驱动 ───────────────────────
 run_fixture() { # run_fixture <标签> <样本目录> <命令...>（命令自行引用样本目录）
   local label="$1" d="$2"; shift 2
@@ -90,7 +96,7 @@ run_fixture() { # run_fixture <标签> <样本目录> <命令...>（命令自行
   local rc=0
   # 超时保护：挂死的检查在门禁输出里既不红也不绿，只是永远不回来——
   # 比红的门禁危险（本轮实测：gate-lint 的一处无限循环跑了 9 分钟没结束）。
-  set +e; timeout "${SELFTEST_TIMEOUT:-60}" "$@" > "$out" 2>&1; rc=$?; set -e
+  set +e; timeout "${SELFTEST_TIMEOUT:-60}" env -u GATE_BASE -u GATE_STAGED_FROM "$@" > "$out" 2>&1; rc=$?; set -e
   [[ $rc == 124 ]] && say "        （超时 ${SELFTEST_TIMEOUT:-60}s，按判错记）"
   judge "$label" "$wexit" "$rc" "$out" ${wants[@]+"${wants[@]}"}
 }
@@ -105,7 +111,7 @@ run_scripted() { # run_scripted <名> <期望exit> <want...> -- <命令...>
   local rc=0
   # 超时保护：挂死的检查在门禁输出里既不红也不绿，只是永远不回来——
   # 比红的门禁危险（本轮实测：gate-lint 的一处无限循环跑了 9 分钟没结束）。
-  set +e; timeout "${SELFTEST_TIMEOUT:-60}" "$@" > "$out" 2>&1; rc=$?; set -e
+  set +e; timeout "${SELFTEST_TIMEOUT:-60}" env -u GATE_BASE -u GATE_STAGED_FROM "$@" > "$out" 2>&1; rc=$?; set -e
   [[ $rc == 124 ]] && say "        （超时 ${SELFTEST_TIMEOUT:-60}s，按判错记）"
   judge "$name" "$wexit" "$rc" "$out" ${wants[@]+"${wants[@]}"}
 }
@@ -126,6 +132,15 @@ done
 # 而换判据正是这套门禁最该拦住的一件事（rules/show-me-test.md：门禁不许假装通过）。
 run_scripted "doc-lint/语言被覆盖时要自报" 0 "语言由 DOC_LINT_LANG 指定为" -- \
   env DOC_LINT_LANG=zh bash "$SCRIPTS/doc-lint.sh" "$FX/doc-lint/good"
+
+# 扫描范围不许随包所在的路径变。副本排除项此前写成 */singlefs-ai-sop/* 加「ROOT 在包里就不排除」：
+# 同一个样本 projok 在 zh 仓里「检查 1」、在项目副本（路径里有 /singlefs-ai-sop/）里「检查 2」——
+# 0.0.50 同步到 singlefs 时那边的 selftest 因此红了一例。这里把脚本拷到一个路径里带 /singlefs-ai-sop/ 的地方再跑同一个样本。
+r="$tmpd/elsewhere/singlefs-ai-sop"; mkdir -p "$r/scripts/fixtures/doc-lint"
+cp "$SCRIPTS/lib.sh" "$SCRIPTS/doc-lint.sh" "$r/scripts/"; cp "$SCRIPTS/../I18N" "$r/I18N"
+cp -r "$FX/doc-lint/projok" "$r/scripts/fixtures/doc-lint/"
+run_scripted "doc-lint/扫描范围不随包所在路径变" 0 "文档铁律检查通过（检查 1，跳过 0" -- \
+  env DOC_LINT_LANG=zh bash "$r/scripts/doc-lint.sh" "$r/scripts/fixtures/doc-lint/projok"
 
 # ════ gate-lint ══════════════════════════════════════════
 head1 "门禁自检：gate-lint 的判别力"
@@ -155,17 +170,27 @@ run_scripted "gate-lint/默认扫到包根" 1 "rootscript.sh:3" -- bash "$r/scri
 r="$tmpd/scan-sl"; mk_scan_pkg "$r" "$FX/scan/root-pkill.sh"
 run_scripted "shell-lint/默认扫到包根" 1 "rootscript.sh:4" -- bash "$r/scripts/shell-lint.sh"
 
-# ════ lkmm（声明、对照组、代码绑定；这几层不需要 herd7）══
-# 一律加 --static-only：样本的判定不该随这台机器装没装 herd7 变。它全过也退 3，绿样本的 expect 写 exit=3。
-head1 "门禁自检：lkmm 静态检查的判别力"
-for d in "$FX"/lkmm/*/; do
-  [[ -d "$d" ]] || continue
-  run_fixture "lkmm/$(basename "$d")" "$d" bash "$SCRIPTS/lkmm.sh" "$d" --static-only
-done
-# 模板那一对是 install.sh 铺进每个新项目的第一份 litmus，它自己得先过这几层（译本仓的模板带溯源标记，也要过）。
-r="$tmpd/lkmm-templates"; mkdir -p "$r/litmus"; cp "$SCRIPTS"/../templates/litmus/*.litmus "$r/litmus/"
-run_scripted "lkmm/模板那一对过得了静态检查" 3 "静态检查全过" "0 条绑到代码、1 条声明不对应代码" -- \
-  bash "$SCRIPTS/lkmm.sh" "$r" --static-only
+# `… | grep -q` 在管道末端：grep 找到就退出，上游拿 SIGPIPE，pipefail 下整条管道退 141、条件当假。
+# 文件小的时候一切正常，大过管道缓冲（64 KiB）就静默不判了——越大的脚本越容易中（审计实测：4 行判红，撑到 338 KB 变绿）。
+r="$tmpd/gl-bigfile"; mkdir -p "$r"
+{ printf '#!/usr/bin/env bash\nfor f in $(find . -name "*.md"); do\n  echo "$f"\ndone\n'
+  printf 'ok "%s"\n' 检查通过
+  awk 'BEGIN { for (i = 0; i < 9000; i++) print "# 填充行 " i " 用来把文件撑过管道缓冲区" }'
+} > "$r/x.sh"
+run_scripted "gate-lint/大文件也判得出没报计数" 1 "成功摘要没报出检查了多少项" -- \
+  env GATE_LINT_DIR="$r" bash "$SCRIPTS/gate-lint.sh"
+
+# 项目里单跑这两个 lint（README 就是这么教的）时，装进项目的副本不许被扫：
+# 副本带着一整套**故意写坏的**样本，扫了就当成项目自己的违规报出来（审计实测）。
+r="$tmpd/lint-copy"; pkg="$r/proj/.claude/f"
+mkdir -p "$pkg/scripts/fixtures/gate-lint/bad" "$pkg/scripts/fixtures/shell-lint/bad" "$r/proj/.claude/gate.d"
+cp "$SCRIPTS/lib.sh" "$SCRIPTS/gate-lint.sh" "$SCRIPTS/shell-lint.sh" "$pkg/scripts/"
+printf 'family=f\nthis=zh\nreference=zh\ndefault=zh\nlanguages=zh\n' > "$pkg/I18N"
+cp "$FX/scan/root-nakeddie.sh" "$pkg/scripts/fixtures/gate-lint/bad/evil.sh"
+cp "$FX/scan/root-pkill.sh"    "$pkg/scripts/fixtures/shell-lint/bad/evil.sh"
+cp "$FX/scan/clean.sh" "$r/proj/.claude/gate.d/10-ok.sh"
+run_scripted "gate-lint/项目里单跑不报副本里的样本" 0 "门禁自检通过" -- bash "$pkg/scripts/gate-lint.sh" "$r/proj"
+run_scripted "shell-lint/项目里单跑不报副本里的样本" 0 "shell 纪律检查通过" -- bash "$pkg/scripts/shell-lint.sh" "$r/proj"
 
 # ════ shell-lint ═════════════════════════════════════════
 head1 "门禁自检：shell-lint 的判别力"
@@ -269,8 +294,196 @@ r="$tmpd/smt-buildrs"; mk_repo "$r"
 printf 'fn main() {}\n' > "$r/crates/foo/build.rs"
 run_scripted "show-me-test/build.rs也是代码" 1 拒收 -- bash "$SCRIPTS/show-me-test.sh" "$r"
 
+# 大过管道缓冲的新文件里的内联测试照样算数（同 gate-lint 那条 grep -q 的坑，方向相反：这边是把带测试的判成没带）。
+r="$tmpd/smt-bigfile"; mk_repo "$r"
+printf 'pub fn g() -> u32 { 2 }\n' >> "$r/crates/foo/src/lib.rs"
+# ⚠️ 填充行不能写成注释：strip_comments 会把它们剥掉，喂给 grep 的其实只剩两行，
+# 根本撑不过管道缓冲——这条用例就只是看着像在测大文件（第一版实测：变异改回 grep -q，它一声不吭）。
+{ printf '#[cfg(test)]\nmod tests { #[test] fn t() { assert_eq!(1, 1); } }\n'
+  awk 'BEGIN { for (i = 0; i < 4000; i++) printf "pub fn filler_%d() -> u32 { %d }\n", i, i }'
+} > "$r/crates/foo/src/new.rs"
+run_scripted "show-me-test/大文件里的内联测试算数" 0 伴随测试 -- bash "$SCRIPTS/show-me-test.sh" "$r"
+
+# GATE_BASE 写错一个字母，此前 changed_files 按「空仓」处理、只看未跟踪文件，于是报「无对象可判」、门禁绿。
+r="$tmpd/smt-badbase"; mk_repo "$r"
+printf 'pub fn g() -> u32 { 2 }\n' >> "$r/crates/foo/src/lib.rs"
+run_scripted "show-me-test/GATE_BASE 解析不到就拒绝" 1 "解析不到提交" -- \
+  env GATE_BASE=orgin/master bash "$SCRIPTS/show-me-test.sh" "$r"
+
+# 上游领先（fetch 了没 merge）时，基准取与上游的 merge-base，不是上游的 tip：
+# 取 tip 就是把别人的提交算进这一轮，工作区干净也会被判拒收（审计实测）。
+r="$tmpd/smt-upstream"; mk_repo "$r/local"
+git init -q --bare -b master "$r/origin.git"
+git -C "$r/local" remote add origin "$r/origin.git"; git -C "$r/local" push -q -u origin master
+git clone -q "$r/origin.git" "$r/other"
+printf 'pub fn g() -> u32 { 2 }\n' >> "$r/other/crates/foo/src/lib.rs"
+git -C "$r/other" add -A
+git -C "$r/other" -c user.email=selftest@local -c user.name=selftest commit -qm "别人改了代码没带测试"
+git -C "$r/other" push -q origin master
+git -C "$r/local" fetch -q origin
+run_scripted "show-me-test/上游领先时不算别人的提交" 3 无对象可判 -- bash "$SCRIPTS/show-me-test.sh" "$r/local"
+
 r="$tmpd/smt-nothing"; mk_repo "$r"
 run_scripted "show-me-test/无对象可判" 3 无对象可判 -- bash "$SCRIPTS/show-me-test.sh" "$r"
+
+# gate-lint 也扫 .py：项目本地阶段常用 python 写，它们的拒绝一样摆在提交者面前。
+# ⚠️ 样本内容写进临时文件，不写成本脚本里的字符串——gate-lint 扫的是文件内容，
+# 直接写在这里它会把样本当成本脚本自己的拒绝（selftest 头部那条警告说的就是这个），所以 ✗ 用参数传。
+r="$tmpd/gl-py"; mkdir -p "$r"
+printf '#!/usr/bin/env python3\n# 样本：python 写的阶段，拒绝直接 print，没有出路\nimport sys\nprint("  %s 这几项不成形")\nsys.exit(1)\n' ✗ > "$r/x.py"
+run_scripted "gate-lint/python 阶段的拒绝也要给出路" 1 "x.py:4" -- env GATE_LINT_DIR="$r" bash "$SCRIPTS/gate-lint.sh"
+
+# doc-lint 自己报得出「本语言哪几条检查没实现」，gate.sh 拿它填汇总里的未实现清单。
+run_scripted "doc-lint/没词表的语言报得出哪几条未实现" 0 "本语言没有词表" -- \
+  env DOC_LINT_LANG=en bash "$SCRIPTS/doc-lint.sh" --not-impl
+run_scripted "doc-lint/有词表时未实现清单是空的" 0 "未实现清单为空" -- \
+  bash -c 'out="$(env DOC_LINT_LANG=zh bash "$1" --not-impl)"; [[ -z "$out" ]] && echo "未实现清单为空"' notimpl_zh "$SCRIPTS/doc-lint.sh"
+
+
+# 样本里的日期也要可能。样本**不在** doc-lint 的扫描范围里（它们是故意写坏的），所以这一条由 selftest 自己扫——
+# 踩过的正是这个：三份样本与一处 skill 示例里写着 2026-01-01，比这个仓第一个提交早了大半年，而门禁一直是绿的。
+# 故意拿不可能的日期去测那条检查的样本，在它自己的 expect 里声明出来，显式豁免（猜不着的东西不猜）。
+fxdate_check=(bash -c '
+  FX="$1"; LO="$2"; TODAY="$3"; bad_count=0; seen_count=0
+  while IFS= read -r fixture_file; do
+    rel="${fixture_file#"$FX"/}"; lint_name="${rel%%/*}"; rest="${rel#*/}"; fixture_name="${rest%%/*}"
+    expect_file="$FX/$lint_name/$fixture_name/expect"
+    if [[ -f "$expect_file" ]] && grep -q "晚于今天\|早于这个仓" "$expect_file"; then continue; fi
+    while IFS=: read -r line_no line_rest; do
+      found_date="$(printf "%s" "$line_rest" | grep -oE "[0-9]{4}-[0-9]{2}-[0-9]{2}" || true)"
+      found_date="${found_date%%$'"'"'\n'"'"'*}"
+      [[ -n "$found_date" ]] || continue
+      seen_count=$((seen_count+1))
+      if [[ "$found_date" > "$TODAY" ]] || { [[ -n "$LO" ]] && [[ "$found_date" < "$LO" ]]; }; then
+        echo "  样本日期不可能：$rel:$line_no  $found_date"; bad_count=$((bad_count+1))
+      fi
+    done < <(grep -nE "(^###[[:space:]]+|^##[[:space:]]+[0-9]+\.[0-9]+\.[0-9]+[[:space:]]+—[[:space:]]+|实测（)[0-9]{4}-[0-9]{2}-[0-9]{2}" "$fixture_file" || true)
+  done < <(find "$FX" -type f -name "*.md" | sort)
+  echo "样本里查了 $seen_count 个日期，不可能的 $bad_count 个"
+  [[ $bad_count -eq 0 ]]' fxdate_check)
+run_scripted "selftest/样本里的日期也要可能" 0 "不可能的 0 个" -- \
+  "${fxdate_check[@]}" "$FX" "$(date_lower_bound "$SOP_START_DATE")" "$(latest_today)"
+
+# 日期的下界只在被查目录**本身**是 git 仓顶层时才问 git。不这么限，`git -C` 会一路往上找：
+# 目录嵌在一个更晚才开始的仓里时（SOP 副本放在项目的 .claude/ 下就是这种形状），拿外层仓的第一个提交当下界，
+# 真日期会被判成不可能。这里造一个 2026-09-15 才开始的外层仓，里面的子目录写着 2026-09-01：
+# 按外层仓算早出了 7 天的宽限，按这个包的起点算在宽限之内。
+r="$tmpd/date-walkup"; mkdir -p "$r/outer/sub/kb"
+git -C "$r/outer" init -q
+printf '起点\n' > "$r/outer/README.md"; git -C "$r/outer" add -A
+GIT_AUTHOR_DATE="2026-09-15T00:00:00" GIT_COMMITTER_DATE="2026-09-15T00:00:00" \
+  git -C "$r/outer" -c user.name=t -c user.email=t@t commit -qm 起点
+printf '# 决策\n\n正文只写现状。\n\n## 历史版本\n\n### 2026-09-01\n- 建档。\n' > "$r/outer/sub/kb/a.md"
+run_scripted "doc-lint/日期下界不往上找外层仓" 0 "文档铁律检查通过" -- \
+  env DOC_LINT_LANG=zh bash "$SCRIPTS/doc-lint.sh" "$r/outer/sub"
+
+# 下界从第一个提交往前宽限 7 天：git init 之前做的工作会带着当时的日期进第一个提交
+# （singlefs 的初版提交里就有前一天的历史条目）。两例钉住宽限的两边：之内放行，之外照样判红。
+r="$tmpd/date-grace"
+for side in within beyond; do
+  mkdir -p "$r/$side/kb"; git -C "$r/$side" init -q
+  printf '起点\n' > "$r/$side/README.md"; git -C "$r/$side" add -A
+  GIT_AUTHOR_DATE="2026-09-15T00:00:00" GIT_COMMITTER_DATE="2026-09-15T00:00:00" \
+    git -C "$r/$side" -c user.name=t -c user.email=t@t commit -qm 起点
+done
+printf '# 决策\n\n正文只写现状。\n\n## 历史版本\n\n### 2026-09-10\n- 建档。\n' > "$r/within/kb/a.md"
+printf '# 决策\n\n正文只写现状。\n\n## 历史版本\n\n### 2026-09-05\n- 建档。\n' > "$r/beyond/kb/a.md"
+run_scripted "doc-lint/第一个提交之前 7 天以内的日期放行" 0 "文档铁律检查通过" -- \
+  env DOC_LINT_LANG=zh bash "$SCRIPTS/doc-lint.sh" "$r/within"
+run_scripted "doc-lint/早于第一个提交 7 天以上的日期判红" 1 "早于这个仓第一个提交（2026-09-15）7 天以上" -- \
+  env DOC_LINT_LANG=zh bash "$SCRIPTS/doc-lint.sh" "$r/beyond"
+
+# 「今天」按最晚的时区（UTC+14）算。本机时钟是 UTC、人在东京时，东京凌晨写下的当天日期比 UTC 的今天晚一天。
+# 用一个假 date 把时钟钉住：本机时钟上是 2026-09-16，UTC+14 已是 2026-09-17。退回只看本机时钟，第一例就红。
+r="$tmpd/date-latest-zone"; mkdir -p "$r/bin" "$r/today/kb" "$r/tomorrow/kb"
+printf '#!/usr/bin/env bash\nif [[ "${1:-}" == "+%%F" ]]; then\n  case "${TZ:-}" in UTC-14|Etc/GMT-14) echo 2026-09-17 ;; *) echo 2026-09-16 ;; esac; exit 0\nfi\nexec %q "$@"\n' \
+  "$(command -v date)" > "$r/bin/date"
+chmod +x "$r/bin/date"
+printf '# 决策\n\n正文只写现状。\n\n## 历史版本\n\n### 2026-09-17\n- 建档。\n' > "$r/today/kb/a.md"
+printf '# 决策\n\n正文只写现状。\n\n## 历史版本\n\n### 2026-09-18\n- 建档。\n' > "$r/tomorrow/kb/a.md"
+run_scripted "doc-lint/今天按最晚的时区算，东京已到的日期放行" 0 "文档铁律检查通过" -- \
+  env PATH="$r/bin:$PATH" DOC_LINT_LANG=zh bash "$SCRIPTS/doc-lint.sh" "$r/today"
+run_scripted "doc-lint/比最晚时区的今天还晚就判红" 1 "晚于今天（2026-09-17，按最晚的时区算）" -- \
+  env PATH="$r/bin:$PATH" DOC_LINT_LANG=zh bash "$SCRIPTS/doc-lint.sh" "$r/tomorrow"
+
+# 下界靠 date -d 做减法。不认 -d 的 date 算不出下界，下界要是静默变空，2026-01-01 就放行了：停下来说清楚。
+r="$tmpd/date-no-minus-d"; mkdir -p "$r/bin" "$r/proj/kb"
+printf '#!/usr/bin/env bash\nfor argument in "$@"; do [[ "$argument" == -d ]] && { echo "date: illegal option -- d" >&2; exit 1; }; done\nexec %q "$@"\n' \
+  "$(command -v date)" > "$r/bin/date"
+chmod +x "$r/bin/date"
+printf '# 决策\n\n正文只写现状。\n\n## 历史版本\n\n### 2026-01-01\n- 建档。\n' > "$r/proj/kb/a.md"
+run_scripted "doc-lint/date 不认 -d 时停下，不许静默放过" 1 "这台机器的 date 不认 -d" -- \
+  env PATH="$r/bin:$PATH" DOC_LINT_LANG=zh bash "$SCRIPTS/doc-lint.sh" "$r/proj"
+
+# 浅克隆里「第一个提交」是截断处：拿它当下界，项目越老误判越多。这里完整历史从 2026-09-01 开始，浅克隆只看得到 2026-09-16。
+r="$tmpd/date-shallow"; mkdir -p "$r/full"; git -C "$r/full" init -q
+printf '起点\n' > "$r/full/README.md"; git -C "$r/full" add -A
+GIT_AUTHOR_DATE="2026-09-01T00:00:00" GIT_COMMITTER_DATE="2026-09-01T00:00:00" \
+  git -C "$r/full" -c user.name=t -c user.email=t@t commit -qm 起点
+printf '又一行\n' >> "$r/full/README.md"; git -C "$r/full" add -A
+GIT_AUTHOR_DATE="2026-09-16T00:00:00" GIT_COMMITTER_DATE="2026-09-16T00:00:00" \
+  git -C "$r/full" -c user.name=t -c user.email=t@t commit -qm 又一行
+git clone -q --depth 1 "file://$r/full" "$r/shallow" 2>/dev/null
+mkdir -p "$r/shallow/kb"
+printf '# 决策\n\n正文只写现状。\n\n## 历史版本\n\n### 2026-09-02\n- 建档。\n' > "$r/shallow/kb/a.md"
+run_scripted "doc-lint/浅克隆不拿截断处当第一个提交" 0 "文档铁律检查通过" -- \
+  env DOC_LINT_LANG=zh bash "$SCRIPTS/doc-lint.sh" "$r/shallow"
+
+# en / ja 仓写实测日期的形态是 Measured ( 与 実測（。只认中文那种时，这两种一条都不查。
+r="$tmpd/date-forms"; mkdir -p "$r/kb"
+printf '# 决策\n\nMeasured (2099-01-01) 一次。\n\n## 历史版本\n' > "$r/kb/en.md"
+printf '# 决策\n\n実測（2099-01-01）一次。\n\n## 历史版本\n' > "$r/kb/ja.md"
+run_scripted "doc-lint/英日两种实测写法的日期也查" 1 "kb/en.md:3  日期 2099-01-01 不可能" "kb/ja.md:3  日期 2099-01-01 不可能" -- \
+  env DOC_LINT_LANG=zh bash "$SCRIPTS/doc-lint.sh" "$r"
+
+# 包里没有 I18N 时照常判：sed 读不到文件退 2，赋值带着这个退出码，set -e 当场把脚本带走、一个字都不打。
+# doc-lint 与 manifest 各一处（审核实测）；同一形态的另外六处已经带着 `|| true`。
+r="$tmpd/noi18n-doclint"; mkdir -p "$r/pkg/scripts" "$r/proj/kb"
+cp "$SCRIPTS/lib.sh" "$SCRIPTS/doc-lint.sh" "$r/pkg/scripts/"
+printf '# 决策\n\n正文只写现状。\n\n## 历史版本\n' > "$r/proj/kb/a.md"
+run_scripted "doc-lint/包里没有 I18N 也照常判" 0 "文档铁律检查通过" -- bash "$r/pkg/scripts/doc-lint.sh" "$r/proj"
+r="$tmpd/noi18n-manifest"; mkdir -p "$r/scripts" "$r/rules"
+cp "$SCRIPTS/lib.sh" "$SCRIPTS/manifest.sh" "$r/scripts/"
+printf '# 规则\n\n正文。\n' > "$r/rules/a.md"; printf "# 包\\n" > "$r/CLAUDE.md"
+run_scripted "manifest/包里没有 I18N 也照常判" 0 "清单与规范文本一致" -- \
+  bash -c 'bash "$1/scripts/manifest.sh" --update >/dev/null && bash "$1/scripts/manifest.sh"' _ "$r"
+
+# ════ bump.sh ════════════════════════════════════════════
+head1 "门禁自检：bump.sh 的判别力"
+# 此前零覆盖：一次升全部语言的 VERSION，靠的就是「先查全部在场、再动手」这一个顺序。
+# 在 <族目录>/f-zh 放一个只带 bump.sh 的包；清单生成换成桩，这里只测版本号那一半。
+mk_bump_pkg() { # mk_bump_pkg <族目录> <声明的语言...>
+  local family_root="$1"; shift
+  mkdir -p "$family_root/f-zh/scripts"
+  cp "$SCRIPTS/lib.sh" "$SCRIPTS/bump.sh" "$family_root/f-zh/scripts/"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$family_root/f-zh/scripts/manifest.sh"
+  printf 'family=f\nthis=zh\nreference=zh\ndefault=zh\nlanguages=%s\n' "$*" > "$family_root/f-zh/I18N"
+  printf '0.0.1\n' > "$family_root/f-zh/VERSION"
+}
+r="$tmpd/bump-badver"; mk_bump_pkg "$r" zh
+run_scripted "bump/版本号不是三段数字要拒绝" 1 "版本号必须是三段数字" -- bash "$r/f-zh/scripts/bump.sh" 1.2
+r="$tmpd/bump-noi18n"; mk_bump_pkg "$r" zh; rm -f "$r/f-zh/I18N"
+run_scripted "bump/缺 I18N 要拒绝" 1 "缺 I18N" -- bash "$r/f-zh/scripts/bump.sh" 0.0.2
+# 声明的语言仓有一个不在：必须在写任何一份之前就拒绝，否则会升出互相不一致的几份。
+r="$tmpd/bump-missing"; mk_bump_pkg "$r" zh en
+run_scripted "bump/有语言仓不在就一份都不写" 1 "找不到" "VERSION 仍是 0.0.1" -- \
+  bash -c 'bash "$1/f-zh/scripts/bump.sh" 0.0.2; rc=$?; echo "VERSION 仍是 $(cat "$1/f-zh/VERSION")"; exit $rc' bump_missing "$r"
+r="$tmpd/bump-ok"; mk_bump_pkg "$r" zh en; mkdir -p "$r/f-en"
+run_scripted "bump/全部语言仓都在就一起升" 0 "f-zh  → 0.0.2" "f-en  → 0.0.2" -- bash "$r/f-zh/scripts/bump.sh" 0.0.2
+
+# ════ install.sh ═════════════════════════════════════════
+head1 "门禁自检：install.sh 的判别力"
+# 版本戳只许往上走。副本比项目声明的版本旧时照写，就是把戳**降级**，而戳是入库的——
+# 降级顺着提交传给所有人，门禁从此按旧规矩判（审计实测这条路是通的）。
+r="$tmpd/inst-downgrade"; mkdir -p "$r/proj"
+printf '9.9.9\n' > "$r/proj/.singlefs-ai-sop-version"
+run_scripted "install/不给版本戳降级" 1 "不给版本戳降级" -- bash "$SCRIPTS/../install.sh" "$r/proj"
+
+# 副本被 .gitignore 挡着，新 clone 出来的仓里它不存在。包装脚本 exec 一个不存在的路径，
+# 拿到的只有 bash 的「No such file or directory」，一句出路都没有——所以包装里要自己说清楚。
+r="$tmpd/inst-nocopy"; mkdir -p "$r/proj"
+bash "$SCRIPTS/../install.sh" "$r/proj" >/dev/null 2>&1 || true
+run_scripted "install/包装说得清副本不在" 1 "找不到共享脚本" -- bash "$r/proj/.claude/scripts/gate.sh"
 
 # ════ gate.sh 自己（判决点，此前零覆盖）═══════════════════
 # 复核实测：把 run_stage 改成无条件记 PASS，造一处真实文档违规，
@@ -288,7 +501,7 @@ mk_gate_pkg() { # mk_gate_pkg <目录> [要让哪个桩失败]
   printf 'family=f\nthis=zh\nreference=zh\ndefault=zh\nlanguages=zh\n' > "$d/I18N"
   printf '# 规则甲\n' > "$d/rules/a.md"
   local n
-  for n in gate-lint selftest shell-lint doc-lint naming-lint show-me-test check manifest i18n-sync version-discipline changelog-lint lkmm; do
+  for n in gate-lint selftest shell-lint doc-lint naming-lint show-me-test check manifest i18n-sync version-discipline changelog-lint; do
     if [[ "$n" == "$failing" ]]; then
       printf '#!/usr/bin/env bash\necho "  桩 %s 判红"\nexit 1\n' "$n" > "$d/scripts/$n.sh"
     else
@@ -302,7 +515,7 @@ mk_gate_pkg() { # mk_gate_pkg <目录> [要让哪个桩失败]
 r="$tmpd/gate-green"; mk_gate_pkg "$r"
 run_scripted "gate/全绿则退出码 0" 0 \
   "已实现的门禁阶段全部通过" 门禁自检 门禁判别力 "shell 纪律" 文档铁律 命名纪律 "Show me test" \
-  规则清单 各语言同步 版本纪律 "CHANGELOG 连续" LKMM \
+  规则清单 各语言同步 版本纪律 "CHANGELOG 连续" \
   -- bash "$r/scripts/gate.sh" "$r"
 
 # 任一阶段红 ⇒ 整道门禁必须红。这是判决点，缺了它前面所有检查都白做。
@@ -363,6 +576,86 @@ r="$tmpd/gate-upstream-newer"; mk_versioned_project "$r" 0.0.2
 run_scripted "gate/副本落后上游照旧说落后" 1 "副本落后上游：副本 0.0.1，上游 0.0.2" -- \
   bash "$r/proj/.claude/f/scripts/gate.sh" "$r/proj"
 
+# 缺版本戳是拒绝，得带出路：此前用 warn 打、没有 howto，gate-lint 只认 bad / die / ✗，看不见它。
+r="$tmpd/gate-nostamp"; mk_gate_pkg "$r/proj/.claude/f"; mkdir -p "$r/proj/kb"
+run_scripted "gate/缺版本戳要给出路" 1 "项目未声明规范版本" "它会写出 .singlefs-ai-sop-version" -- \
+  bash "$r/proj/.claude/f/scripts/gate.sh" "$r/proj"
+
+# 本脚本起的子进程看不到 GATE_BASE 与 GATE_STAGED_FROM（清的动作在 run_fixture / run_scripted 里）。
+# 函数调用前的临时赋值会导出给函数起的子进程，所以这一行就是在模拟 gate.sh 带着这两样跑本脚本。
+GATE_BASE=HEAD GATE_STAGED_FROM=/nonexistent run_scripted "selftest/自己起的子进程看不到 GATE_BASE 与 GATE_STAGED_FROM" 0 \
+  "GATE_BASE=<空>" "GATE_STAGED_FROM=<空>" -- \
+  bash -c 'echo "GATE_BASE=${GATE_BASE:-<空>}"; echo "GATE_STAGED_FROM=${GATE_STAGED_FROM:-<空>}"'
+
+# 样本仓也不看用户的全局 / 系统 git 配置（头部两个 export 钉的就是这个）。
+# 不钉的话，用户开着 commit.gpgsign 之类，第一个样本仓就建不起来，set -e 把整个自检带走——
+# 打出来是「判错 0 条」加一行 git 的报错，看着不像自检失败（审计实测 rc=128）。
+run_scripted "selftest/样本仓不看用户的全局 git 配置" 0 "GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1" -- \
+  bash -c 'echo "GIT_CONFIG_GLOBAL=${GIT_CONFIG_GLOBAL:-<空>} GIT_CONFIG_NOSYSTEM=${GIT_CONFIG_NOSYSTEM:-<空>}"'
+
+# --staged 的握手变量到里层就要消费掉，不许再漏给项目本地阶段（它们会拿它当自己的项目根去找兄弟目录）。
+r="$tmpd/gate-staged-env"; mk_gate_pkg "$r/pkg"; mk_staged_project "$r/proj"
+printf '#!/usr/bin/env bash\n# gate-stage: 环境探针\necho "  ✓ GATE_STAGED_FROM=${GATE_STAGED_FROM:-<空>}"\n' > "$r/proj/.claude/gate.d/60-env.sh"
+git -C "$r/proj" add -A && git -C "$r/proj" -c user.name=t -c user.email=t@t commit -qm probe
+run_scripted "gate/--staged 不把 GATE_STAGED_FROM 漏给本地阶段" 0 "GATE_STAGED_FROM=<空>" -- \
+  bash "$r/pkg/scripts/gate.sh" --staged "$r/proj"
+
+# 被门禁的是 SOP 仓自身时，--staged 要跑临时树里那份脚本、按 SOP 仓判；跑源仓的脚本会把临时树当消费项目，
+# 报「缺版本戳」判红，只在 SOP 仓跑的三个阶段还静默不跑（审计实测）。
+r="$tmpd/gate-staged-self"; mk_gate_pkg "$r"
+git -C "$r" init -q && git -C "$r" add -A && git -C "$r" -c user.name=t -c user.email=t@t commit -qm base
+printf '# 规则乙\n' >> "$r/rules/a.md"; git -C "$r" add rules/a.md
+run_scripted "gate/--staged 在 SOP 仓自身上按 SOP 仓判" 0 "本仓即 SOP 本身" "已实现的门禁阶段全部通过" -- \
+  bash "$r/scripts/gate.sh" --staged "$r"
+
+# --staged 的 diff 基准要与直接跑相同。临时树是 detached HEAD，里层自己算会落到 HEAD~1，
+# 「分两次提交就绕过去」那条口子在 --staged 这边就开着（审计实测：直接跑 origin/master，--staged HEAD~1）。
+# 这里的项目没有 Cargo.toml，「构建与单测」也会红，所以判据钉在 show-me-test 的「拒收」上，不只看退出码。
+r="$tmpd/gate-staged-base"; mk_gate_pkg "$r/pkg"; cp "$SCRIPTS/show-me-test.sh" "$r/pkg/scripts/"
+mk_repo "$r/proj"; printf '0.0.0\n' > "$r/proj/.singlefs-ai-sop-version"
+git -C "$r/proj" add -A && git -C "$r/proj" -c user.email=t@t -c user.name=t commit -qm stamp
+git init -q --bare -b master "$r/origin.git"
+git -C "$r/proj" remote add origin "$r/origin.git" && git -C "$r/proj" push -q -u origin master
+printf 'pub fn g() -> u32 { 2 }\n' >> "$r/proj/crates/foo/src/lib.rs"
+git -C "$r/proj" add -A && git -C "$r/proj" -c user.email=t@t -c user.name=t commit -qm "改代码不带测试"
+printf '# 说明\n' > "$r/proj/NOTES.md"
+git -C "$r/proj" add -A && git -C "$r/proj" -c user.email=t@t -c user.name=t commit -qm "只改文档"
+printf '再改一行\n' >> "$r/proj/NOTES.md"; git -C "$r/proj" add NOTES.md
+run_scripted "gate/--staged 的 diff 基准与直接跑相同" 1 拒收 -- bash "$r/pkg/scripts/gate.sh" --staged "$r/proj"
+
+# 项目里的包装脚本把项目根放在 $1、用户的参数接在后面，所以文档推荐的 `gate.sh --staged` 到里层是 `gate.sh <项目根> --staged`。
+# 写死「$1 == --staged」时它被静默吃掉，门禁照常跑工作区（审计实测：那条命令根本没进 --staged 分支）。
+r="$tmpd/gate-wrap"; mk_gate_pkg "$r/pkg"; mk_staged_project "$r/proj"
+mkdir -p "$r/proj/.claude/scripts"
+printf '#!/usr/bin/env bash\nexec bash "%s/scripts/gate.sh" "%s" "$@"\n' "$r/pkg" "$r/proj" > "$r/proj/.claude/scripts/gate.sh"
+printf 'BAD（别的会话没暂存的）\n' >> "$r/proj/kb/a.md"
+run_scripted "gate/经包装脚本带 --staged 也认得" 0 "只拿 HEAD + 暂存区跑" "已实现的门禁阶段全部通过" -- \
+  bash "$r/proj/.claude/scripts/gate.sh" --staged
+run_scripted "gate/认不出的参数要拒绝" 1 "认不出的参数：--stagd" -- \
+  bash "$r/pkg/scripts/gate.sh" --stagd "$r/proj"
+
+# 判「被门禁的是不是 SOP 仓自身」要按物理路径：只比 pwd 的话，经符号链接跑就判成消费项目，
+# 报「缺版本戳」判红，只在 SOP 仓跑的三个阶段还静默不跑（审计实测）。
+r="$tmpd/gate-symlink"; mk_gate_pkg "$r/pkg"; ln -s "$r/pkg" "$r/link"
+run_scripted "gate/经符号链接也认得出 SOP 仓自身" 0 "本仓即 SOP 本身" -- \
+  bash "$r/link/scripts/gate.sh" "$r/pkg"
+
+# gate-ok 记的是**开跑时**的 HEAD。跑完再解析一次的话，另一个会话在这一轮跑的过程中提交，
+# 那个从没验过的提交会被一并盖章，此后永远落在 diff 窗口外（审计实测）。
+r="$tmpd/gate-okref"; mk_gate_pkg "$r/pkg"; mk_staged_project "$r/proj"
+# 中途提交的内容开跑之前就写进工作区：跑的过程中只让 HEAD 动、不让工作区内容动。
+# 否则「工作区跑的过程中没变」那一项先判红，门禁不通过、gate-ok 根本不写，这条用例测的就不再是「记哪个 HEAD」。
+printf '#!/usr/bin/env bash\n# gate-stage: 中途提交\ncd "${1:?}" || exit 2\ngit add kb/a.md\ngit -c user.name=t -c user.email=t@t commit -qm "跑的过程中提交" >/dev/null\necho "  %s 已提交（查了 1 项）"\n' ✓ > "$r/proj/.claude/gate.d/60-commit.sh"
+git -C "$r/proj" add -A; git -C "$r/proj" -c user.name=t -c user.email=t@t commit -qm stage
+printf '别的会话写的\n' >> "$r/proj/kb/a.md"
+okref_check=(bash -c '
+  start="$(git -C "$2" rev-parse HEAD)"
+  bash "$1/scripts/gate.sh" "$2" >/dev/null 2>&1
+  [[ "$(git -C "$2" rev-parse HEAD)" != "$start" ]] || { echo "场景没摆成：跑的过程中 HEAD 没变"; exit 1; }
+  if [[ "$(git -C "$2" rev-parse refs/singlefs/gate-ok)" == "$start" ]]; then echo "gate-ok 指向开跑时那个提交"
+  else echo "gate-ok 指向跑完时那个提交"; exit 1; fi' okref_check)
+run_scripted "gate/gate-ok 记的是开跑时的 HEAD" 0 "gate-ok 指向开跑时那个提交" -- "${okref_check[@]}" "$r/pkg" "$r/proj"
+
 # --staged 跑到一半被打断（Ctrl-C）也要清掉临时 worktree：留下的会一直登记在仓里，下一次还得手工 git worktree prune。
 # 一个睡 20 秒的项目阶段，worktree 建起来之后给整组发 INT；开 job control（set -m）是为了让后台那一组收得到 INT。
 # 写成独立的 bash 程序：run_scripted 经 timeout 执行命令，timeout 看不见 shell 函数。
@@ -402,18 +695,133 @@ gate_with_not_impl_section=(bash -c '
   exit "$rc"' gate_with_not_impl_section)
 r="$tmpd/gate-covers-pass"; mk_gate_pkg "$r/pkg"; mk_covers_project "$r/proj" 0 崩溃点重放
 run_scripted "gate/覆盖声明的阶段通过，那一项换成由谁覆盖" 0 "崩溃点重放 ← 样本重放" \
-  "未实现段：模型对拍 QEMU真实负载" "崩溃点重放由「样本重放」覆盖" \
+  "未实现段：模型对拍 最终判据 命名纪律（shell）" "崩溃点重放由「样本重放」覆盖" \
   -- "${gate_with_not_impl_section[@]}" "$r/pkg" "$r/proj" "$r/out.txt"
 r="$tmpd/gate-covers-fail"; mk_gate_pkg "$r/pkg"; mk_covers_project "$r/proj" 1 崩溃点重放
-run_scripted "gate/覆盖声明的阶段跑红，那一项照旧列着" 1 门禁未通过 "未实现段：模型对拍 崩溃点重放 QEMU真实负载" \
+run_scripted "gate/覆盖声明的阶段跑红，那一项照旧列着" 1 门禁未通过 "未实现段：模型对拍 崩溃点重放 最终判据 命名纪律（shell）" \
   -- "${gate_with_not_impl_section[@]}" "$r/pkg" "$r/proj" "$r/out.txt"
 r="$tmpd/gate-covers-77"; mk_gate_pkg "$r/pkg"; mk_covers_project "$r/proj" 77 崩溃点重放
 run_scripted "gate/本地阶段退 77 记本次未跑，不算覆盖" 0 "本次未跑：阶段报了这一轮无对象可判（退出码 77）" \
-  "未实现段：模型对拍 崩溃点重放 QEMU真实负载" "崩溃一致性尚未纳入门禁" \
+  "未实现段：模型对拍 崩溃点重放 最终判据 命名纪律（shell）" "崩溃一致性尚未纳入门禁" \
   -- "${gate_with_not_impl_section[@]}" "$r/pkg" "$r/proj" "$r/out.txt"
 r="$tmpd/gate-covers-typo"; mk_gate_pkg "$r/pkg"; mk_covers_project "$r/proj" 0 崩溃重放
 run_scripted "gate/gate-covers 写了清单里没有的项要红" 1 "gate-covers 写了清单里没有的项：「崩溃重放」" \
   -- "${gate_with_not_impl_section[@]}" "$r/pkg" "$r/proj" "$r/out.txt"
+
+# ── gate.sh 与各脚本之间的约定 ──────────────────────────
+# doc-lint 报的未实现项要出现在汇总里。此前 en / ja 仓那三条检查报了「未实现」，阶段照样记 PASS，
+# 汇总的未实现清单里也没有它们——而汇总才是人会看的那一处（审计实测）。
+r="$tmpd/gate-notimpl"; mk_gate_pkg "$r"
+printf '#!/usr/bin/env bash\nif [[ "${1:-}" == --not-impl ]]; then echo "文档铁律的词表型检查（en）：本语言没有词表"; exit 0; fi\nexit 0\n' > "$r/scripts/doc-lint.sh"
+run_scripted "gate/汇总里列出 doc-lint 报的未实现项" 0 "文档铁律的词表型检查（en）：本语言没有词表" -- bash "$r/scripts/gate.sh" "$r"
+
+# 命名纪律退 3 = 没有要查的 .rs，记「本次未跑」不记通过（与 Show me test 同一个约定）。
+r="$tmpd/gate-naming3"; mk_gate_pkg "$r"
+printf '#!/usr/bin/env bash\nexit 3\n' > "$r/scripts/naming-lint.sh"
+run_scripted "gate/命名纪律无对象可判记本次未跑" 0 "命名纪律            本次无对象可判" -- bash "$r/scripts/gate.sh" "$r"
+
+# 本地阶段拿得到这一轮的 diff 基准：此前只有 show-me-test 自己算，本地阶段各按各的口径取，
+# 同一轮里两个阶段判的不是同一批改动，而它们的注释都写着「与 Show me test 同一套口径」。
+r="$tmpd/gate-diffbase"; mk_gate_pkg "$r/pkg"; mk_staged_project "$r/proj"
+printf '#!/usr/bin/env bash\n# gate-stage: 基准探针\nif [[ -n "${GATE_DIFF_BASE:-}" ]]; then echo "  %s 基准已导入（查了 1 项）"; else echo "  基准没导入"; exit 1; fi\n' ✓ > "$r/proj/.claude/gate.d/70-base.sh"
+git -C "$r/proj" add -A; git -C "$r/proj" -c user.name=t -c user.email=t@t commit -qm probe
+run_scripted "gate/本地阶段拿得到这一轮的 diff 基准" 0 "基准已导入" -- bash "$r/pkg/scripts/gate.sh" "$r/proj"
+
+# 从 git 钩子里跑时 git 设了 GIT_DIR 这一组，它们压过 `git -C`：不清掉的话 worktree add 会失败，
+# 而报出来的出路是「先跑 git worktree prune」，指的方向是错的。
+# ⚠️ GIT_DIR 要用**相对路径**，而且要 cd 进项目再跑——git 给钩子设的就是相对的 `.git`。
+# 写成绝对路径时它恰好还指着同一个仓，不清掉也照样跑得通，这条用例就分不出修没修
+# （第一版实测：变异之后它一声不吭）。相对路径在 gate.sh 换了工作目录之后才会指错地方。
+r="$tmpd/gate-hookenv"; mk_gate_pkg "$r/pkg"; mk_staged_project "$r/proj"
+hookenv_check=(bash -c 'cd "$2" && GIT_DIR=.git GIT_INDEX_FILE=.git/index bash "$1/scripts/gate.sh" --staged .' hookenv_check)
+run_scripted "gate/带着 git 钩子的环境变量也跑得了 --staged" 0 "只拿 HEAD + 暂存区跑" -- \
+  "${hookenv_check[@]}" "$r/pkg" "$r/proj"
+
+# --staged 中途 die 也要把临时 worktree 带走。只挂 INT / TERM 时，die 那几条路径会留下一个 worktree。
+# 摆法：暂存区里删掉 scripts/gate.sh，临时树里就没有它，里层跑不起来，走 die。
+r="$tmpd/gate-exittrap"; mk_gate_pkg "$r"
+git -C "$r" init -q && git -C "$r" add -A && git -C "$r" -c user.name=t -c user.email=t@t commit -qm base
+git -C "$r" rm -q --cached scripts/gate.sh >/dev/null
+exittrap_check=(bash -c '
+  bash "$1/scripts/gate.sh" --staged "$1" >/dev/null 2>&1
+  left="$(git -C "$1" worktree list --porcelain | grep -c "^worktree ")"
+  echo "die 之后仓里登记的 worktree：$left 个"
+  [[ "$left" == 1 ]]' exittrap_check)
+run_scripted "gate/--staged 中途 die 也清掉临时 worktree" 0 "die 之后仓里登记的 worktree：1 个" -- "${exittrap_check[@]}" "$r"
+
+# 「规范版本不一致」那条拒绝里用到族名，而族名此前定义在几十行之后：set -u 下它一出口就是 unbound variable，
+# 拒绝本身一个字都打不出来。
+r="$tmpd/gate-vermis"; mk_gate_pkg "$r/proj/.claude/f"
+printf '0.0.1\n' > "$r/proj/.singlefs-ai-sop-version"
+run_scripted "gate/版本戳对不上时那条拒绝打得出来" 1 "规范版本不一致" "install.sh 更新版本戳" -- \
+  bash "$r/proj/.claude/f/scripts/gate.sh" "$r/proj"
+
+# ── gate.sh 的判决分支：改成无条件记 PASS 也要有人发现 ──
+# 审计实测：把这几处改成 record PASS，自检 292 例一个都没红——判决点自己没人盯。
+# 本地阶段要交给两个 lint：它们和共享阶段一样会拒绝提交者。
+r="$tmpd/gate-lintextra"; mk_gate_pkg "$r/pkg"; mk_staged_project "$r/proj"
+cp "$SCRIPTS/gate-lint.sh" "$SCRIPTS/shell-lint.sh" "$r/pkg/scripts/"
+# 放进 gate.d 的**子目录**：gate.sh 只把 maxdepth 1 的 *.sh 当阶段跑，而两个 lint 是递归扫的。
+# 直接放在 gate.d 根下，它会作为一个阶段被执行、自己判红，于是去掉 LINT_EXTRA 之后门禁照样退 1、
+# 输出里照样有这个文件名——这条用例就分不出「lint 扫到了」还是「阶段自己红了」（第一版实测：变异之后它一声不吭）。
+mkdir -p "$r/proj/.claude/gate.d/lib"
+cp "$FX/scan/root-nakeddie.sh" "$r/proj/.claude/gate.d/lib/90-nakeddie.sh"
+run_scripted "gate/本地阶段也交给两个 lint" 1 "90-nakeddie.sh:3  拒绝但没有出路" -- bash "$r/pkg/scripts/gate.sh" "$r/proj"
+
+# ── gate.sh：跑的过程中工作区变了要判红 ──
+# 门禁的结论只对它读到的那一版成立。拿一个项目本地阶段在跑的时候改文件，模拟边改边跑与别的会话中途改动。
+r="$tmpd/gate-worktree-changed"; mk_gate_pkg "$r/pkg"; mk_staged_project "$r/proj"
+printf '#!/usr/bin/env bash\n# gate-stage: 中途改文件\ncd "${1:-.}" || exit 2\nprintf "跑到一半有人改了\\n" >> kb/b.md\necho "  ✓ 改了 1 个文件"\n' > "$r/proj/.claude/gate.d/60-edit-midway.sh"
+git -C "$r/proj" add -A && git -C "$r/proj" -c user.name=t -c user.email=t@t commit -qm 加一个中途改文件的阶段
+run_scripted "gate/跑的过程中工作区变了要判红" 1 "门禁跑的这段时间里工作区变了" 门禁未通过 -- bash "$r/pkg/scripts/gate.sh" "$r/proj"
+# 反面：跑的过程中只暂存、不改内容，不算工作区变了（指纹用临时索引算，与暂存区无关）。
+# 少了这一例，指纹换成「git status 的输出」这种会被别的会话暂存搅动的算法也照样全绿。
+r="$tmpd/gate-worktree-staged-only"; mk_gate_pkg "$r/pkg"; mk_staged_project "$r/proj"
+printf '#!/usr/bin/env bash\n# gate-stage: 中途只暂存\ncd "${1:-.}" || exit 2\ngit add kb/a.md\necho "  ✓ 暂存了 1 个文件"\n' > "$r/proj/.claude/gate.d/60-stage-midway.sh"
+git -C "$r/proj" add .claude && git -C "$r/proj" -c user.name=t -c user.email=t@t commit -qm 加一个中途只暂存的阶段
+printf '这一轮改过\n' >> "$r/proj/kb/a.md"
+run_scripted "gate/中途只暂存不算工作区变了" 0 "开跑与收尾的工作区指纹相同" "已实现的门禁阶段全部通过" -- bash "$r/pkg/scripts/gate.sh" "$r/proj"
+# 指纹不许碰真索引：直接在真索引上 git add -A 的话，每跑一次门禁，使用者没暂存的改动都被悄悄暂存。
+# 只比指纹的值看不出这一点——两种算法算出来的树逐字节相同（审核实测）——所以直接比调用前后的 git status。
+fingerprint_index_check=(bash -c '
+  source "$1/lib.sh"; repo="$2"
+  before="$(git -C "$repo" status --porcelain)"
+  fingerprint="$(worktree_fingerprint "$repo")"
+  after="$(git -C "$repo" status --porcelain)"
+  [[ -n "$fingerprint" ]] || { echo "指纹是空的"; exit 1; }
+  if [[ "$before" == "$after" ]]; then echo "调用前后 git status 相同"
+  else printf "调用前：\n%s\n调用后：\n%s\n" "$before" "$after"; exit 1; fi' fingerprint_index_check)
+r="$tmpd/fingerprint-index"; mkdir -p "$r"; git -C "$r" init -q
+printf '甲\n' > "$r/a.md"; git -C "$r" add a.md; git -C "$r" -c user.name=t -c user.email=t@t commit -qm a
+printf '改了没暂存\n' >> "$r/a.md"; printf '没跟踪\n' > "$r/b.md"
+run_scripted "lib/工作区指纹不碰真索引" 0 "调用前后 git status 相同" -- "${fingerprint_index_check[@]}" "$SCRIPTS" "$r"
+
+# Show me test 退 3 = 无对象可判，记「本次未跑」不记通过。
+r="$tmpd/gate-smt3"; mk_gate_pkg "$r"
+printf '#!/usr/bin/env bash\nexit 3\n' > "$r/scripts/show-me-test.sh"
+run_scripted "gate/Show me test 无对象可判记本次未跑" 0 "Show me test        本次无对象可判" -- bash "$r/scripts/gate.sh" "$r"
+
+# 跑的不是项目里装的那份副本时，这条检查测的就不是它名字说的东西，必须判红。
+r="$tmpd/gate-notcopy"; mk_gate_pkg "$r/pkg"; mkdir -p "$r/proj/.claude/f"
+printf '0.0.0\n' > "$r/proj/.singlefs-ai-sop-version"
+printf '0.0.9\n' > "$r/proj/.claude/f/VERSION"
+run_scripted "gate/跑的不是项目里那份副本要判红" 1 "跑的不是项目里那份副本" -- bash "$r/pkg/scripts/gate.sh" "$r/proj"
+
+# 有 .rs 却没有 Cargo.toml：这些代码根本没被构建过，不能当「本阶段不适用」放过。
+r="$tmpd/gate-nocargo"; mk_gate_pkg "$r/proj/.claude/f"
+printf '0.0.0\n' > "$r/proj/.singlefs-ai-sop-version"
+mkdir -p "$r/proj/crates/foo/src"; printf 'pub fn f() {}\n' > "$r/proj/crates/foo/src/lib.rs"
+run_scripted "gate/有 .rs 却没有 Cargo.toml 要判红" 1 "这些代码根本没被构建过" -- \
+  bash "$r/proj/.claude/f/scripts/gate.sh" "$r/proj"
+
+# 规范副本被 .gitignore 挡着时，--staged 要把它原样拷进临时树，否则项目里的包装脚本转发不到。
+r="$tmpd/gate-copyinto"; mkdir -p "$r/proj/.claude/gate.d"; mk_gate_pkg "$r/proj/.claude/f"
+printf '0.0.0\n' > "$r/proj/.singlefs-ai-sop-version"
+printf '.claude/f/\n' > "$r/proj/.gitignore"
+printf '#!/usr/bin/env bash\n# gate-stage: 副本在不在\nif [[ -d "${1:?}/.claude/f" ]]; then echo "  %s 副本在（查了 1 项）"; else echo "  副本不在"; exit 1; fi\n' ✓ > "$r/proj/.claude/gate.d/80-copy.sh"
+git -C "$r/proj" init -q && git -C "$r/proj" add -A && git -C "$r/proj" -c user.name=t -c user.email=t@t commit -qm base
+run_scripted "gate/--staged 把不进 git 的副本拷进临时树" 0 "副本在" -- \
+  bash "$r/proj/.claude/f/scripts/gate.sh" --staged "$r/proj"
 
 # ════ changelog-lint ═════════════════════════════════════
 head1 "门禁自检：changelog-lint 的判别力"
@@ -487,6 +895,18 @@ run_scripted "version-discipline/名字像VERSION的文件不算" 1 没抬 -- ba
 
 # ════ manifest 与 i18n-sync（失败分支曾静默崩溃，这两条是回归钉）══
 head1 "门禁自检：manifest / i18n-sync 的判别力"
+# 搭样本用的盖章。失败要当场说清：输出丢进 /dev/null 的话，lib.sh 的 set -e 会把整个自检一声不响地带走，
+# 后面几十个用例一个都不跑，只剩一个退出码 1（审核实测：盖章与回读的形态一对不上，自检停在第 245 例）。
+setup_stamp() { # setup_stamp <参照仓> <语言> <篇目...>
+  local ref="$1" lang="$2" log; shift 2
+  log="$(mktemp)"
+  if ! bash "$ref/scripts/i18n-sync.sh" --stamp "$lang" "$@" > "$log" 2>&1; then
+    sed 's/^/     | /' "$log"
+    die "搭译本样本时 i18n-sync --stamp 失败，依赖这份样本的用例一个都没跑" \
+        "照上面的原话修 i18n-sync（多半是盖章与回读认的形态对不上），再重跑 selftest。"
+  fi
+  rm -f "$log"
+}
 mk_pair() { # mk_pair <目录> —— 参照仓 + 一个完全跟上的 en 译本仓，返回参照仓路径
   local base="$1"
   local ref="$base/f-zh" sib="$base/f-en"
@@ -500,15 +920,15 @@ mk_pair() { # mk_pair <目录> —— 参照仓 + 一个完全跟上的 en 译�
   done
   sed 's/^this=.*/this=en/' "$ref/I18N" > "$sib/I18N"
   # 逐篇盖上溯源标记：**走真正的 --stamp**，不在这里另写一份放置逻辑。
-  # 手写的话，标记会一律拍在第 1 行，把 SKILL.md 的 frontmatter 与 litmus 头压掉——
+  # 手写的话，标记会一律拍在第 1 行，把 SKILL.md 的 frontmatter 压掉——
   # 那正是被检查拦下的形态（第一版这么写，当场被自己的检查判红）。
   local path
   while read -r _h path; do
     mkdir -p "$sib/$(dirname "$path")"; cp "$ref/$path" "$sib/$path"
   done < "$ref/MANIFEST.sha256"
   git -C "$sib" init -q          # --stamp 只往 git 仓里写
-  bash "$ref/scripts/i18n-sync.sh" --stamp en \
-    $(sed 's/^[0-9a-f]*  //' "$ref/MANIFEST.sha256") >/dev/null
+  # shellcheck disable=SC2046  # 篇目按空白拆开，正是要的
+  setup_stamp "$ref" en $(sed 's/^[0-9a-f]*  //' "$ref/MANIFEST.sha256")
 }
 mk_pkg() { # mk_pkg <目录> <族名> —— 最小参照仓（脚本用真的，内容是样本）
   mkdir -p "$1/scripts" "$1/rules" "$1/skills" "$1/templates" "$1/agents"
@@ -521,7 +941,6 @@ mk_pkg() { # mk_pkg <目录> <族名> —— 最小参照仓（脚本用真的�
   printf -- '---\nname: a\ndescription: 样本 agent\n---\n\n正文。\n' > "$1/agents/a.md"
   mkdir -p "$1/skills/s"
   printf -- '---\nname: s\ndescription: 样本 skill\n---\n\n正文。\n' > "$1/skills/s/SKILL.md"
-  printf 'C sample\n\n(* singlefs-expect: Never *)\n\n{}\n' > "$1/templates/x.litmus"
   printf '0.0.1\n' > "$1/VERSION"
   printf 'family=%s\nthis=zh\nreference=zh\ndefault=zh\nlanguages=zh en\n' "$2" > "$1/I18N"
   bash "$1/scripts/manifest.sh" --update >/dev/null
@@ -564,7 +983,7 @@ b="$tmpd/i18n-autosm"; mk_pair "$b"
 printf '改了一句\n' >> "$b/f-zh/rules/a.md"
 bash "$b/f-zh/scripts/manifest.sh" --update >/dev/null
 printf '改了一句（已重译）\n' >> "$b/f-en/rules/a.md"
-bash "$b/f-zh/scripts/i18n-sync.sh" --stamp en rules/a.md >/dev/null
+setup_stamp "$b/f-zh" en rules/a.md
 run_scripted "i18n-sync/重译并盖章后 --update 自己抄 SOURCE-MANIFEST" 0 \
   "SOURCE-MANIFEST 已照本仓清单刷新" 逐篇溯源对得上 -- bash "$b/f-zh/scripts/i18n-sync.sh" --update "$b"
 run_scripted "i18n-sync/抄出来的 SOURCE-MANIFEST 与清单逐字节一致" 0 -- \
@@ -599,34 +1018,20 @@ b="$tmpd/i18n-gloss"; mk_pair "$b"
 printf '多加一个词\n' >> "$b/f-en/GLOSSARY.md"        # GLOSSARY 跨语言漂移
 run_scripted "i18n-sync/GLOSSARY 漂移" 1 共享部分与本仓不一致 -- bash "$b/f-zh/scripts/i18n-sync.sh" "$b"
 
-# 溯源标记不许压住文件本身的头。两类各一条，都是实测过的坑：
-# SKILL.md 的 frontmatter 被顶下去 → skill 安静地装不上；
-# .litmus 的第 1 行被顶下去 → herd7 报 splitter error（跑 herd7 实测）。
+# 溯源标记不许压住文件本身的头，实测过的坑：
+# SKILL.md 的 frontmatter 被顶下去 → skill 安静地装不上。
 b="$tmpd/i18n-headfm"; mk_pair "$b"
 sed -i '1i <!-- generated-from: skills/s/SKILL.md sha256:0000000000000000000000000000000000000000000000000000000000000000 -->' \
   "$b/f-en/skills/s/SKILL.md"
 run_scripted "i18n-sync/标记压住 frontmatter" 1 "篇的第 1 行被压住了" -- bash "$b/f-zh/scripts/i18n-sync.sh" "$b"
 
-b="$tmpd/i18n-headlit"; mk_pair "$b"
-sed -i '1i (* generated-from: templates/x.litmus sha256:0000000000000000000000000000000000000000000000000000000000000000 *)' \
-  "$b/f-en/templates/x.litmus"
-run_scripted "i18n-sync/标记压住 litmus 头" 1 "篇的第 1 行被压住了" -- bash "$b/f-zh/scripts/i18n-sync.sh" "$b"
-
-# 溯源标记的三种坏法，各自有自己的消息——共用一条 want 就盖住了别的
-# litmus 的溯源标记必须用 litmus 注释：位置对而形式错时，读回来照样解析得了
-# （stamp_read 两种包裹都认），只有真跑 herd7 才会露——所以要单独查。
+# 溯源标记的几种坏法，各自有自己的消息——共用一条 want 就盖住了别的。
 # agents 定义与 SKILL.md 同律。此前 case 分支写成 */agents/*.md，而清单里的路径是
 # 仓根相对的 agents/x.md，前面没有那一段——整条 agents 路径一次也没被检查过（复核实测）。
 b="$tmpd/i18n-agentfm"; mk_pair "$b"
 sed -i '1i <!-- generated-from: agents/a.md sha256:0000000000000000000000000000000000000000000000000000000000000000 -->' \
   "$b/f-en/agents/a.md"
 run_scripted "i18n-sync/标记压住 agent 的 frontmatter" 1 "篇的第 1 行被压住了" -- \
-  bash "$b/f-zh/scripts/i18n-sync.sh" "$b"
-
-b="$tmpd/i18n-litwrap"; mk_pair "$b"
-sed -i '2s|.*|<!-- generated-from: templates/x.litmus sha256:0000000000000000000000000000000000000000000000000000000000000000 -->|' \
-  "$b/f-en/templates/x.litmus"
-run_scripted "i18n-sync/litmus 用了 HTML 注释" 1 "litmus 里用了 HTML 注释包裹溯源标记" -- \
   bash "$b/f-zh/scripts/i18n-sync.sh" "$b"
 
 b="$tmpd/i18n-nosm"; mk_pair "$b"
@@ -648,6 +1053,33 @@ b="$tmpd/i18n-norepo"; mk_pair "$b"
 rm -rf "${b:?}/f-en"                                       # 译本仓根本不在
 run_scripted "i18n-sync/译本仓缺失" 1 找不到译本仓 -- bash "$b/f-zh/scripts/i18n-sync.sh" "$b"
 
+
+# --stamp 的拒绝分支此前一条样本都没有：盖章是译本仓的日常操作，拒错了会把没重译的篇目标成新的。
+b="$tmpd/stamp-nofile"; mk_pair "$b"
+run_scripted "i18n-sync/--stamp 不给篇目要拒绝" 1 "--stamp 没给篇目" -- bash "$b/f-zh/scripts/i18n-sync.sh" --stamp en
+b="$tmpd/stamp-norepo"; mk_pair "$b"
+run_scripted "i18n-sync/--stamp 的语言仓不在要拒绝" 1 "找不到 git 仓" -- bash "$b/f-zh/scripts/i18n-sync.sh" --stamp ja rules/a.md
+b="$tmpd/stamp-notlisted"; mk_pair "$b"
+run_scripted "i18n-sync/--stamp 不在清单里的篇目要拒绝" 1 "不在 MANIFEST.sha256 里" -- bash "$b/f-zh/scripts/i18n-sync.sh" --stamp en rules/nope.md
+b="$tmpd/stamp-notranslation"; mk_pair "$b"; rm -f "$b/f-en/rules/a.md"
+run_scripted "i18n-sync/--stamp 没译出来的篇目要拒绝" 1 "en 仓里没有 rules/a.md" -- bash "$b/f-zh/scripts/i18n-sync.sh" --stamp en rules/a.md
+# `.git` 也可以是文件（git worktree、子模块都是这样）。i18n-sync 三处判「是不是 git 仓」此前只认目录，
+# 在 worktree 上做译文同步会被拒，理由还写成「不是 git 仓」——而这个仓自己发布时就是在 worktree 上做的。
+mk_gitfile_sibling() { # mk_gitfile_sibling <mk_pair 的目录>：把 f-en 的 .git 目录挪出去，原位只留一个指路的文件
+  mv "$1/f-en/.git" "$1/en.gitdir"
+  printf 'gitdir: %s\n' "$1/en.gitdir" > "$1/f-en/.git"
+}
+b="$tmpd/stamp-gitfile"; mk_pair "$b"; mk_gitfile_sibling "$b"
+run_scripted "i18n-sync/--stamp 认 .git 是文件的译本仓" 0 "rules/a.md" -- bash "$b/f-zh/scripts/i18n-sync.sh" --stamp en rules/a.md
+# 先删掉译本仓的 SOURCE-MANIFEST：mk_pair 建出来的是完全跟上的，--update 根本走不到「替它抄 SOURCE-MANIFEST」那一支，
+# 那一处的 .git 判据改回只认目录，这条用例也照样绿（第一版实测：变异之后它一声不吭）。
+b="$tmpd/update-gitfile"; mk_pair "$b"; mk_gitfile_sibling "$b"; rm -f "$b/f-en/SOURCE-MANIFEST.sha256"
+run_scripted "i18n-sync/--update 认 .git 是文件的译本仓" 0 "SOURCE-MANIFEST 已照本仓清单刷新" "共享部分已同步" -- \
+  bash "$b/f-zh/scripts/i18n-sync.sh" --update "$b"
+# 回读闸：frontmatter 闭合之后文件就结束了，标记该插在一个不存在的行前面，`sed` 什么都不做、也不报错——
+# 要当场拒绝，不许报「盖好了」。（第一版用没闭合的 frontmatter 去触发，它被正常处理了，那条用例是假的。）
+b="$tmpd/stamp-readback"; mk_pair "$b"; printf -- '---\nname: s\ndescription: 正文一行都没有\n---' > "$b/f-en/skills/s/SKILL.md"
+run_scripted "i18n-sync/--stamp 回读对不上要拒绝" 1 "盖章后回读不一致" -- bash "$b/f-zh/scripts/i18n-sync.sh" --stamp en skills/s/SKILL.md
 # ════ check.sh（此前零用例）══════════════════════════════
 # 复核实测：删掉整个 cargo test 阶段、或去掉 clippy 的 -D warnings，selftest 无感。
 # 它是门禁的「构建与单测」阶段，坏了等于代码根本没被验过。
@@ -711,8 +1143,6 @@ head1 "门禁自检：install.sh 铺出来的东西"
 pkg="$tmpd/inst-pkg"; cp -a "$SCRIPTS/.." "$pkg"
 sed -i '1i <!-- generated-from: templates/kb/decisions.md sha256:0000000000000000000000000000000000000000000000000000000000000000 -->' \
   "$pkg/templates/kb/decisions.md"
-sed -i '2i (* generated-from: templates/litmus/commit-publish.litmus sha256:0000000000000000000000000000000000000000000000000000000000000000 *)' \
-  "$pkg/templates/litmus/commit-publish.litmus"
 r="$tmpd/inst"; mkdir -p "$r"
 inst_out="$tmpd/inst.log"
 if bash "$pkg/install.sh" "$r" > "$inst_out" 2>&1; then
@@ -792,17 +1222,14 @@ else fails=$((fails+1)); bad "install/清单坏了，版本戳还是被刷成了
   howto "接管清单读不准的时候不许放行——那等于把「内容落后就不刷戳」这道守卫悄悄关掉。"
 fi
 
-# 退役的包装：共享 QEMU harness 删掉之后，项目里一字未改的 qemu.sh 包装要被点名、版本戳不刷；
-# 项目自己改过的同名文件不归 install.sh 管，照常刷戳。
+# 退役的包装：共享脚本不在这一版里了，项目里一字未改的包装要被点名、版本戳不刷；
+# 项目自己改过的同名文件不归 install.sh 管，照常刷戳。退役的那份照现行包装的样子造：把 gate 包装里的脚本名换成 lkmm。
 pkg4="$tmpd/inst-retired"; cp -a "$SCRIPTS/.." "$pkg4"
 r4="$tmpd/inst-retired-proj"; mkdir -p "$r4"
 bash "$pkg4/install.sh" "$r4" >/dev/null 2>&1 || true
-printf '%s\n' '#!/usr/bin/env bash' \
-  '# 包装：转发到共享脚本。逻辑不写在这里，写在 .claude/singlefs-ai-sop/scripts/qemu/。' \
-  'exec bash "$(dirname "${BASH_SOURCE[0]}")/../singlefs-ai-sop/scripts/qemu/run.sh" "$@"' \
-  > "$r4/.claude/scripts/qemu.sh"
+sed 's#/scripts/gate\.sh"#/scripts/lkmm.sh"#' "$r4/.claude/scripts/gate.sh" > "$r4/.claude/scripts/lkmm.sh"
 printf '9.9.9\n' > "$pkg4/VERSION"
-run_scripted "install/一字未改的退役包装要点名" 1 "份包装上游已经不提供了" ".claude/scripts/qemu.sh" -- \
+run_scripted "install/一字未改的退役包装要点名" 1 "份包装这一版已经不铺了" ".claude/scripts/lkmm.sh" -- \
   bash "$pkg4/install.sh" "$r4"
 cases=$((cases+1))
 if [[ "$(cat "$r4/.singlefs-ai-sop-version")" != "9.9.9" ]]; then pass=$((pass+1))
@@ -810,20 +1237,35 @@ if [[ "$(cat "$r4/.singlefs-ai-sop-version")" != "9.9.9" ]]; then pass=$((pass+1
 else fails=$((fails+1)); bad "install/留着退役包装，版本戳还是被刷成了 9.9.9"
   howto "退役包装还在时不许刷戳：戳说「新版」，项目里却留着一个转发到已删脚本的包装。"
 fi
-printf '# 项目自己加的一行\n' >> "$r4/.claude/scripts/qemu.sh"
+# 反面：项目照模板给一个还在的共享脚本自己加的包装，不是退役包装。
+sed 's#/scripts/gate\.sh"#/scripts/bump.sh"#' "$r4/.claude/scripts/gate.sh" > "$r4/.claude/scripts/bump.sh"
+# 这时 lkmm.sh 还在，install.sh 照样判红；要看的是点名的清单里没有 bump.sh。
+run_scripted "install/照模板包一个还在的共享脚本不算退役" 0 "份包装这一版已经不铺了" "bump.sh 没被点名" -- \
+  bash -c 'out="$(bash "$1/install.sh" "$2" 2>&1)"; printf "%s\n" "$out"
+    [[ "$(printf "%s\n" "$out" | grep -c "scripts/bump.sh")" == 0 ]] && echo "bump.sh 没被点名"' _ "$pkg4" "$r4"
+# 0.0.49 以前铺的三行包装同样要认：只认现行形态时，旧形态的退役包装一声不响、照常刷戳（审核实测）。
+r4b="$tmpd/inst-retired-legacy"; mkdir -p "$r4b"
+bash "$pkg4/install.sh" "$r4b" >/dev/null 2>&1 || true
+printf '%s\n' '#!/usr/bin/env bash' \
+  '# 包装：转发到共享脚本。逻辑不写在这里，写在 .claude/singlefs-ai-sop/scripts/。' \
+  'exec bash "$(dirname "${BASH_SOURCE[0]}")/../singlefs-ai-sop/scripts/lkmm.sh" "$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)" "$@"' \
+  > "$r4b/.claude/scripts/lkmm.sh"
+run_scripted "install/0.0.49 以前形态的退役包装也要点名" 1 "份包装这一版已经不铺了" ".claude/scripts/lkmm.sh" -- \
+  bash "$pkg4/install.sh" "$r4b"
+printf '# 项目自己加的一行\n' >> "$r4/.claude/scripts/lkmm.sh"
 run_scripted "install/改过的同名文件不归它管" 0 "版本戳  .singlefs-ai-sop-version = 9.9.9" -- \
   bash "$pkg4/install.sh" "$r4"
 
-# 接管清单里登记了、项目又删掉了的那份，不许重铺：put 只管不覆盖已有的文件，删掉的模板 litmus
+# 接管清单里登记了、项目又删掉了的那份，不许重铺：put 只管不覆盖已有的文件，删掉的那份 kb 骨架
 # 下一次 install.sh 又会被铺回来（0.0.48 收尾时查出）。
 pkg5="$tmpd/inst-owned-absent"; cp -a "$SCRIPTS/.." "$pkg5"
 r5="$tmpd/inst-owned-absent-proj"; mkdir -p "$r5"
 bash "$pkg5/install.sh" "$r5" >/dev/null 2>&1 || true
-rm "$r5/litmus/commit-publish.litmus"
-printf 'litmus/commit-publish.litmus  # 项目的 litmus 另写了一套，这份模板删掉\n' > "$r5/.claude/install-owned"
+rm "$r5/.claude/kb/pitfalls.md"
+printf '.claude/kb/pitfalls.md  # 踩过的坑记在项目自己的另一处，这份骨架删掉\n' > "$r5/.claude/install-owned"
 run_scripted "install/接管清单里删掉的那份不重铺" 0 "已接管，项目删掉了它，不重铺" -- bash "$pkg5/install.sh" "$r5"
 cases=$((cases+1))
-if [[ ! -e "$r5/litmus/commit-publish.litmus" ]]; then pass=$((pass+1))
+if [[ ! -e "$r5/.claude/kb/pitfalls.md" ]]; then pass=$((pass+1))
   [[ -n "${SELFTEST_VERBOSE:-}" ]] && ok "install/删掉又登记接管的那份确实没被铺回来"
 else fails=$((fails+1)); bad "install/删掉又登记接管的那份，被 install.sh 铺回来了"
   howto "put() 在目标不存在、路径又在 install-owned 里时要跳过，不许新建。"

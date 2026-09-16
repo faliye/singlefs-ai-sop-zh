@@ -54,6 +54,70 @@ die()   { bad "$1"; shift
 # 同一个事实只许有一处权威记录（rules/kb-discipline.md 第 4 条）——就是这里。
 CMD_POS='(^[[:space:]]*|[;&|(){}`!][[:space:]]*|(then|else|do|if|while|until|sudo|env|xargs|exec|eval|command|time)[[:space:]]+)'
 
+# ── 「这一行开了一个 heredoc」的唯一定义 ────────────────
+# gate-lint 与 shell-lint 都要跳过 heredoc 体（里面是数据，不是代码）。两边此前各写一份
+# `<<-?[[:space:]]*['"]?(名字)`，把三种**不是** heredoc 的写法也当成了开头：
+#   `n="$(grep -c x <<< abc)"`、注释里的 `# 用法：python3 - <<PY`、`$((1<<SHIFT))`
+# 一旦误判，从那行起整个文件都被当成 heredoc 体不再检查——越大的脚本越容易中，而且一声不响
+# （审计实测：三种写法各放一行，裸 die 与 S1 的违规全部漏判）。
+# 所以：`<<` 前面不许是 `<`（排掉 `<<<`），定界符后面必须是空白、引号或行尾（排掉 `1<<SHIFT))`），
+# 注释行由调用方在判之前跳过（这一条写不进正则）。定界符是第 2 个捕获组。
+HEREDOC_RE="(^|[^<])<<-?[[:space:]]*['\"]?([A-Za-z_][A-Za-z0-9_]*)(['\"[:space:]]|\$)"
+
+# ── 日期能不能是真的：唯一定义 ──────────────────────────
+# 编出来的日期看不出是编的，除非它落在不可能的区间里。两端都可机检：
+# 比这个仓第一个提交早一个月以上、或者比今天还晚，都不可能是真发生过的事。
+# 实测：三份样本和一处 skill 示例里写着 2026-01-01，比这个仓的第一个提交早了大半年，而门禁一直是绿的。
+# 这个包自己的起点：`git log --reverse` 现查，本仓第一个提交是这一天。
+# 样本、模板、规则里的日期说的都是这个包的事，下界就用它，不随包被拷到哪里而变。
+SOP_START_DATE=2026-08-26
+
+# 被检查的那个项目自己的起点。**只在 <目录> 本身就是 git 仓的顶层时**才问 git：
+# 不这么限的话，`git -C` 会一路往上找——SOP 副本放在项目的 .claude/ 下，找到的是项目的历史，
+# 拿项目的第一个提交去判这个包的样本日期，量的就不是同一件事。
+# 也不拿 CHANGELOG 最早那一节兜底：它从 0.0.22 才开始逐节记，比真起点晚一周，
+# 拿它当下界会把 2026-08-29 这类真日期判成不可能（实测）。拿不到就返回空，由调用方决定退到哪。
+project_start_date() { # project_start_date <目录> → YYYY-MM-DD 或空
+  local dir toplevel
+  dir="$(cd "$1" 2>/dev/null && pwd -P)" || return 0
+  toplevel="$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null || true)"
+  [[ -n "$toplevel" && "$(cd "$toplevel" && pwd -P)" == "$dir" ]] || return 0
+  # 浅克隆里「第一个提交」是截断处，不是项目的起点：拿它当下界，项目越老误判越多（审核实测）。这时也返回空。
+  [[ "$(git -C "$dir" rev-parse --is-shallow-repository 2>/dev/null || true)" != true ]] || return 0
+  git -C "$dir" log --reverse --format=%ad --date=short 2>/dev/null | head -1 || true
+}
+# 下界从第一个提交往前放宽 DATE_GRACE_DAYS 天：git init 之前做的工作，会带着当时的日期进第一个提交。
+# 实测：singlefs 的第一个提交在 2026-08-26，那次提交里就有 5 条 2026-08-25 的历史条目，按第一个提交卡死全被判成不可能。
+# 实测只早一天，放宽一周；宽得越多，放过的编造日期越多。2026-01-01 这种早了大半年的照样拦得住。
+DATE_GRACE_DAYS=7
+date_lower_bound() { # date_lower_bound <起点 YYYY-MM-DD 或空> → 下界或空
+  [[ -n "${1:-}" ]] || return 0
+  date -d "$1 - $DATE_GRACE_DAYS days" +%F
+}
+# 下界要做日期减法，靠 GNU date 的 -d。不认 -d 的 date（busybox、BSD）算不出下界，
+# 而 date_out_of_range 是在 if 条件里调的，set -e 不管：下界静默变空，2026-01-01 照样放行（审核实测）。
+# 所以查日期的脚本开头先试一次，不行就停。
+require_date_arithmetic() {
+  [[ "$(date -d '2026-01-02 - 1 day' +%F 2>/dev/null || true)" == 2026-01-01 ]] || die "这台机器的 date 不认 -d，算不出日期下界" \
+    "日期检查要 GNU date（coreutils）：装上它，或把它放到 PATH 前面，再重跑。env.sh 也查这一项。"
+}
+# 「今天」按地球上最晚的那个时区（UTC+14）算：比它还晚的日期，在哪儿都还没到。
+# 只取本机时钟的日期不行：本机时钟是 UTC、人在东京时，东京 00:00–09:00 写下的当天日期比 UTC 的今天晚一天，
+# 会被判成「晚于今天」（审核实测：singlefs 的 194 个提交里有 8 个在这个时段按东京日期写了历史条目）。
+# 用 POSIX 写法 UTC-14（符号与直觉相反，表示 UTC+14），不依赖系统装没装时区数据。
+latest_today() { TZ=UTC-14 date +%F; }
+# 在范围内时不输出、返回 1；不在范围内时打印「为什么不可能」、返回 0。
+date_out_of_range() { # date_out_of_range <YYYY-MM-DD> [项目起点]
+  local checked_date="$1" start_date="${2:-}" today lower_bound
+  today="$(latest_today)"
+  if [[ "$checked_date" > "$today" ]]; then printf '晚于今天（%s，按最晚的时区算）' "$today"; return 0; fi
+  lower_bound="$(date_lower_bound "$start_date")"
+  if [[ -n "$lower_bound" && "$checked_date" < "$lower_bound" ]]; then
+    printf '早于这个仓第一个提交（%s）%s 天以上' "$start_date" "$DATE_GRACE_DAYS"; return 0
+  fi
+  return 1
+}
+
 # 找到项目根：向上找到含 .singlefs-ai-sop-version 或 .git 的目录
 # （.git 可以是文件：git worktree 里它是一个指路的文件，gate.sh --staged 的临时树就是这种。）
 # 找不到要说出来：调用方都写成 ROOT="${1:-$(project_root)}"，在 set -e 下这里静默返回 1，
@@ -76,7 +140,17 @@ pkg_root() { cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd; }
 # 都没有就用 HEAD（即只看工作区改动）。
 diff_base() {
   local root="$1"
-  if [[ -n "${GATE_BASE:-}" ]]; then printf '%s' "$GATE_BASE"; return 0; fi
+  if [[ -n "${GATE_BASE:-}" ]]; then
+    # 写错的 ref 不许静默放行：changed_files 解析不到基准时按「空仓」处理，只看未跟踪文件，
+    # 于是 show-me-test 报「无对象可判」、整道门禁绿（审计实测：GATE_BASE=orgin/master 拼错一个字母，退 3）。
+    if ! git -C "$root" rev-parse --verify -q "${GATE_BASE}^{commit}" >/dev/null 2>&1; then
+      { bad "GATE_BASE=$GATE_BASE 解析不到提交"
+        howto "写成真实存在的 ref 或提交号（git -C $root log --oneline 看一眼），" \
+              "或者不设它，让门禁自己算基准。解析不到就往下跑的话，这一轮等于没判。"; } >&2
+      return 1
+    fi
+    printf '%s' "$GATE_BASE"; return 0
+  fi
   local def
   for def in master main; do
     if git -C "$root" rev-parse --verify -q "$def" >/dev/null; then
@@ -95,7 +169,10 @@ diff_base() {
           local up p1
           # 优先级：上游 > 门禁上次通过的位置 > HEAD~1。
           # 前两个都是「已经过闸的地方」，此后的所有提交一并纳入判定。
-          if up="$(git -C "$root" rev-parse -q --verify "@{upstream}" 2>/dev/null)" \
+          # 取与上游的 merge-base，不是上游的 tip：fetch 了没 merge、或本地与上游分叉时，
+          # 上游 tip 上有本地没有的提交，拿它当基准就是把别人的改动算进这一轮
+          # （审计实测：工作区干净、只是 origin/master 多一个提交，show-me-test 就报「改了 crates 代码但没有任何测试改动」）。
+          if up="$(git -C "$root" merge-base HEAD "@{upstream}" 2>/dev/null)" \
              && [[ -n "$up" && "$up" != "$(git -C "$root" rev-parse HEAD)" ]]; then
             printf '%s' "$up"; return 0
           fi
@@ -129,11 +206,17 @@ changed_files() {
     git -C "$root" ls-files --others --exclude-standard ; } | sort -u | grep -v '^$' || true
 }
 
-# 变更中新增的行（用于检查是否新增了测试）
-added_lines() {
-  local root="$1" base="$2"
-  git -C "$root" rev-parse --verify -q "$base^{commit}" >/dev/null 2>&1 || { git -C "$root" diff -U0 --cached -- 2>/dev/null | grep '^+' | grep -v '^+++' || true; return 0; }
-  { git -C "$root" diff -U0 "$base" -- ;
-    git -C "$root" diff -U0 --cached -- ; } 2>/dev/null \
-    | grep '^+' | grep -v '^+++' || true
+# 工作区指纹：把工作区此刻的内容（跟踪的文件 + 没被忽略的未跟踪文件）写成一棵树，输出树的哈希；不是 git 仓时输出空。
+# 用一份拷出来的临时索引算，不碰真索引：别人暂存了什么不改变指纹，只有文件内容变了才变。
+# 指纹按 git 仓算，不按项目根：项目根是外层仓的一个子目录时，外层别处的改动也算「变了」。
+# 代价：没进过对象库的内容会被写成松散对象，由 git gc 收掉。
+worktree_fingerprint() { # worktree_fingerprint <目录> → 树哈希或空
+  local root="$1" git_dir fingerprint_dir
+  git_dir="$(git -C "$root" rev-parse --absolute-git-dir 2>/dev/null)" || return 0
+  fingerprint_dir="$(mktemp -d)"
+  cp "$git_dir/index" "$fingerprint_dir/index" 2>/dev/null || true
+  if GIT_INDEX_FILE="$fingerprint_dir/index" git -C "$root" add -A >/dev/null 2>&1; then
+    GIT_INDEX_FILE="$fingerprint_dir/index" git -C "$root" write-tree 2>/dev/null || true
+  fi
+  rm -rf "${fingerprint_dir:?}"
 }

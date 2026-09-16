@@ -1,3 +1,0 @@
-exit=1
-want=没有配对的对照组：同名前缀的 Sometimes 都不是它去掉屏障的形态
-want=publish-nofence.litmus：第一处不同

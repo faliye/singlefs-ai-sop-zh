@@ -25,12 +25,12 @@ INIT
 
 # —— 3：这个函数不在 $( ) 里调，设全局变量传值是正当的 ——
 detect_env() {
-  KERNEL_PATH=/boot/vmlinuz
-  HAS_KVM=1
+  CONFIG_PATH=/etc/batch-job.conf
+  HAS_CACHE=1
 }
 
 # 「不要用 pkill -f / killall」——这一行不该判红。
-W="$(mktemp -d)"; LOG="$W/console.log"
+W="$(mktemp -d)"; LOG="$W/run.log"
 out="$(run_one p "$W")"
 detect_env
-echo "$out $LOG $KERNEL_PATH $HAS_KVM"
+echo "$out $LOG $CONFIG_PATH $HAS_CACHE"

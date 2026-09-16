@@ -55,7 +55,9 @@ while IFS= read -r uf; do
   [[ -f "$ROOT/$uf" ]] || continue
   # 只认真的会被编译的位置：仓库根丢一个 scratch.rs 不算带了测试（对抗测试实测）
   case "$uf" in crates/*/src/*|crates/*/tests/*|crates/*/benches/*|tests/*|benches/*|fuzz/*) ;; *) continue ;; esac
-  if strip_comments < "$ROOT/$uf" | strip_strings | grep -qE "$TEST_RE"; then untracked_tests+="$uf"$'\n'; fi
+  # 不用 `| grep -q`：grep 找到就退出，上游拿 SIGPIPE，pipefail 下整条管道退 141、条件当假——
+  # 文件大过管道缓冲（64 KiB）时，带测试的新文件会被判成没带测试（审计实测：108 KB 的新文件判拒收）。
+  if [[ "$(strip_comments < "$ROOT/$uf" | strip_strings | grep -cE "$TEST_RE" || true)" != 0 ]]; then untracked_tests+="$uf"$'\n'; fi
 done < <(git -C "$ROOT" ls-files --others --exclude-standard -- '*.rs' 2>/dev/null || true)
 test_lines="$test_lines$untracked_tests"
 # tests/ 下改了 .rs 还不够，得真的含测试标注——`echo '// 空壳' > tests/t.rs`
@@ -63,7 +65,7 @@ test_lines="$test_lines$untracked_tests"
 tests_content_ok=""
 while IFS= read -r tf; do
   [[ -n "$tf" && -f "$ROOT/$tf" ]] || continue
-  if strip_comments < "$ROOT/$tf" | grep -qE "$TEST_RE"; then tests_content_ok=1; break; fi
+  if [[ "$(strip_comments < "$ROOT/$tf" | grep -cE "$TEST_RE" || true)" != 0 ]]; then tests_content_ok=1; break; fi   # grep -q 在管道末端会让上游拿 SIGPIPE，见上
 done <<< "$test_files"
 
 if [[ -z "$code_changed" ]]; then
@@ -81,8 +83,6 @@ else
   printf '%s\n' "$code_changed" | sed 's/^/        /'
   howto "给这次改动补测试。不确定怎么测的话，按改动类型对号入座：" \
     "纯函数 / 数据结构   → 同文件里加 #[cfg(test)] mod tests，最省事" \
-    "涉及并发或内存序    → litmus/ 下加一对 .litmus（Never + 去掉屏障的对照组）," \
-    "                      照着现有的抄，跑 bash .claude/scripts/lkmm.sh" \
     "涉及磁盘格式        → 先在 kb/invariants.md 加一条不变量，再让 checker 实现它" \
     "涉及崩溃恢复        → 见 crash-test skill；这条还没有 harness，说明情况即可" \
     "" \

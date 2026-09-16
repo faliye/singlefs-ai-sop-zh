@@ -39,7 +39,7 @@
 | 变异测试 | mutation testing | ミューテーションテスト | 把被测代码改坏，验证断言真的会红<br>break the code under test to prove the assertions go red<br>被検査コードを壊し、言明が赤くなることを確かめる |
 | 变异清单 | mutation list | ミューテーションリスト | 入库的「改了哪里 → 哪条断言红」<br>a checked-in list of "what was changed → which assertion went red"<br>「どこを変えた → どの言明が赤くなった」の記録 |
 | 等价变异 | equivalent mutant | 等価ミュータント | 与原式同值，永远抓不到；不算盲区<br>same value on all inputs, never catchable; not a blind spot<br>全入力で同値。捕まらないが盲点ではない |
-| 对照组 | control case | 対照ケース | litmus 里去掉屏障的那一份<br>the litmus with the barrier removed<br>バリアを外したほうの litmus |
+| 对照组 | control case | 対照群 | 与被测的臂并排跑、用来判读结果的那一组：阳性对照（结果已知，证明这次测量分得出差别）或真实基线<br>the group run alongside the arm under test to read its result: a positive control (outcome known, showing the measurement can tell a difference) or a real baseline<br>被検のアームと並べて走らせ、結果を読むための組：陽性対照（結果が分かっており、今回の測定が差を見分けられることを示す）か実ベースライン |
 | 不变量 | invariant | 不変条件 | checker 是它的可执行形式<br>the checker is its executable form<br>checker がその実行可能な形 |
 | 崩溃点重放 | crash-point replay | クラッシュ点リプレイ | 在每个可能的断电点截断重放<br>truncate and replay at every possible power-cut point<br>あり得る断電点ごとに切り詰めて再生する |
 | 模型对拍 | model-based differential testing | モデル対照テスト | 与内存里的理想实现比对<br>compare against an ideal in-memory implementation<br>メモリ上の理想実装と突き合わせる |

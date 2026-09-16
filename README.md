@@ -9,7 +9,7 @@
 >
 > 这是整套规范的组织原则，展开见 [rules/engineering-philosophy.md](rules/engineering-philosophy.md)。
 
-singlefs 把这个仓克隆到自己的 `.claude/singlefs-ai-sop/`，这样每个参与者拿到的是
+singlefs 把这个仓的一份副本放在自己的 `.claude/singlefs-ai-sop/`，这样每个参与者拿到的是
 **同一份**规矩、**同一套**门禁脚本、**同一批** skill。一致性靠共用一个源，不靠各自抄。
 
 **它不管的是：文件系统该怎么设计。** 事务、崩溃一致性、盘上格式这一类纪律
@@ -28,9 +28,9 @@ singlefs 把这个仓克隆到自己的 `.claude/singlefs-ai-sop/`，这样每�
 |---|---|
 | 1 | **它管的是协作吗**——提交证据、文档写法、决策记在哪、门禁怎么回话，这些跟做的是什么系统无关。文件系统设计特有的，该放项目自己的 `.claude/rules/`。拿不准就放项目本地 |
 | 2 | **它能变成一个会失败的检查吗**——变不成的先留在项目 kb 里当待议，别写成规矩（见 [rules/sop-first.md](rules/sop-first.md)） |
-| 3 | **写得出拒绝时的下一步吗**——`bad` 要带 `howto`，`die` 要带第二个参数，由 `scripts/gate-lint.sh` 强制 |
+| 3 | **写得出拒绝时的下一步吗**——写不出就先别加这条检查。形式（`bad` 带 `howto`、`die` 带第二个参数、直接打印的 `✗` 后面有 `→`）由 `scripts/gate-lint.sh` 强制 |
 
-**这三关靠人判断，不靠门禁。** SOP 是准则，本身不是被测对象；它该不该收一条规矩，
+**要不要收这条规矩，三关都靠人判断；门禁只管第 3 关的形式。** SOP 是准则，本身不是被测对象；它该不该收一条规矩，
 只有人能判（见 [rules/show-me-test.md](rules/show-me-test.md)：门禁证明证据够不够，不证明语义对不对）。
 真正该看的信号是**改得勤不勤**：这份东西老是变，说明它的设计有问题，不是说明它在进步。
 
@@ -47,8 +47,8 @@ singlefs 把这个仓克隆到自己的 `.claude/singlefs-ai-sop/`，这样每�
 改了规则还要重译，各语言同版本，由 `scripts/i18n-sync.sh` 判。
 
 **多语言只是分发方式，不是几套不同的规范。** 项目只装其中一份，
-根本不用知道别的版本存在——装出来的项目里，规则、skill、agent 桩、kb 骨架、
-litmus 模板全是那一种语言。
+根本不用知道别的版本存在——装出来的项目里，规则、skill、agent 桩、kb 骨架
+全是那一种语言。
 
 ## 使用者
 
@@ -104,7 +104,6 @@ bash .claude/singlefs-ai-sop/install.sh
 | `.claude/scripts/*.sh` | 包装，`exec` 到共享脚本；里面不写逻辑 |
 | `.claude/skills/*/SKILL.md` | 桩，frontmatter 加一句指向共享正文 |
 | `.claude/agents/*.md` | agent 桩，同上（`agents/` 现在是空的，所以暂时不会铺） |
-| `litmus/`（**项目根**，不在 `.claude/` 下） | 一对现成的 litmus，照抄用 |
 | `.singlefs-ai-sop-version`（项目根） | 版本戳 |
 
 **已存在的文件一律不覆盖**，只报告差异。版本戳只在**没有一份落后于上游**时才刷新——
@@ -174,7 +173,7 @@ git clone https://<host>/singlefs-ai-sop-ja .claude/singlefs-ai-sop
 （见 [rules/show-me-test.md](rules/show-me-test.md)：门禁证明证据够不够，不证明语义对不对）。
 
 对账靠 `MANIFEST.sha256`，里面记着**每一份含给人读的散文的文本**的路径和哈希：
-`CLAUDE.md`、`rules/`、`agents/`、`skills/`、`templates/`（连 `*.litmus` 一起）。
+`CLAUDE.md`、`rules/`、`agents/`、`skills/`、`templates/`。
 判据只有一条：**里面有没有给人读的散文。** 有就翻译，没有就原样复制。
 两边都不沾的会被 `scripts/manifest.sh` 的覆盖率检查拦下来，「忘了纳入」不许静默通过。
 其余语言的仓各存一份 `SOURCE-MANIFEST.sha256`，之后比两份清单就知道哪几篇落后了。

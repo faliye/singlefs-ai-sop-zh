@@ -28,12 +28,20 @@
 # 排除写成相对本次 ROOT 的路径——selftest 把某个样本目录当 ROOT 跑时，这个前缀不匹配，
 # 样本照查（写成 */fixtures/* 的话样本永远被跳过，自检就成了摆设）。
 # 由 scripts/selftest.sh 拿去证明检查会红，不是项目内容。
-# 装进项目的 SOP 副本（*/singlefs-ai-sop/*）不扫：它由上游自己的门禁管，
+# 装进项目的 SOP 副本（$ROOT/.claude/<family>/）不扫：它由上游自己的门禁管，
 # 在项目侧再扫一遍，只会让它的模板与项目 kb 的编号互相撞成假红。
 # 围栏代码块内的内容不检查（那是示例）。
-# 定义规则本身的文件加 <!-- doc-lint:rule-definition --> 跳过，并会显式报告为已跳过。
+# 定义规则本身的文件加 <!-- doc-lint:rule-definition -->：正文照查，只把反引号与「」里举的例子在比对词表前挖掉。
 
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+
+# `--not-impl` 要在解析项目根之前认出来：不然它先被当成项目根，被下面那句 die 拒掉。
+# 认出来之后把参数换成本包自己的目录，让后面的流程有个确定的 ROOT（这一支跑不到扫描那一步）。
+NOT_IMPL_ONLY=0
+if [[ "${1:-}" == --not-impl ]]; then
+  NOT_IMPL_ONLY=1
+  set -- "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+fi
 
 ROOT="${1:-$(project_root)}"
 [[ -d "$ROOT" ]] || die "找不到项目根：$ROOT" \
@@ -45,16 +53,22 @@ if [[ "$ROOT" != "/" ]]; then ROOT="${ROOT%/}"; fi
 
 tmpd="$(mktemp -d)"; trap 'rm -rf "$tmpd"' EXIT
 
+# 日期的下界：这个仓第一个提交往前宽限几天。判据在 lib.sh 的 date_out_of_range 一处。
+# 被查项目自己的起点；拿不到（样本目录、没有 .git 的副本、浅克隆）就用这个包的起点。
+PROJECT_START_DATE="$(project_start_date "$ROOT")"; PROJECT_START_DATE="${PROJECT_START_DATE:-$SOP_START_DATE}"
+require_date_arithmetic
+
 # 不扫哪些：
-#   $ROOT/scripts/fixtures/  —— 门禁自己的样本，故意写坏的，由 selftest.sh 拿去用
-#   */singlefs-ai-sop/*      —— 装进项目的 SOP 副本，由上游自己的门禁管
+#   $ROOT/scripts/fixtures/    —— 门禁自己的样本，故意写坏的，由 selftest.sh 拿去用
+#   $ROOT/.claude/<family>/    —— 装进项目的 SOP 副本，由上游自己的门禁管
 # 两条都写成「相对本次 ROOT」的形态。写死成 */…/* 的话，selftest 把样本目录当 ROOT 跑时
 # 路径照样匹配，样本被跳过、全绿——自检就成了摆设（装进项目后实测踩到）。
+# 副本那条此前是 */singlefs-ai-sop/* 加一个「ROOT 在包里就不排除」的例外：扫描范围随**包所在的路径**变——
+# 同一个样本 projok，在 zh 仓里跑「检查 1」，在项目副本（路径里有 /singlefs-ai-sop/）里跑「检查 2」
+# （0.0.50 同步到 singlefs 时实测，那边的 selftest 因此红了一例）。相对 ROOT 写，包放在哪都一样。
 EXCL=(-not -path "$ROOT/scripts/fixtures/*")
-case "$ROOT" in
-  */singlefs-ai-sop|*/singlefs-ai-sop/*) ;;   # 就在包里（或包内样本里）跑，不排除自己
-  *) EXCL+=(-not -path '*/singlefs-ai-sop/*') ;;
-esac
+DOC_LINT_FAMILY="$(sed -n 's/^family=//p' "$(dirname "${BASH_SOURCE[0]}")/../I18N" 2>/dev/null || true)"
+EXCL+=(-not -path "$ROOT/.claude/${DOC_LINT_FAMILY:-singlefs-ai-sop}/*")
 
 # ── 语言 ────────────────────────────────────────────────
 # 本脚本在 SHARED 里逐字节复制到各语言仓，而它的判据（历史陈述的词、
@@ -75,7 +89,8 @@ esac
 # 样本的语言是**样本的属性**，不是仓的属性，所以要能显式指定：DOC_LINT_LANG。
 # 它只给 scripts/selftest.sh 用。拿它去跑真实项目，等于自己给自己换判据，
 # 所以**设了就打印出来**——改判据的事不许不留痕迹（rules/show-me-test.md）。
-PKG_LANG="$(sed -n 's/^this=//p' "$(dirname "${BASH_SOURCE[0]}")/../I18N" 2>/dev/null | head -1)"
+# `|| true`：I18N 不在时 sed 退 2，赋值带着这个退出码，set -e 当场把脚本带走、一个字都不打（审核实测）。
+PKG_LANG="$(sed -n 's/^this=//p' "$(dirname "${BASH_SOURCE[0]}")/../I18N" 2>/dev/null | head -1 || true)"
 LANG_FORCED=0
 DOC_LANG="$PKG_LANG"
 if [[ -n "${DOC_LINT_LANG:-}" ]]; then DOC_LANG="$DOC_LINT_LANG"; LANG_FORCED=1; fi
@@ -104,6 +119,16 @@ esac
 WORDLIST=0
 [[ "$DOC_LANG" == zh ]] && WORDLIST=1
 
+# `--not-impl`：只报「本语言有哪几条检查没实现」，一行一条，退 0，别的什么都不做。
+# gate.sh 拿它去填末尾的未实现清单。判据（哪几条依赖词表）只有这一处——
+# 让 gate.sh 自己再判一遍语言，就是同一个事实写两处，两处早晚说不同的话
+# （rules/kb-discipline.md 第 4 条）。此前 en / ja 仓这三条报了「未实现」却仍记 PASS，
+# 汇总的未实现清单里也没有它们（审计实测）。
+if [[ $NOT_IMPL_ONLY -eq 1 ]]; then
+  [[ $WORDLIST -eq 1 ]] || printf '%s\n' "文档铁律的词表型检查（$DOC_LANG）：历史陈述、kb 的指代与自称、文风——本语言没有词表"
+  exit 0
+fi
+
 # 违规模式：正则 → 为什么违规
 # ⚠️ **每条模式的 why 都要不一样。** 共用一句的话，样本只需一条 want 就能盖住几条，
 #    于是删掉其中任一条都不会红——原先「原先/以前/之前」三条共用「正文不许写历史陈述」，
@@ -114,8 +139,8 @@ WORDLIST=0
 #    '[]〕】]'；要收进 [ 直接写 '[[〔【]'。fixtures/doc-lint/histstate 盯着它。
 PATTERNS=(
   '~~[^~]'                    '正文不许用删除线标注废弃，直接删掉并写进「历史版本」'
-  '[[〔【]已废弃[]〕】]'         '正文不许就地标注已废弃'
-  '[（〔【(]已废弃'              '正文不许就地标注已废弃，删掉旧内容并写进「历史版本」'
+  '[[〔【]已废弃[]〕】]'         '正文不许用方括号就地标注（〔已废弃〕这类），删掉旧内容并写进「历史版本」'
+  '[（〔【(]已废弃'              '正文不许用圆括号就地标注（（已废弃…这类），删掉旧内容并写进「历史版本」'
   '[（(][[:space:]]*原为'        '正文不许写"（原为 X）"，直接改成现行值'
   '[^还复恢化]原先[^前]'         '正文不许写"原先 X"，直接改成现行值'
   '以前[叫是][^否]'              '正文不许写"以前叫/是 X"，直接改成现行值'
@@ -149,7 +174,9 @@ fails=0; skipped=0; checked=0
 # 输出正文部分（截到「## 历史版本」之前），并剔除围栏代码块
 body_of() {
   awk -v HIST="$HIST_HEAD" '
-    $0 == HIST { exit }
+    # 标题按「去掉行尾空白之后相等」认：行尾多一个空格，`$0 == HIST` 就不成立，
+    # 于是正文扫描不在历史节停机、kb 还被报「必须有历史节收尾」（审计实测的假红）。
+    $0 ~ ("^" HIST "[ \t]*$") { exit }
     /^[ \t]*```/ { infence = !infence; next }
     { if (!infence) print NR "\t" $0; else print NR "\t" }
   ' "$1"
@@ -236,7 +263,7 @@ while IFS= read -r f; do
   base="$(basename "$f")"
   # 认围栏：design-doc-discipline 的示例块里就有一行「## 历史版本」，围栏里的不算数
   has_hist="$(awk -v HIST="$HIST_HEAD" '/^[ \t]*```/{fence=!fence;next} fence{next}
-                   $0 == HIST {print 1; exit}' "$f")"
+                   $0 ~ ("^" HIST "[ \t]*$") {print 1; exit}' "$f")"
   [[ -n "$has_hist" ]] || has_hist=0
 
   # ⚠️ **历史节的有无要在免检牌之前判。**
@@ -258,9 +285,12 @@ while IFS= read -r f; do
     structfail=1
   fi
 
-  # 标记必须独占一行且在文件头 5 行内——否则正文里"提到"这个字符串会被误判为跳过。
-  # 且只许出现在规则本体的位置：别处（尤其 kb）贴这张免检牌，
-  # 等于一行注释把整个文件的检查关掉（对抗测试实测）。
+  # 标记必须独占一行且在文件头 5 行内——否则正文里"提到"这个字符串会被误判为带了牌。
+  # 这张牌的含义是「这份文件在定义那些模式」：正文照查，只把它举的例子——反引号里、「」里的片段——
+  # 在比对词表之前挖掉。此前是整篇免检：往 rules/ 里塞翻译腔、「原先是 X」，doc-lint 全绿，
+  # 同一句放进 README 当场红（审计实测）；规则是每个项目整篇加载的文本，最不该免检。
+  # 且只许出现在规则本体的位置：别处（尤其 kb）贴这张牌，kb 里的「」就成了藏违规的口子（对抗测试实测）。
+  example_exempt=0
   if head -5 "$f" | grep -qx '<!-- doc-lint:rule-definition -->'; then
     case "$f" in
       # kb 分支必须排在白名单前面：kb/rules/x.md 这种嵌套路径否则会先匹配上
@@ -272,11 +302,11 @@ while IFS= read -r f; do
         checked=$((checked+1)); fails=$((fails+1)); continue ;;
       */CLAUDE.md|*/rules/*.md|*/agents/*.md|*/skills/*/SKILL.md)
         if [[ $structfail -eq 1 ]]; then
-          # 结构检查已经红了：这一份既不算「跳过」，也不能算通过
+          # 结构检查已经红了：这一份不能算通过
           checked=$((checked+1)); fails=$((fails+1)); continue
         fi
-        [[ -n "${DOC_LINT_VERBOSE:-}" ]] && warn "跳过 $rel（规则定义文件）"
-        skipped=$((skipped+1)); continue ;;
+        [[ -n "${DOC_LINT_VERBOSE:-}" ]] && warn "规则定义文件，反引号与「」里的举例不比对词表  $rel"
+        example_exempt=1 ;;
       *)
         bad "$rel  rule-definition 标记只许用于 CLAUDE.md、rules/、skills/*/SKILL.md"
         howto "删掉文件头的 <!-- doc-lint:rule-definition -->——这份文件不是规则定义，" \
@@ -286,6 +316,12 @@ while IFS= read -r f; do
   fi
   checked=$((checked+1))
   body="$(body_of "$f")"
+  # 词表比对（历史陈述 A、文风 I）用的正文：规则定义文件把反引号里、「」里的举例挖掉，行号不变。
+  # 结构检查（围栏配对、历史节位置）照旧看 $body。
+  scan="$body"
+  if [[ $example_exempt -eq 1 ]]; then
+    scan="$(printf '%s\n' "$body" | sed -E 's/`[^`]*`//g; s/「[^」]*」//g')"
+  fi
   filefail=0
 
   # 围栏必须配对：一行落单的 ``` 让其后全文被当代码块跳过——
@@ -310,7 +346,7 @@ while IFS= read -r f; do
   # 连 `####` 一起拦，会把历史条目里的分节也拦下（都实测于 singlefs）。
   # 被堵住的绕法是 `### 当前口径（现行）` 这种不以日期开头的标题，判据仍然管得住。
   afterhist="$(awk -v HIST="$HIST_HEAD" '/^[ \t]*```/{fence=!fence;next} fence{next}
-                    $0 == HIST {h=1;next}
+                    $0 ~ ("^" HIST "[ \t]*$") {h=1;next}
                     h && /^#{1,3}[ \t]/ && $0 !~ /^###[ \t]+<?[0-9YyMmDd]{4}-[0-9MmDd]{2}-[0-9Dd]{2}>?/ {print FNR}' "$f")"
   if [[ -n "$afterhist" ]]; then
     bad "$rel  「$HIST_HEAD」之后又出现了标题小节（行 $(printf '%s' "$afterhist" | tr '\n' ' ' | sed 's/ $//')）"
@@ -323,7 +359,7 @@ while IFS= read -r f; do
   [[ $WORDLIST -eq 1 ]] || i=${#PATTERNS[@]}      # 没有本语言的词表就不跑，末尾统一报未实现
   while [[ $i -lt ${#PATTERNS[@]} ]]; do
     pat="${PATTERNS[$i]}"; why="${PATTERNS[$((i+1))]}"
-    if hits="$(printf '%s\n' "$body" | grep -n "$pat" || true)"; [[ -n "$hits" ]]; then
+    if hits="$(printf '%s\n' "$scan" | grep -n "$pat" || true)"; [[ -n "$hits" ]]; then
       while IFS= read -r h; do
         ln="$(printf '%s' "$h" | sed 's/^[0-9]*://; s/\t.*//')"
         txt="$(printf '%s' "$h" | sed 's/^[0-9]*://; s/^[0-9]*\t//')"
@@ -342,7 +378,7 @@ while IFS= read -r f; do
     j=0
     while [[ $j -lt ${#STYLE[@]} ]]; do
       spat="${STYLE[$j]}"; swhy="${STYLE[$((j+1))]}"
-      if shits="$(printf '%s\n' "$body" | grep -n "$spat" || true)"; [[ -n "$shits" ]]; then
+      if shits="$(printf '%s\n' "$scan" | grep -n "$spat" || true)"; [[ -n "$shits" ]]; then
         while IFS= read -r h; do
           ln="$(printf '%s' "$h" | sed 's/^[0-9]*://; s/\t.*//')"
           txt="$(printf '%s' "$h" | sed 's/^[0-9]*://; s/^[0-9]*\t//')"
@@ -478,6 +514,25 @@ while IFS= read -r f; do
     filefail=1
   fi
 
+  # ── M. 日期不许是编的 ───────────────────────────────────
+  # 历史条目的 `### 日期` 与正文里的 `实测（日期）` 都是在说「这件事哪天发生的」。
+  # 编出来的日期看不出是编的，除非它落在不可能的区间里：比这个仓第一个提交早出宽限、或者比最晚时区的今天还晚。
+  # 实测：三份样本与一处 skill 示例里写着 2026-01-01，比第一个提交早了大半年，而门禁一直是绿的。
+  # 三种语言的「实测（日期）」写法都认：en 仓写 Measured (，ja 仓写 実測（（只认中文那种时，en / ja 的这一半一条都没查，审核实测）。
+  while IFS=: read -r date_line_no date_rest; do
+    [[ -n "$date_line_no" ]] || continue
+    date_value="$(printf '%s' "$date_rest" | grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2}' || true)"
+    date_value="${date_value%%$'\n'*}"
+    [[ -n "$date_value" ]] || continue
+    if date_why="$(date_out_of_range "$date_value" "$PROJECT_START_DATE")"; then
+      bad "$rel:$date_line_no  日期 $date_value 不可能：$date_why"
+      howto "写真实发生的那一天：历史条目写这一条是哪天记下的，实测写它是哪天跑的。" \
+            "不知道是哪天就去查（git log 那个文件、或者当时的产物），别填一个占位日期——" \
+            "占位日期读起来和真日期一模一样，而后面每一个引用它的人都会当真。"
+      filefail=1
+    fi
+  done < <(grep -nE '(^###[[:space:]]+|实测（|実測（|Measured \()[0-9]{4}-[0-9]{2}-[0-9]{2}' "$f" || true)
+
   if [[ $filefail -eq 0 ]]; then
     [[ -n "${DOC_LINT_VERBOSE:-}" ]] && ok "$rel"
   else
@@ -510,7 +565,9 @@ if [[ -n "$kb_files" ]]; then
       [[ -z "$line" ]] && continue
       ln="${line%%$'\t'*}"
       for id in $(printf '%s' "$line" | grep -oE 'I-[0-9]+(\.[0-9]+)+' | sort -u); do
-        if ! printf '%s\n' "$defined" | grep -qx "$id"; then
+        # 不用 `| grep -q`：$defined 在大仓上能超过管道缓冲（64 KiB），grep 找到就退出、
+        # 上游 printf 拿 SIGPIPE，pipefail 下整条管道退 141，这条检查就静默不判了（同 gate-lint G3 的坑）。
+        if [[ "$(printf '%s\n' "$defined" | grep -cx "$id" || true)" == 0 ]]; then
           bad "$rel:$ln  引用了没有定义的不变量编号 $id"
           howto "要么在 kb/invariants.md 里把 $id 真的写成一行（可判定的陈述 + checker 状态），" \
                 "要么删掉这处引用。引用一个不存在的编号，检索出来看不出它不存在——" \
@@ -797,7 +854,8 @@ fi
 #     （实测 singlefs：engineering-philosophy、sop-first、pushback-discipline、writing-style 四条从没被引用过）
 # 项目本地的 .claude/rules/ 是项目自己的事，由项目自己的门禁阶段管（判据一样，但那批文件不归上游）。
 metafails=0
-FAMILY="$(sed -n 's/^family=//p' "$(dirname "${BASH_SOURCE[0]}")/../I18N" 2>/dev/null | head -1)"
+# `|| true`：I18N 不在时 sed 退 2，pipefail 下整条管道跟着退 2，set -e 把脚本当场带走（同 gate-lint 那处）。
+FAMILY="$(sed -n 's/^family=//p' "$(dirname "${BASH_SOURCE[0]}")/../I18N" 2>/dev/null | head -1 || true)"
 [[ -n "$FAMILY" ]] || FAMILY=singlefs-ai-sop
 check_rule_refs() { # check_rule_refs <被查的 md，相对 ROOT> <@ 之后的前缀> <rules 目录> <sop|template|project>
   local md_rel="$1" prefix="$2" rules_dir="$3" which="$4" on_disk referenced missing extra

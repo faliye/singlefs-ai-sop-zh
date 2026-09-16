@@ -49,42 +49,29 @@ ROOT="${1:-$(dirname "$PKG")}"
 MF="$PKG/MANIFEST.sha256"
 CF="$PKG/I18N"
 
-# 溯源标记不能一律拍在第 1 行，也不能一律用 HTML 注释：
-#   - SKILL.md 的 YAML frontmatter 必须从第 1 行开始，插到它前面 skill 当场装不上
-#   - .litmus 不认 <!-- -->，herd7 会语法报错
-# 所以位置与包裹形式都按文件类型定。判据落在这两个函数上，别处不许再写一份。
+# 溯源标记不能一律拍在第 1 行：SKILL.md 与 agents 定义的 YAML frontmatter 必须从第 1 行开始，
+# 插到它前面 skill 当场装不上。所以位置按有没有 frontmatter 定，判据落在 stamp_at 一处，别处不许再写一份。
 stamp_wrap() { # stamp_wrap <路径> <内容> → 带注释包裹的整行
-  case "$1" in
-    *.litmus) printf '(* %s *)' "$2" ;;
-    *)        printf '<!-- %s -->' "$2" ;;
-  esac
+  printf '<!-- %s -->' "$2"
 }
 stamp_re() { # stamp_re <路径> → 匹配「这一行是溯源标记」的正则
-  case "$1" in
-    *.litmus) printf '^(\\* generated-from: ' ;;
-    *)        printf '^<!-- generated-from: ' ;;
-  esac
+  printf '^<!-- generated-from: '
 }
 stamp_at() { # stamp_at <文件> → 标记应当在的行号
-  case "$1" in
-    # litmus 的首行必须是 `C <名>`：herd7 的 sublexer 在第 1 行就要读到它，
-    # 前面搁任何东西都是 "splitter error in sublexer first line"（实跑 herd7 实测）。
-    *.litmus) printf '2'; return 0 ;;
-  esac
   awk 'NR==1 && $0 != "---" { print 1; found=1; exit }
        NR==1 { fm=1; next }
        fm && $0 ~ /^---[[:space:]]*$/ { print NR+1; found=1; exit }
        END { if (!found) print 1 }' "$1"
 }
 # 从一份译文里读出溯源标记的路径与哈希（读不到就什么都不打印）。
-# 用 awk 不用 sed：两种包裹形式要写成交替，而 sed 的 BRE 里 \| 会跟分隔符撞车——
+# 用 awk 不用 sed：sed 的 BRE 里 \| 会跟分隔符撞车——
 # 写成 sed 时它静默匹配不上，是靠盖章后的回读断言才抓出来的（写这段时实测）。
 stamp_read() { # stamp_read <文件>
   local ln; ln="$(stamp_at "$1")"
   awk -v L="$ln" 'NR==L {
-      if ($0 ~ /^(<!--|\(\*) generated-from: .+ sha256:[0-9a-f]{64} (-->|\*\))$/) {
+      if ($0 ~ /^<!-- generated-from: .+ sha256:[0-9a-f]{64} -->$/) {
         t = $0
-        sub(/^(<!--|\(\*) generated-from: /, "", t)
+        sub(/^<!-- generated-from: /, "", t)
         i = index(t, " sha256:")
         printf "%s %s\n", substr(t, 1, i - 1), substr(t, i + 8, 64)
       }
@@ -158,7 +145,8 @@ if [[ -n "$STAMP_LANG" ]]; then
           "bash scripts/i18n-sync.sh --stamp en rules/sop-first.md rules/kb-discipline.md" \
           "没有「全部盖章」这条路——那等于把逐篇溯源这道检查关掉。"; exit 1; }
   repo="$ROOT/$FAMILY-$STAMP_LANG"
-  [[ -d "$repo/.git" ]] || { bad "$STAMP_LANG  找不到 git 仓 $repo"
+  # `.git` 也可以是文件（git worktree）。只认目录的话，worktree 上做同步会被拒，理由还写成「不是 git 仓」。
+  [[ -e "$repo/.git" ]] || { bad "$STAMP_LANG  找不到 git 仓 $repo"
     howto "只往 git 仓里写——写错地方无从回退。确认语言代号没拼错，" \
           "并把该语言仓 clone 成本仓的兄弟目录（--stamp 只认兄弟目录，不收路径参数）。"; exit 1; }
   for path in "${STAMP_FILES[@]}"; do
@@ -204,7 +192,9 @@ for lang in $LANGS; do
   # 以前这一步靠人手抄，漏抄时 --update 整个被下面的「落后」拒掉，共享部分一份都没同步过去
   # （2026-09-11 发 0.0.42 时实测卡在这里）。不能无条件抄：抄了清单却没重译，译本仓就被说成跟上了。
   if [[ $UPDATE -eq 1 ]] && ! cmp -s "$MF" "$sm"; then
-    [[ -d "$repo/.git" ]] || { bad "$lang  $repo 不是 git 仓，拒绝往里写 SOURCE-MANIFEST"
+    # `.git` 也可以是文件：git worktree 里它是一个指路的文件（lib.sh 的 project_root 早就这么判了）。
+    # 只认目录的话，在 worktree 上做译文同步会被拒，理由还写成「不是 git 仓」（审计实测的口径不一致）。
+    [[ -e "$repo/.git" ]] || { bad "$lang  $repo 不是 git 仓，拒绝往里写 SOURCE-MANIFEST"
       howto "只往 git 仓里写——写错地方无从回退。" \
             "确认路径，或用 bash scripts/i18n-sync.sh --update /path/to/repos 指定。"
       fails=$((fails+1)); continue; }
@@ -250,7 +240,7 @@ for lang in $LANGS; do
   fi
 
   if [[ $UPDATE -eq 1 ]]; then
-    [[ -d "$repo/.git" ]] || { bad "$lang  $repo 不是 git 仓，拒绝往里写"
+    [[ -e "$repo/.git" ]] || { bad "$lang  $repo 不是 git 仓，拒绝往里写"
       howto "共享部分是覆盖式写入，只往 git 仓里写——写错地方无从回退。" \
             "确认路径，或用 bash scripts/i18n-sync.sh --update /path/to/repos 指定。"
       fails=$((fails+1)); continue; }
@@ -280,9 +270,8 @@ for lang in $LANGS; do
   fi
 
   # 溯源标记不许压住文件本身的头：SKILL.md 的 frontmatter 必须从第 1 行起，
-  # .litmus 的第 1 行必须是 `C <名>`。两样被压住都不报错——skill 安静地装不上，
-  # litmus 是 herd7 的 "splitter error in sublexer first line"（都实测过）。
-  # 位置由 stamp_at 决定，这里查的是结果：这两类文件的第 1 行还是不是它该有的样子。
+  # SKILL.md 与 agents 定义的第 1 行必须是 frontmatter 的 `---`。被压住不报错——skill 安静地装不上（实测过）。
+  # 位置由 stamp_at 决定，这里查的是结果：这类文件的第 1 行还是不是它该有的样子。
   headbad=0
   while read -r _h path; do
     tf="$repo/$path"
@@ -293,21 +282,12 @@ for lang in $LANGS; do
       */SKILL.md|agents/*.md|*/agents/*.md)
         head -1 "$tf" | grep -qx -- '---' || {
           headbad=$((headbad+1)); say "        frontmatter 不在第 1 行: $path"; } ;;
-      *.litmus)
-        head -1 "$tf" | grep -qE '^[A-Za-z]+[[:space:]]+[A-Za-z0-9_.-]+' || {
-          headbad=$((headbad+1)); say "        第 1 行不是 litmus 头: $path"; }
-        # 包裹形式也要对：litmus 不认 <!-- -->，herd7 会当场语法报错。
-        # 位置对了而形式错了，读回来照样能解析（stamp_read 两种都认），
-        # 于是只有真去跑 herd7 才会发现——所以在这里查。
-        sed -n '2p' "$tf" | grep -q '^<!-- generated-from: ' && {
-          headbad=$((headbad+1)); say "        litmus 里用了 HTML 注释包裹溯源标记: $path"; } ;;
     esac
   done < "$MF"
   if [[ $headbad -gt 0 ]]; then
     bad "$lang  $headbad 篇的第 1 行被压住了"
-    howto "溯源标记不能拍在这两类文件的第 1 行：" \
+    howto "溯源标记不能拍在这类文件的第 1 行：" \
           "SKILL.md / agents 定义 —— frontmatter 必须从第 1 行起，标记放它之后；" \
-          "*.litmus —— 第 1 行必须是 \`C <名>\`，标记放第 2 行。" \
           "位置由 i18n-sync.sh 的 stamp_at 决定；重盖一次： bash scripts/i18n-sync.sh --stamp $lang <篇目>"
     fails=$((fails+1)); continue
   fi

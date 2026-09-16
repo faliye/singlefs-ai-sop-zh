@@ -9,7 +9,7 @@
 ## I-1 <类别名>
 
 **编号只是索引，不是名字**：每条不变量都要有简称，别处引用写成 `<编号>（简称）`。
-由 `doc-lint.sh` 强制（见 `singlefs-ai-sop/rules/kb-discipline.md` 第 5 条）。
+由 `doc-lint.sh` 强制（见 `../singlefs-ai-sop/rules/kb-discipline.md` 第 5 条）。
 
 <!-- doc-lint:registry name-col=2 -->
 

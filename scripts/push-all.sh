@@ -29,7 +29,8 @@ invoked_by_hook=0
 [[ "${1:-}" == --from-hook ]] && { invoked_by_hook=1; shift; }
 repositories_parent="${1:-$(dirname "$PKG")}"
 
-i18n_value() { sed -n "s/^$1=//p" "$PKG/I18N"; }
+# `|| true`：I18N 不在时 sed 退 2，在 set -e 下会把脚本带走，下面那句带出路的 die 就永远打不出来。
+i18n_value() { sed -n "s/^$1=//p" "$PKG/I18N" 2>/dev/null || true; }
 family="$(i18n_value family)"; this_language="$(i18n_value this)"
 read -r -a languages <<< "$(i18n_value languages)"
 [[ -n "$family" && ${#languages[@]} -gt 0 ]] || die "读不出 $PKG/I18N 里的 family 或 languages" \

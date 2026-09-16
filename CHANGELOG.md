@@ -3,6 +3,162 @@
 规则与门禁的版本历史。`CLAUDE.md` 与 `rules/*.md` 不留历史节（design-doc-discipline），
 历史一律记在这里；逐条改动细节见 `git log`，提交信息即变更说明。
 
+## 0.0.50 — 2026-09-16
+
+**一轮全面审核：`--staged` 这条路上三个真 bug、doc-lint 对规则本体整篇免检、一批 0.0.48 之后的残留，一起修掉。**
+
+门禁（`scripts/`，三仓同一份）：
+- `gate.sh --staged` 的握手变量 `GATE_STAGED_FROM` 漏进里层起的子进程：selftest 嵌套跑的 gate.sh 拿它当自己的项目根去找兄弟目录，
+  「上游比副本旧」「副本落后上游」两例反红——singlefs 在 0.0.49 上跑 `--staged` 必红。用户指定的 `GATE_BASE` 同样漏进 selftest，
+  show-me-test 两例退 3。现在 gate.sh 读完 `GATE_STAGED_FROM` 就 `unset`，selftest 起子进程一律 `env -u` 掉这两样。
+- `--staged` 在 SOP 仓自身上跑不了：里层用源仓的脚本、ROOT 却是临时树，被当成消费项目报「缺版本戳」判红，
+  只在 SOP 仓跑的三个阶段还静默不跑。现在源仓就是本包时跑临时树里那份 gate.sh，i18n-sync 从源仓的父目录找兄弟语言仓。
+- `--staged` 的 diff 基准比直接跑窄一档：临时树是 detached HEAD，`@{upstream}` 解析不到，落到 HEAD~1；
+  「分两次提交就绕过去」那条口子在这边开着（实测：直接跑 origin/master，`--staged` HEAD~1）。现在基准在源仓上算好再传进去。
+- shell-lint 的 S3 命中 `pgrep -f` 后还要同一行含 `xargs|kill|until|while|if` 子串才红：`pids=$(pgrep -f X)` 下一行 `kill $pids`、
+  `while` 与 `pgrep -f` 分两行写都全绿，`pgrep -f notify` 却因含子串 if 被判成等待循环。现在命令位置上出现就红，配样本 `pgrepsplit`。
+- 「缺版本戳」记 FAIL 却用 `warn` 打、没有出路，gate-lint 只认 bad / die / ✗，看不见它。改成 bad + howto。
+- doc-lint 的 `rule-definition` 牌此前整篇免检：往 rules/ 里塞翻译腔、「原先是 X」，doc-lint 全绿，同一句放进 README 当场红。
+  现在正文照查，只把反引号与「」里举的例子在比对词表前挖掉；14 篇规则和 CLAUDE.md 从「跳过」变成「检查」（检查 14 → 29）。
+  样本 rulesprose / ruleshiststate（红）、rulesexample（绿）。
+- doc-lint 排除「装进项目的副本」用的是通配 `*/singlefs-ai-sop/*` 加「ROOT 在包里就不排除」的例外，扫描范围随包所在的路径变：
+  同一个样本 projok 在 zh 仓里「检查 1」、在 singlefs 的副本里「检查 2」，同步过去 selftest 当场红一例。
+  改成相对 ROOT 的 `$ROOT/.claude/<family>/*`；新用例把脚本拷到路径里带 `/singlefs-ai-sop/` 的地方再跑同一个样本。
+- **`--staged` 经项目包装脚本调用时被静默吃掉**：包装把项目根放 `$1`、用户参数接在后面，而 gate.sh 写死「`$1 == --staged`」，
+  于是规则与 skill 里推荐的 `bash .claude/scripts/gate.sh --staged` 根本没进那个分支，门禁照常跑工作区、一声不响。
+  现在参数顺序不限，认不出的参数直接拒绝。
+- **heredoc 识别把三种不是 heredoc 的写法当成开头**（`<<<` here-string、注释里的 `# … <<PY`、`$((1<<SHIFT))`），
+  其后整个文件不再检查——越大的脚本越容易中。定界符判据收进 `lib.sh` 的 `HEREDOC_RE` 一处（同 `CMD_POS` 的先例），注释行在判之前跳过。
+- **`… | grep -q` 在管道末端**：grep 找到就退出，上游拿 SIGPIPE，`pipefail` 下整条管道退 141、判据当假。
+  文件大过管道缓冲（64 KiB）就静默不判了（实测：同一份没报计数的脚本 4 行判红、338 KB 变绿；带测试的 108 KB 新文件被判没带测试）。
+  gate-lint 的 G3、show-me-test 的两处、doc-lint 的编号定义比对都改成 `grep -c`。
+- **gate-ok 记的是跑完时的 HEAD**：另一个会话在这一轮跑的过程中提交，那个从没验过的提交被一并盖章，此后永远落在 diff 窗口外。
+  改成记开跑时的 HEAD；`GATE_BASE` 被显式指定（`--staged` 的里层也是）时不记。
+- **diff 基准取 `@{upstream}` 的 tip 而不是 merge-base**：fetch 了没 merge 时，上游 tip 上有本地没有的提交，
+  于是工作区干净也被判「改了 crates 代码但没有任何测试改动」。假红会把人逼去绕门禁。
+- **`GATE_BASE` 不校验**：写错一个字母（`orgin/master`），`changed_files` 按「空仓」处理、只看未跟踪文件，
+  show-me-test 报「无对象可判」、门禁绿、gate-ok 还往前推。现在解析不到就拒绝并给出路。
+- **判「被门禁的是不是 SOP 仓自身」比的是 `pwd`**：经符号链接跑就判成消费项目，报「缺版本戳」判红，
+  只在 SOP 仓跑的三个阶段还静默不跑。改成 `pwd -P`。
+- **项目里单跑 gate-lint / shell-lint 会报副本里的样本**：副本带着一整套故意写坏的样本，被当成项目自己的违规。
+  两个 lint 都排除 `$ROOT/.claude/<family>/`（与 doc-lint 同一形态）。
+- **kb 的「## 历史版本」标题行尾多一个空格，整条判据落空**：正文扫描不在历史节停机，还报「必须有历史节收尾」。改成去掉行尾空白再比。
+- **`x="$(sed -n … I18N)"` 在 I18N 不在时退 2**，`set -e` 当场把脚本带走、零输出（gate.sh、gate-lint、shell-lint、doc-lint 两处、push-all 共六处；第四轮又查出两处）。
+- **pre-push 不看要推的是哪个 ref**：推特性分支、tag，甚至 `git push --dry-run`，都会把另外两个语言仓**真的**推出去。
+  现在只有推 master 才触发；`CLAUDE.md` 写明了它的射程与 `--dry-run` 这个拦不住的坑。
+- **install.sh 铺下去的文件是 0600**（`mktemp` 的权限被 `mv` 原样保留），改成 644。
+- `env.sh` 补上门禁自己依赖却一项都没查的工具：gawk、sha256sum、timeout，以及 git ≥ 2.28、bash ≥ 4.3、`sort -V`。
+  `manifest.sh` 的排序钉成 `LC_ALL=C`；selftest 隔离用户的全局 / 系统 git 配置。
+
+第三轮（前两轮报告里剩下的项，一并并入）：
+- **shell-lint 的 S5 只认一种拼法**：`rm -rf "$d"/x`、`rm -rf -- "$d/x"`、一行里第二个参数没守卫，此前全绿。改成两步判：先挑出 `rm -r`，再逐个参数找没守卫的变量路径。
+- **从 git 钩子里跑 `--staged` 会失败**：钩子里 git 设的 GIT_DIR 是相对路径，gate.sh 换了工作目录之后它指错地方，worktree 建不起来，而出路写的是「先跑 git worktree prune」。开头清掉这一组环境变量；建不起来时把 git 的原话打出来，出路改成 `worktree remove --force`。
+- **`--staged` 的清理只留 EXIT 一处**：中途任何一条路径退出都带走临时 worktree。
+- **「规范版本不一致」那条拒绝一出口就是 unbound variable**：族名定义在几十行之后。挪到用它之前；它的出路也不再叫人在没有 .git 的副本上跑 git log。
+- **本地阶段各按各的口径取 diff 基准**：gate.sh 算一次，以 `GATE_DIFF_BASE` 导给每个阶段。
+- **「无对象可判」与「判过了」分开**：naming-lint 没有 .rs 时退 3、记「本次未跑」；doc-lint 加 `--not-impl`，没有词表的语言那几条检查进汇总的未实现清单，不再记 PASS。
+- **gate-lint 也扫 .py**，只跑「直接打印的 ✗ 要有出路」那一条（singlefs 的 lib-*.py 里 13 处此前一处没查）。
+- **doc-lint 两条「已废弃」模式共用一句消息**，删掉任一条样本照绿；拆开，各配样本。
+- **install.sh 会把版本戳往下写**：副本比戳旧时照写，降级随提交传给所有人。现在拒绝。包装脚本在副本不在时说清怎么办，不再只有 bash 的「No such file」。
+- **i18n-sync 三处只认 `.git` 目录**，在 worktree 上做译文同步会被拒。这一版的发布就是在 worktree 上做的，三处都实测过。
+- **日期不许是编的**：三份样本与一处 skill 示例写着 2026-01-01，比本仓第一个提交早大半年，门禁一直是绿的。全部改成真实日期：样本用它自己的创建日，skill 示例改用 `date +%F`。doc-lint 查历史条目与「实测（日期）」，changelog-lint 查版本节日期，selftest 查样本里的日期。下界是被查项目自己的第一个提交往前宽限 7 天（只在它本身是 git 仓顶层、又不是浅克隆时问 git，不往上找外层仓），拿不到就用本包的起点 2026-08-26；上界是最晚的时区（UTC+14）的今天。两端为什么这么定，见第四轮。
+- gate.sh 的判决分支补用例（本地阶段交给两个 lint、Show me test 退 3、跑的不是副本、有 .rs 没 Cargo.toml、`--staged` 拷副本），此前把它们改成记 PASS，自检一例都不红；bump.sh 与 i18n-sync `--stamp` 的拒绝分支此前零覆盖，补上。
+- lib.sh 删掉没人调用的 `added_lines`。
+
+第四轮（三个模型分正推、反推、校验审核这一版，审了两轮，查出的问题一并修掉）：
+- **日期检查把真日期判成不可能**。上界取本机时钟的日期，而本机时钟是 UTC：东京 00:00–09:00 写下的当天日期被判「晚于今天」，
+  singlefs 的 194 个提交里有 8 个在这个时段写下了晚于提交时 UTC 日期的历史条目。下界卡死在第一个提交，而 git init 之前做的工作会带着当时的日期进第一个提交：
+  singlefs 的初版提交里就有 5 条前一天的历史条目，按移交前的 0.0.50 跑，它的门禁在这 5 处是红的（审核实测）。
+  现在上界按最晚的时区算，下界往前宽限 7 天（实测只早一天），2026-01-01 这种照样拦得住。4 个用例钉住两端，时钟用假的 `date` 钉死。
+- **点名退役包装的机制随 QEMU 一起删掉了**，而同一版就出现了新的退役包装：singlefs 的 `.claude/scripts/lkmm.sh` 转发到已删的脚本，
+  install.sh 照常刷戳，跑它得到的出路是「副本没装」。机制放回来，改成通用的，见下面移交那一节。
+- **未实现清单不再提准入标准**：两个 QEMU 键删掉之后，项目一个最终判据的阶段都没接，汇总里也一字不提。换成不点名装置的「最终判据」，见下。
+- **I18N 不在时零输出还剩两处**：doc-lint 读 `this=`、manifest 读 `this=` 与 `reference=`。补上 `|| true`，各配一例。
+- **selftest 搭译本样本时把盖章的输出丢进 `/dev/null`**：盖章与回读的形态一对不上，lib.sh 的 `set -e` 把整个自检在第 245 例带走，
+  后面 58 例一个没跑，只剩退出码 1。现在失败时打出原话再停。
+- **误删了与虚机无关的内容，放回去**：`command-safety.md` 的「测试镜像一律放临时目录」「破坏性操作先看清楚再动」两节，以及表里的 `mkfs`、`dd`、`lsblk`。
+  崩溃点重放一样要镜像、要 mkfs，singlefs 的代码与脚本也在按标题引「测试镜像一律放临时目录」。`env.sh` 的 dmsetup 查的是崩溃点重放的块层写记录，也放回去。
+- 文字：`show-me-test.md` 收进来的「跳过清单」一段写成了 gate-lint 已经在查 `noskip`，实际没有这条检查，改成写明还没做成；
+  doc-lint 文件头注释还说 rule-definition 整篇跳过；pre-push 注释说 `--dry-run` 的坑写在 README，实际在 `CLAUDE.md`；
+  `test-discipline.md` 两处「不可推翻」上一轮只改了一处；日期那条写的「五份样本」实为三份，fence 样本里写着 2026-01-01 的那一处改成它的创建日；
+  env.sh 那句「sort 不认 -V」的例子改成可复核的写法（0.0.9 → 0.0.10 会被判成降级，审核实测）。
+- 第二轮审核接着查出：
+  - **机器上的 date 不认 `-d` 时，日期下界静默消失**，2026-01-01 照样放行：日期检查是在 `if` 条件里调的，`set -e` 不管。
+    doc-lint 与 changelog-lint 开头先试一次 `date -d`，不行就停；env.sh 也查这一项。
+  - **浅克隆里「第一个提交」是截断处**，拿它当下界，项目越老误判越多。浅克隆时不问 git，退到本包的起点。
+  - **en / ja 仓的「Measured (日期」「実測（日期」一条都没查**：只认中文的「实测（」，而没查的这一半也没列进未实现清单。三种写法都认了。
+  - **退役包装只认现行形态**：0.0.49 以前铺的三行包装认不出，照常刷戳。两种形态都认；项目照模板给还在的共享脚本加的包装不算退役。
+  - **宽限 30 天放过的编造日期太多**：实测只早一天，收到 7 天。
+  - **selftest 没有一例管「工作区指纹不碰真索引」**：把指纹改成直接在真索引上 `git add -A`，算出来的树逐字节相同，原有用例一例不红，
+    而使用者每跑一次门禁，没暂存的改动就被悄悄暂存。补一例，直接比调用前后的 `git status`。
+  - 文字：并进来的「连词写成连词」一节要求不用 `⇒`，而这一版新写的规则行里就有 7 处 `⇒`，改成连词，并写明门禁不查、旧文还没回扫；
+    `show-me-test.md` 的「跳过清单」那句不再写一个没实现的豁免语法；「最终判据」写明先把准入标准写进项目 kb，只做到一部分的阶段不写这个键；
+    三处把模型对拍也说成要录制流的句子改正；`session-wrapup.md` 那条实测写明撞的是不带路径提交那一种；
+    gate skill 的阶段表补上「工作区跑的过程中没变」；gate.sh 叠在一起的两个节标题分开；doc-lint 与 changelog-lint 几处注释跟上宽限。
+- 会红的证据：日期上界、宽限、不往上找外层仓、退役包装、照模板包还在的共享脚本不算退役、两处 I18N、最终判据，第一轮审出的这 8 处修复，
+  加上第二轮的 `date -d`、浅克隆、英日实测写法、旧形态包装、宽限 7 天、指纹不碰真索引 6 处，逐一改回旧写法，每一处都让针对它的用例变红。
+  盖章失败时打原话那一处没有专门的用例：是把盖章回读改坏，看自检停在第一次搭样本处、打出原话来验的。
+
+另一个会话同一时段的改动，一并收进这一版：
+- **门禁跑的过程中工作区变了要判红**：gate.sh 开跑与收尾各记一次工作区指纹（跟踪的文件加没被忽略的未跟踪文件，用拷出来的临时索引算，不碰真索引），
+  对不上就判红，出路是等改动停下再跑或者用 `--staged`。selftest 两例：中途改文件要红，中途只暂存不算变；
+  「gate-ok 记开跑时的 HEAD」那一例改成跑之前就写好内容，跑的过程中只让 HEAD 动。
+- `show-me-test.md` 两段：报了查了多少还不够，没查的也要逐个列出、清单现算；成功行里报的数也要有样本钉住。
+- `evidence-discipline.md` 两段：进结论的每个数先问是量的还是拍的；撤回时扫出来的清单不能一把全替换，先分清说的是现状还是那一次的事。
+- `writing-discipline.md` 一节：连词写成连词，名词串拆回句子。
+- `session-wrapup.md` 两条：不带 `--staged` 跑时工作区变了会判红；「只提交这些路径」不等于 `git commit -- <路径>`。
+
+selftest 268 → 320 例：三轮修复补了 58 例，第四轮补了 12 例，另一个会话的改动带进 2 例，移交 QEMU 与 herd7 删掉 20 例（见下）。会红的证据：三轮的修复逐一改回旧写法，每一处都让针对它的用例变红。
+其中四条用例第一版是假的，变异之后一声不吭：大文件样本的填充行写成了注释、`GIT_DIR` 写成了绝对路径、die 之前另外手工清了一次、本地阶段自己判红盖住了 lint 的判定。另有两次变异把 case 语句改坏了语法，重做成整行替换才算数。都改到会红为止。
+
+规则与文档（各语言一起改）：
+- `command-safety.md`：会红的检查是五条不是四条，补上 `pgrep -f`；S3 的描述改成与脚本一致（命令位置上一律红）；一处「基于」。
+- `sop-first.md`：拒绝形态「两种」→ 三种；「17 处 die 全都免检」「此前全部免检」两句历史叙述删掉或改成实测记录。
+- `show-me-test.md`：本地阶段那句「此前它不在任何 lint 的扫描里」改成实测记录。
+- `test-discipline.md`：两处「不可推翻」改成与节标题一致的「不可证伪」；「本节主结论」改成点名。
+- `verify-before-claiming.md`：节标题「它定了没，和它到底怎么定义的，是两个问题」去掉内层引号，与两处引用一致。
+- `kb-discipline.md`：写明「本文件」门禁不查，靠人。`design-doc-discipline.md`：doc-lint 只扫 `.md`，代码注释那一条靠 review。
+- `engineering-philosophy.md`：howto 要求在 `sop-first.md` 不在 `show-me-test.md`；判据句改成引用 `machine-first.md` 的原话。
+  `machine-first.md`：与 `engineering-philosophy.md` 逐字重复的那段缩成一句加引用。
+- `code-discipline.md`：三处处置标签（「废弃这条理由」「留下，而且更硬」「交给类型」）归到声明的六种里。
+- `writing-discipline.md`：门禁管哪一半补上规则本体也查、只豁免举例。
+- skills：`gate` 补 `--staged` 用法、门禁自检与 shell 纪律的失败原因列全、en / ja 副本下规则清单不适用、rule-definition 新语义；
+  `crash-test` 的 gate-covers 键补上「命名纪律（shell）」；`decide` 的「本工程」→「本项目」。
+- templates：kb 三篇指向规则的相对路径改成从 `.claude/kb/` 能解析的 `../singlefs-ai-sop/rules/…`；项目模板的 shell-lint 注释列全。
+- README：「克隆」→「副本」；三关那段「由 gate-lint 强制」与「靠人判断」两句打架，改成门禁只管第 3 关的形式。
+- en / ja：顺带修 0.0.48 / 0.0.49 译文里的用词不一（英文 remedy 同时译「出路」「改法」，日文「写死的 pid」「虚机」各两种写法）。
+- 第三轮：`test-discipline.md`、`verify-before-claiming.md` 补「门禁管哪一半」，写明哪些做成了检查、哪些全靠人；`command-safety.md` 补「进程边界上的三种静默失效」；`code-discipline.md` 写明 shell 命名纪律对现有脚本还没回扫过；`sop-first.md` 去掉可数声明；英日两仓「门禁管哪一半」各有两种译法，统一成一种。
+
+QEMU 与 herd7 整个交给 singlefs。这两样只有 singlefs 在用，怎么测、怎么验、接不接进门禁都由它自己定，本包不再测也不再验：
+- 删掉 `scripts/lkmm.sh`、`scripts/fetch-deps.sh`、`scripts/fixtures/lkmm/`、`templates/litmus/`。门禁没有 LKMM 阶段了。
+- 未实现清单去掉「QEMU 真实负载」「QEMU 崩溃注入」两个键，换成不点名装置的「最终判据」：准入标准由项目定，
+  项目的阶段做到了、写了 `# gate-covers: 最终判据`、这一轮跑过且通过，这一项才换成「由谁覆盖」。
+- `install.sh` 不再铺 `.claude/scripts/lkmm.sh`，不再往项目根播 `litmus/`。点名退役包装改成通用的：`.claude/scripts/` 里与包装模板（现行或 0.0.49 以前的形态）一字不差、
+  它转发的共享脚本这一版里又没有的，一律点名并挡住版本戳，不再只认写死的 `qemu.sh`。包装全文只写在 `wrapper_text` 一处，铺新包装与认退役包装比的是同一份文本。
+- `env.sh` 不再查 qemu-system-x86_64、fio 与 `/dev/kvm`。
+- `i18n-sync.sh` 去掉 `.litmus` 的溯源标记形态，`install.sh` 剥标记时也不再认它；`manifest.sh` 的译文清单与覆盖率检查不再收 `.litmus`；
+  `show-me-test.sh` 的出路删掉并发与内存序那两行。
+- 规则：`show-me-test.md` 的「最终判据是 QEMU/KVM 压测」改成「最终判据由项目定」。`machine-first.md` 前提二不再点名 herd7 / LKMM，
+  写明工具、判别力与绑定代码由项目自己定，依据指向 singlefs 的 kb；表里两种「模型」分开写，被穷举的那个叫「形式模型」。
+  `command-safety.md` 删掉「QEMU 虚机必须把 pid 写进文件」一节；等进程结束那句的「虚机之类」改成不是自己起的进程；
+  结果抓取那句的「BIOS 转义序列、内核日志、串口噪声」改成不点名的写法；子 shell 赋值的实测记录不再点名 QEMU harness。
+  `test-discipline.md`、`code-discipline.md`、`sop-first.md` 跟着改。
+- skills：`crash-test` 删掉 LKMM、QEMU 两节，gate-covers 的键是模型对拍、崩溃点重放、最终判据、命名纪律（shell）；`gate` 删掉 LKMM 那一行。
+  项目模板、README 跟着改；GLOSSARY 的「对照组」原先按 litmus 定义，改成与 `test-discipline.md` 一致的属概念：阳性对照或真实基线。
+- selftest 删掉 lkmm 样本与 litmus 溯源标记两组，共 20 例；退役包装那 3 例改成拿 lkmm.sh 造。shell-lint 样本里 `stop_vm`、`HAS_KVM`、`KERNEL_PATH` 这类名字换成中性的。
+- 删掉之前的原文放在 singlefs 的 `.claude/handover/qemu-herd7/`。
+- **这一版不抬版本号，门禁不会提示规矩变了**：singlefs 的版本戳本来就是 0.0.50，「规范版本」「副本与上游同版本」两个阶段照样绿，同步全靠人。
+  同步时 install.sh 会拦下两处：`.claude/install-owned` 里两行 litmus（本包不铺这两个路径了）、`.claude/scripts/lkmm.sh` 包装（转发目标已删）；
+  前一处先拦，改完再跑才看得到后一处。门禁会拦下一处：`gate.d/55` 头部的 `# gate-covers: QEMU 真实负载`，这个键不在清单里了。
+  按 55 号头部写的，它跑真实负载加两个必须判红的对照，没有崩溃注入，所以这一行该删掉；准入标准写进 kb、阶段做全了，再写 `最终判据`。
+  `litmus/` 从此没有共享阶段判，要继续判，就把移交过去的 `lkmm.sh` 接成项目自己的阶段。其余不会红、但同步后说的不再是真话的地方，列在移交目录的 README 里。
+
+没动的：`evidence-discipline.md` 里「查出五处……」括号只数得出四处，原始记录在 singlefs，这里核不了；GLOSSARY 里七个全仓未用的术语，待核；
+changelog-lint 与 doc-lint 的样本里还有一批日期早于样本入库那天（例如 2026-09-10 入库的样本写 2026-09-01），都在上下界之内。
+它们是样本里虚构的版本节与历史条目，不是 2026-01-01 那种占位日期，这一版没改，改不改待定。
+
+另外两项有意没做。`evidence-discipline.md` 的「门禁管哪一半」没补：这一版收进了另一个会话对那一篇的两段改动，补这一节要再走一轮审核。规则里的案例段瘦身与重复判据归并没做：要删的是证据，拿不准就留着。
+
 ## 0.0.49 — 2026-09-14
 
 **0.0.48 收尾时查出的四处门禁缺口，一起修掉。**

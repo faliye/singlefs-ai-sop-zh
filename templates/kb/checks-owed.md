@@ -6,7 +6,7 @@
 这里放的是**对代码路径的要求**，对着镜像判不出来，只能靠门禁在跑的时候拦。
 
 **写进来的门槛**：说得出「拦什么」「怎么拦才会红」「现在还缺什么」。
-三样缺一样就是还没想清楚，先别写（见 `singlefs-ai-sop/rules/sop-first.md`）。
+三样缺一样就是还没想清楚，先别写（见 `../singlefs-ai-sop/rules/sop-first.md`）。
 
 <!-- doc-lint:registry name-col=2 -->
 

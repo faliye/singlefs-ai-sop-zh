@@ -3,5 +3,17 @@
 #   启用（每个语言仓各一次）：git config core.hooksPath scripts/githooks
 # push-all.sh 推其余语言仓时带着 SOP_PUSH_ALL_INNER=1，那几次推送在这里直接放行，不再反过来推本仓。
 [[ "${SOP_PUSH_ALL_INNER:-}" == 1 ]] && exit 0
-cat > /dev/null   # git 把要推的 ref 从标准输入喂进来；这里不按 ref 区分，一律全部语言仓一起验
+# git 把要推的 ref 从标准输入喂进来，一行一条：<本地ref> <本地sha> <远端ref> <远端sha>。
+# 只有推 master 才走「全部语言仓一起验、一起推」。此前一律不看 ref：推一个特性分支、一个 tag，
+# 甚至 `git push --dry-run`，都会让另外两个语言仓的 master **真的**被推出去（审计实测）。
+# --dry-run 在钩子里看不出来，所以推 master 的那一次仍然会真推——这一条写在 CLAUDE.md 里，钩子拦不了。
+pushing_master=0
+while read -r _local_ref _local_sha remote_ref _remote_sha; do
+  [[ "$remote_ref" == refs/heads/master ]] && pushing_master=1
+done
+if [[ $pushing_master -eq 0 ]]; then
+  printf '  ! 推的不是 master，不触发「全部语言仓一起验、一起推」\n'
+  printf '     → 怎么办： 要一起推就推 master；本次按普通 push 放行。\n'
+  exit 0
+fi
 exec bash "$(dirname "${BASH_SOURCE[0]}")/../push-all.sh" --from-hook

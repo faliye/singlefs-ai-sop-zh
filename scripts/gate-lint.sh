@@ -89,12 +89,21 @@ naked_die() {
 
 fails=0; checked=0; files=0
 for BASE in "${SCANS[@]}"; do
-EXCL=(-not -path "$BASE/scripts/fixtures/*" -not -path "$BASE/fixtures/*")
+# 装进项目的 SOP 副本不扫：理由同 shell-lint —— 副本里的样本是故意写坏的，
+# 项目里单跑这个 lint 时会被当成项目自己的违规（审计实测）。
+LINT_FAMILY="$(sed -n 's/^family=//p' "$SCRIPTS/../I18N" 2>/dev/null || true)"
+EXCL=(-not -path "$BASE/scripts/fixtures/*" -not -path "$BASE/fixtures/*" -not -path "$BASE/.claude/${LINT_FAMILY:-singlefs-ai-sop}/*")
 while IFS= read -r f; do
   rel="${f#"$BASE"/}"
   files=$((files+1))
   mapfile -t L < "$f"
+  # .py 也扫。项目本地的阶段常用 python 写，它们的拒绝一样摆在提交者面前，
+  # 而此前扫描只认 *.sh——实测 singlefs 的 .claude/gate.d/lib-*.py 里 13 处 `✗` 一处都没被查过。
+  # 但只有 G4（直接打印的 ✗ 要有 →）对 .py 成立：G1 / G2 认的是 lib.sh 的 bad / die，
+  # G3 认的是 shell 的成功摘要，两条都是 shell 的形态，套到 python 上只会造假红。
+  is_shell=0; [[ "$f" == *.sh ]] && is_shell=1
   hd=""
+if [[ $is_shell -eq 1 ]]; then
   for ((i=0; i<${#L[@]}; i++)); do
     line="${L[$i]}"
     # heredoc 体不是代码：脚本里用 heredoc 生成「故意写坏的样本」是正当写法，
@@ -103,10 +112,12 @@ while IFS= read -r f; do
       [[ "$line" == "$hd" || "$line" =~ ^[[:space:]]*"$hd"[[:space:]]*$ ]] && hd=""
       continue
     fi
-    if [[ "$line" =~ \<\<-?[[:space:]]*[\'\"]?([A-Za-z_][A-Za-z0-9_]*) ]]; then
-      hd="${BASH_REMATCH[1]}"
-    fi
+    # 注释行先跳过，再判 heredoc：反过来写的话，注释里一句 `# 用法：python3 - <<PY`
+    # 就把这一行之后的整个文件当成 heredoc 体，一条拒绝都不再检查（审计实测）。
     [[ "$line" =~ ^[[:space:]]*# ]] && continue        # 注释里的拒绝不算
+    if [[ "$line" =~ $HEREDOC_RE ]]; then
+      hd="${BASH_REMATCH[2]}"
+    fi
     # 算术展开不是命令位置：`bad=$((bad + 1))` 里的 `bad ` 紧跟在 `(` 后面，
     # 按 CMD_POS 读就成了一处「拒绝」，而它只是个计数（singlefs 的 gate.d 实测两处假红）。
     #
@@ -154,6 +165,8 @@ while IFS= read -r f; do
     fi
   done
 
+fi   # ← G1 / G2 到此为止，只对 shell 脚本判
+
   # ── G4 直接打印的拒绝，也要给出路 ───────────────────────
   # 上面两条只认 lib.sh 的 bad / die。而**项目本地的阶段多半不 source lib.sh**：
   # 它们直接 `echo "  ✗ …"`，或者在内嵌 python 里 `print('  ✗ …')`。
@@ -178,8 +191,8 @@ while IFS= read -r f; do
     if [[ -n "$inhd" ]]; then
       if [[ "$line" == "$inhd" || "$line" =~ ^[[:space:]]*"$inhd"[[:space:]]*$ ]]; then inhd=""; hdcode=0; continue; fi
       [[ $hdcode -eq 1 ]] || continue
-    elif [[ "$line" =~ \<\<-?[[:space:]]*[\'\"]?([A-Za-z_][A-Za-z0-9_]*) ]]; then
-      inhd="${BASH_REMATCH[1]}"
+    elif [[ $is_shell -eq 1 ]] && [[ ! "$line" =~ ^[[:space:]]*# ]] && [[ "$line" =~ $HEREDOC_RE ]]; then
+      inhd="${BASH_REMATCH[2]}"
       hdcode=0
       [[ "$line" =~ (python3?|perl|node|gawk|awk)[[:space:]] ]] && hdcode=1
       continue
@@ -210,13 +223,18 @@ while IFS= read -r f; do
     fi
   done
 
+if [[ $is_shell -eq 1 ]]; then
   # ── G3 成功摘要要报出检查了多少项 ───────────────────────
   # 「扫到 0 项」不是通过。实测：一个阶段的第 3 项因为搜索范围写窄，
   # 每个对象都在第一步 continue，既不算 ok 也不算 bad，末尾照样报绿——
   # 它这样绿了不知道多久，没有任何人看得出来（本仓 C114）。
   # 判据只对扫一批对象的脚本生效；成功摘要里带上计数变量，0 项就自己露出来。
-  if printf '%s\n' "${L[@]}" | grep -qE 'while[[:space:]]+.*read|for[[:space:]]+[A-Za-z_]+[[:space:]]+in|find[[:space:]]' \
-     && ! printf '%s\n' "${L[@]}" | grep -q 'gate-lint:nocount'; then
+  # ⚠️ 这里不许用 `… | grep -q`：grep 找到就退出，上游 printf 写不完拿 SIGPIPE，
+  # 在 set -o pipefail 下整个管道退 141，条件当假——文件大过管道缓冲（64 KiB）就静默不判了
+  # （审计实测：同一份没报计数的脚本，4 行判红，撑到 338 KB 变绿）。grep -c 会读完全部输入。
+  loop_hits="$(printf '%s\n' "${L[@]}" | grep -cE 'while[[:space:]]+.*read|for[[:space:]]+[A-Za-z_]+[[:space:]]+in|find[[:space:]]' || true)"
+  nocount_hits="$(printf '%s\n' "${L[@]}" | grep -c 'gate-lint:nocount' || true)"
+  if [[ "$loop_hits" -gt 0 && "$nocount_hits" -eq 0 ]]; then
     succ="$(printf '%s\n' "${L[@]}" | grep -vE '^[[:space:]]*#' | grep -E '^[[:space:]]*ok[[:space:]]+"|✓' || true)"
     # 判据只对**报了成功**的脚本生效。一个字都不说的脚本是另一类问题，这里不判——
     # 「认不出」与「通过」要分开（rules/show-me-test.md）。
@@ -231,7 +249,8 @@ while IFS= read -r f; do
       fails=$((fails+1))
     fi
   fi
-done < <(find "$BASE" -name '*.sh' -not -name 'lib.sh' "${EXCL[@]}" | sort)
+fi   # ← G3 到此为止，只对 shell 脚本判
+done < <(find "$BASE" \( -name '*.sh' -o -name '*.py' \) -not -name 'lib.sh' "${EXCL[@]}" | sort)
 done
 
 say ""
@@ -239,4 +258,4 @@ if [[ $fails -gt 0 ]]; then
   bad "门禁自检失败：$fails 处（共 $files 个脚本、$checked 条拒绝）"   # gate-lint:summary
   exit 1
 fi
-ok "门禁自检通过：$files 个脚本、$checked 条拒绝都带了出路"
+ok "门禁自检通过：$files 个脚本（.sh 与 .py）、$checked 条拒绝都带了出路"

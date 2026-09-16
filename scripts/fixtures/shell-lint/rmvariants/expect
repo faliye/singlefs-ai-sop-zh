@@ -1,0 +1,5 @@
+exit=1
+want=evil.sh:4
+want=evil.sh:5
+want=evil.sh:6
+want=evil.sh:7
