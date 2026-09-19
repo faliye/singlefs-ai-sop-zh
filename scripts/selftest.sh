@@ -101,6 +101,75 @@ run_fixture() { # run_fixture <标签> <样本目录> <命令...>（命令自行
   judge "$label" "$wexit" "$rc" "$out" ${wants[@]+"${wants[@]}"}
 }
 
+# ── 样本目录并行跑法：先把一批派出去，再按派活顺序逐个判 ──
+# 一批样本之间互不依赖，而每一项都要起一个子进程（起 bash、起 python、扫一遍样本目录），
+# 所以并行跑（rules/command-safety.md「一个脚本里的检测项，能并行就并行」）。
+# 判定一个字都不并行：judge 仍在主 shell 里按派活顺序跑，输出顺序与串行时相同。
+#
+# **还没并行的那一半，写在这里免得被当成已经做完**：脚本化用例（run_scripted）要现搭 git 仓、
+# 现写文件，搭建与判定在正文里交织，并行化要重写整个脚本的结构，这一轮没做。
+# 2026-09-19 实测：并行之后的 21.4 秒里，样本批已经不占什么，约 11 秒是这批脚本化用例，
+# 另外 10 秒是 proc 那个故意空等的用例。
+#
+# 退出码一律走 .rc 文件，不靠 wait 的返回值，也不靠后台作业里的赋值：
+# 不带参数的 wait 恒返回 0，后台体是子 shell 赋值传不回来——两样都会把红样本变成绿的
+# （rules/command-safety.md「并行不许把失败吃掉」，shell-lint 的 S6 判这一条）。
+SELFTEST_JOBS="${SELFTEST_JOBS:-$(nproc 2>/dev/null || echo 4)}"
+spawn_labels=(); spawn_dirs=(); inflight=0
+fixture_out() { printf '%s/%s.out' "$tmpd" "$(printf '%s' "$1" | tr '/ ' '__')"; }
+
+spawn_fixture() { # spawn_fixture <标签> <样本目录> <命令...>（命令自行引用样本目录）
+  local label="$1" d="$2"; shift 2
+  spawn_labels+=("$label")
+  # 缺 expect 的不派活，占一个空位，collect 时按原来那句话报——与串行时判得一样
+  if [[ ! -f "$d/expect" ]]; then spawn_dirs+=(""); return 0; fi
+  spawn_dirs+=("$d")
+  local out; out="$(fixture_out "$label")"
+  rm -f "$out" "$out.rc"
+  # 退出码在 if 里取：lib.sh 开着 set -e，写成「里层; echo $? > 文件」的话，样本一判红
+  # 子 shell 就在那一行退出，.rc 一个字都不写——红样本全体没有退出码文件
+  # （rules/command-safety.md「进程边界上的三种静默失效」第一行；写这段时实测 119 例）。
+  ( local_rc=0
+    if timeout "${SELFTEST_TIMEOUT:-60}" env -u GATE_BASE -u GATE_STAGED_FROM "$@" > "$out" 2>&1
+    then local_rc=0; else local_rc=$?; fi
+    echo "$local_rc" > "$out.rc" ) &
+  inflight=$((inflight+1))
+  # 在手的作业到上限就先收一个。`wait -n` 拿回来的是样本自己的退出码，红样本本来就非 0，
+  # 不加 `|| true` 的话 set -e 会在第一个红样本上把整个自检带走（写这段时实测）。
+  while [[ $inflight -ge $SELFTEST_JOBS ]]; do wait -n || true; inflight=$((inflight-1)); done
+}
+
+collect_fixtures() { # 等这一批跑完，按派活顺序逐个判
+  while [[ $inflight -gt 0 ]]; do wait -n || true; inflight=$((inflight-1)); done
+  local i label d out rc wexit w; local wants
+  for i in "${!spawn_labels[@]}"; do
+    label="${spawn_labels[$i]}"; d="${spawn_dirs[$i]}"
+    if [[ -z "$d" ]]; then
+      cases=$((cases+1)); fails=$((fails+1))
+      bad "$label 缺 expect 文件"
+      howto "写一行 exit=0 或 exit=1，红的样本再加至少一条 want=<输出片段>。"
+      continue
+    fi
+    out="$(fixture_out "$label")"
+    # 派出去多少项，就要收回来多少项：一项没跑完时它的 .rc 根本不存在，
+    # 而循环少转一圈是不报错的，末尾照样报绿（rules/command-safety.md）。
+    if [[ ! -f "$out.rc" ]]; then
+      cases=$((cases+1)); fails=$((fails+1))
+      bad "$label 派出去了，却没有退出码文件"
+      howto "这一项的后台作业没跑完，或者被杀了——自检不许把它当通过。" \
+            "看它的输出： cat $out"
+      continue
+    fi
+    rc="$(cat "$out.rc")"
+    [[ $rc == 124 ]] && say "        （超时 ${SELFTEST_TIMEOUT:-60}s，按判错记）"
+    wexit="$(sed -n 's/^exit=//p' "$d/expect")"
+    wants=()
+    while IFS= read -r w; do wants+=("$w"); done < <(sed -n 's/^want=//p' "$d/expect")
+    judge "$label" "$wexit" "$rc" "$out" ${wants[@]+"${wants[@]}"}
+  done
+  spawn_labels=(); spawn_dirs=()
+}
+
 # ── 脚本化用例跑法 ──────────────────────────────────────
 run_scripted() { # run_scripted <名> <期望exit> <want...> -- <命令...>
   local name="$1" wexit="$2"; shift 2
@@ -125,8 +194,9 @@ head1 "门禁自检：doc-lint 的判别力"
 # 而 doc-lint 自己一个字都没坏（实测：en / ja 两仓的门禁从 0.0.25 起一直红着，就是这个）。
 # 语言是**样本的属性**，不是仓的属性。
 for d in "$FX"/doc-lint/*/; do
-  run_fixture "doc-lint/$(basename "$d")" "$d" env DOC_LINT_LANG=zh bash "$SCRIPTS/doc-lint.sh" "$d"
+  spawn_fixture "doc-lint/$(basename "$d")" "$d" env DOC_LINT_LANG=zh bash "$SCRIPTS/doc-lint.sh" "$d"
 done
+collect_fixtures
 
 # 上面那个口子必须自报。少了那句 warn，谁都能拿 DOC_LINT_LANG 换掉判据而不留痕迹——
 # 而换判据正是这套门禁最该拦住的一件事（rules/show-me-test.md：门禁不许假装通过）。
@@ -155,9 +225,10 @@ run_scripted "doc-lint/判据编不过要当场红" 1 "上下文指代的判据 
 head1 "门禁自检：gate-lint 的判别力"
 for d in "$FX"/gate-lint/*/; do
   [[ -d "$d" ]] || continue
-  run_fixture "gate-lint/$(basename "$d")" "$d" \
+  spawn_fixture "gate-lint/$(basename "$d")" "$d" \
     env GATE_LINT_DIR="$d" bash "$SCRIPTS/gate-lint.sh"
 done
+collect_fixtures
 
 # 默认扫描范围（不设 GATE_LINT_DIR / SHELL_LINT_DIR 时扫哪里）——
 # 样本目录法测不到它：环境变量一设就把默认值盖掉了。所以现搭一个包，
@@ -205,9 +276,37 @@ run_scripted "shell-lint/项目里单跑不报副本里的样本" 0 "shell 纪�
 head1 "门禁自检：shell-lint 的判别力"
 for d in "$FX"/shell-lint/*/; do
   [[ -d "$d" ]] || continue
-  run_fixture "shell-lint/$(basename "$d")" "$d" \
+  spawn_fixture "shell-lint/$(basename "$d")" "$d" \
     env SHELL_LINT_DIR="$d" bash "$SCRIPTS/shell-lint.sh"
 done
+collect_fixtures
+
+# ════ pattern-process-guard（会话钩子）═══════════════════
+# 样本是钩子的 JSON 输入（input.json），不是 .sh：shell-lint / gate-lint 不扫它们。
+# 红的 want 带「第一处：」那一行，钉住是哪一行命中的——只比退出码的话，一个因为别的行红了的样本也算过。
+head1 "门禁自检：pattern-process-guard 的判别力"
+[[ -d "$FX/pattern-process-guard" ]] || { bad "缺样本目录 $FX/pattern-process-guard"
+  howto "样本要随仓走。没有样本，下一个改 claude-hooks/pattern-process-guard.sh 的人无从复跑。"; exit 1; }
+for d in "$FX"/pattern-process-guard/*/; do
+  [[ -d "$d" ]] || continue
+  spawn_fixture "pattern-process-guard/$(basename "$d")" "$d" \
+    bash -c 'bash "$0" < "$1/input.json"' "$SCRIPTS/claude-hooks/pattern-process-guard.sh" "$d"
+done
+collect_fixtures
+
+# ════ proc.py（按进程号找、等、停）═══════════════════════
+# 它是钩子给出的替代写法，自检坏了等于出路是假的。三个破坏开关各关掉一样东西，自检必须判红。
+head1 "门禁自检：proc.py 的判别力"
+run_scripted "proc/自检通过" 0 "proc.py 自检通过" -- python3 "$SCRIPTS/proc.py" --selftest
+run_scripted "proc/PROC_BREAK=ancestors 必须判红" 1 "find 列出了发出这条命令的进程自己" -- \
+  env PROC_BREAK=ancestors python3 "$SCRIPTS/proc.py" --selftest
+# ⚠️ 下面这一例要**空等 10 秒**：它验的就是「超时逻辑被破坏之后 wait 不返回」，
+# 那个 10 秒是 proc.py 自检里外层 subprocess 的超时。2026-09-19 实测它占整个自检 21.4 秒里的 10 秒。
+# 这是故意的等待，不是并行度问题——并行治不了它，别拿并行去解释这一段为什么慢。
+run_scripted "proc/PROC_BREAK=timeout 必须判红" 1 "10 秒没返回" -- \
+  env PROC_BREAK=timeout python3 "$SCRIPTS/proc.py" --selftest
+run_scripted "proc/PROC_BREAK=stopself 必须判红" 1 "stop 停自己的祖先应当拒绝" -- \
+  env PROC_BREAK=stopself python3 "$SCRIPTS/proc.py" --selftest
 
 # ════ show-me-test（要 git 仓才摆得出场景，现搭现跑）═════
 head1 "门禁自检：show-me-test 的判别力"
@@ -837,16 +936,18 @@ head1 "门禁自检：changelog-lint 的判别力"
 [[ -d "$FX/changelog-lint" ]] || { bad "缺样本目录 $FX/changelog-lint"
   howto "样本要随仓走。没有样本，下一个改 changelog-lint.sh 的人无从复跑。"; exit 1; }
 for d in "$FX"/changelog-lint/*/; do
-  run_fixture "changelog-lint/$(basename "$d")" "$d" bash "$SCRIPTS/changelog-lint.sh" "$d"
+  spawn_fixture "changelog-lint/$(basename "$d")" "$d" bash "$SCRIPTS/changelog-lint.sh" "$d"
 done
+collect_fixtures
 
 # ════ naming-lint ════════════════════════════════════════
 head1 "门禁自检：naming-lint 的判别力"
 [[ -d "$FX/naming-lint" ]] || { bad "缺样本目录 $FX/naming-lint"
   howto "样本要随仓走。没有样本，下一个改 naming-lint.sh 的人无从复跑。"; exit 1; }
 for d in "$FX"/naming-lint/*/; do
-  run_fixture "naming-lint/$(basename "$d")" "$d" bash "$SCRIPTS/naming-lint.sh" "$d"
+  spawn_fixture "naming-lint/$(basename "$d")" "$d" bash "$SCRIPTS/naming-lint.sh" "$d"
 done
+collect_fixtures
 
 # ════ version-discipline ═════════════════════════════════
 head1 "门禁自检：version-discipline 的判别力"

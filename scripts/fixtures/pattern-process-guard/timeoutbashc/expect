@@ -1,0 +1,4 @@
+exit=2
+want=✗ 这条命令里有按模式找进程的写法
+want=第一处：timeout 600 bash -c 'while pgrep -f x
+want=→ 怎么办：

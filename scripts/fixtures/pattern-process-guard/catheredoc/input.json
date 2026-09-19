@@ -1,0 +1,1 @@
+{"tool_name": "Bash", "tool_input": {"command": "cat >> report.md <<'EOF'\n别用 pgrep -f 等进程，下面这种写法会一直空转：\nuntil ! pgrep -f e154; do sleep 5; done\nEOF"}}

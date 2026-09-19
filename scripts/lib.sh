@@ -54,6 +54,23 @@ die()   { bad "$1"; shift
 # 同一个事实只许有一处权威记录（rules/kb-discipline.md 第 4 条）——就是这里。
 CMD_POS='(^[[:space:]]*|[;&|(){}`!][[:space:]]*|(then|else|do|if|while|until|sudo|env|xargs|exec|eval|command|time)[[:space:]]+)'
 
+# ── 「按模式找进程」的唯一定义 ────────────────────────────
+# shell-lint（S2、S3，判脚本）与 claude-hooks/pattern-process-guard.sh（判会话里手敲的命令）共用，
+# 判据只在这里写一份；两边各写一份，迟早一边改了另一边没跟（rules/kb-discipline.md 第 4 条）。
+# 为什么禁用、换成什么写法，见 rules/command-safety.md 那一节。
+#
+# 命令名认任意路径前缀（/usr/bin/pkill 也是 pkill）；选项不按拼写枚举，
+# 认「有没有全模式匹配那一位」：-f / --full / 合并写法 -af。
+# 写死 `-f` 的时候，`pkill --full X`、`pkill -af X`、`/usr/bin/killall X`
+# 六种写法整体漏检（对抗测试实测）——它们是同一条命令的另一种拼法。
+COMMAND_PATH_PREFIX_RE='([A-Za-z0-9_/.-]*/)?'
+# S2：pkill 带全模式匹配，或 killall。
+PATTERN_KILL_RE="$CMD_POS$COMMAND_PATH_PREFIX_RE"'(pkill([[:space:]]+-[[:alnum:]-]*)*[[:space:]]+(-[[:alnum:]]*f[[:alnum:]]*|--full)|killall)([[:space:]]|$)'
+# S3：pgrep -f 单列一条。此前命中后还要同一行有 xargs / kill / if / while / until 才红：
+# `pids=$(pgrep -f X)` 下一行 `kill $pids`、`while` 与 `pgrep -f` 分两行写，都全绿；
+# 反过来 `pgrep -f notify` 因为含子串 if 被判成等待循环（审计实测）。所以命令位置上出现就红。
+PATTERN_PGREP_RE="$CMD_POS$COMMAND_PATH_PREFIX_RE"'pgrep([[:space:]]+-[[:alnum:]-]*)*[[:space:]]+(-[[:alnum:]]*f[[:alnum:]]*|--full)'
+
 # ── 「这一行开了一个 heredoc」的唯一定义 ────────────────
 # gate-lint 与 shell-lint 都要跳过 heredoc 体（里面是数据，不是代码）。两边此前各写一份
 # `<<-?[[:space:]]*['"]?(名字)`，把三种**不是** heredoc 的写法也当成了开头：

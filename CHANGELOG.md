@@ -3,6 +3,24 @@
 规则与门禁的版本历史。`CLAUDE.md` 与 `rules/*.md` 不留历史节（design-doc-discipline），
 历史一律记在这里；逐条改动细节见 `git log`，提交信息即变更说明。
 
+## 0.0.52 — 2026-09-19
+
+**按模式找进程的禁令扩到会话里手敲的命令；新增按进程号办事的 `scripts/proc.py`；一个脚本里的检测项能并行就并行，而「光秃的 `wait` 吞掉失败」做成会红的检查；shell-lint 的 S1 修两处假红。**
+
+门禁（`scripts/`，三仓同一份）：
+- `pkill -f` / `killall` / `pgrep -f` 的判据从 shell-lint 挪进 `lib.sh`（`PATTERN_KILL_RE`、`PATTERN_PGREP_RE`），只留一处定义；展开后与原来的 S2、S3 逐字节相同。
+- 新增 Claude Code 的 PreToolUse 钩子 `scripts/claude-hooks/pattern-process-guard.sh`：拿同一份判据判会话里手敲的命令，只认命令位置；喂给非 shell 命令的 heredoc 正文不判，喂给 shell 的 heredoc、`-c` 与 `<<<` 的字符串照判；命中退出 2，并给出按进程号办事的写法。样本 19 个（`fixtures/pattern-process-guard/`），每个都用一种针对它的改坏方式证明过会判错。管不到的形态写在它的文件头：前缀不在命令位置表里的（`timeout 5 …`、`nohup …`、`ssh host '…'`）漏判，引号里恰好跟在 `( | ; !` 后面的误拒。
+- 新增 `scripts/proc.py`：`find`（按可执行文件名逐字找，不列发出命令的那一支进程）、`wait`（按进程号等，超时必给）、`stop`（先 TERM 后 KILL，拒绝停自己与祖先），带 `--selftest` 与三个破坏开关；selftest 加四例。自检里 sleep 的参数带上进程号：写死成一个数时，三个语言仓并行跑 selftest 会互相看到对方起的进程。
+- shell-lint 的 S1（子 shell 里的赋值传不回父进程）修两处假红：定义与收尾写在同一行的函数，往下找收尾会拿下一个函数行首的 `}` 当收尾、把中间的顶层赋值算进它的函数体（singlefs 研究脚本 14 处假红全是这个形态），现在按那一行判；写在别的函数体里、缩进着的直接调用认不出，现在行首的缩进也算命令位置。样本 onelinefunc（绿）、onelinebody（红）、indentcall（绿）。
+- shell-lint 新增 S6：命令位置上不带参数的 `wait` 判红。它的退出码恒为 0，并行跑的检测项红了几个父进程也看不见——一道并行化之后再也红不了的门禁，比串行的慢门禁危险得多。退出码确实在别处收了的，在那一行写 `# shell-lint:exit-collected <怎么收的>` 放行，理由不许省（只写标记不写理由的另判一种红）。样本 parallelwait（红，两处各一种形态）、good 里加一段带标记的正确并行写法（绿）；三个变异各自翻得动它瞄准的那一处。
+- selftest 的六批样本用例（doc-lint、gate-lint、shell-lint、pattern-process-guard、changelog-lint、naming-lint）改成并行跑：派活时每项把退出码写进自己的 `.rc` 文件，回收按派活顺序逐个判，判定一个字都不并行。派出去多少项就要收回来多少项，`.rc` 不在就判红。并行前后 350 例判定逐例相同，这一段 24.8 秒 → 21.4 秒、CPU 66% → 105%。写这段时实测撞上一次：子 shell 里 `set -e` 开着，样本一判红就在那一行退出、`.rc` 一个字都不写，119 例全体缺退出码文件——退出码改在 `if` 里取才修好。
+- doc-lint 的古风腔词表修一处假红：`是故` 撞上「是故意的」，改成 `是故[^意]`；样本 stylefalse 守着这条排除与另外两条（「不进行」「使得到」）。
+- selftest 用例 323 → 351。
+
+规则：
+- command-safety：「`pkill -f` / `killall` 一律禁用」一节补上 `proc.py stop`、`find`、`wait` 的写法；「手敲的命令行它管不到」改成由钩子在执行前拒绝，项目在 `.claude/settings.json` 注册一次（给出注册片段），没注册的会话里仍只靠这一条文字。
+- command-safety 新增两节：「一个脚本里的检测项，能并行就并行」（判据、三种不并行的情形、并行度按 `nproc` 取；门禁一慢就没人在本地跑，`sop-first.md` 要的「本地能跑且与远端同判」当场失效），「并行不许把失败吃掉」（四种写法各自收不收得到退出码的实测表、输出不许直接往 stdout 写、派出去多少收回来多少、改成并行之后要重新证明它红得出来）。开头「五条会红的检查」改成六条。
+
 ## 0.0.51 — 2026-09-19
 
 **kb 的指代检查补上光秃的方位形态；2026-09-17、09-18 在 singlefs 上的几条实测教训写进规则；现状句一律不带日期。**

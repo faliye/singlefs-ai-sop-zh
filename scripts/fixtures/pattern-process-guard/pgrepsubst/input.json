@@ -1,0 +1,1 @@
+{"tool_name": "Bash", "tool_input": {"command": "pids=$(pgrep -f runner); kill $pids"}}

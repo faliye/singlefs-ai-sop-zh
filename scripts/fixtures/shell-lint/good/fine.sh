@@ -34,3 +34,15 @@ W="$(mktemp -d)"; LOG="$W/run.log"
 out="$(run_one p "$W")"
 detect_env
 echo "$out $LOG $CONFIG_PATH $HAS_CACHE"
+
+# —— 6：并行跑检测项，每项把退出码写进自己的文件，收的时候逐个读。
+# 标记写明了退出码的去向，不该判红；去掉那行标记就必须变红（S6）。
+work="$(mktemp -d)"
+for probe in alpha beta; do
+  mkdir -p "$work/$probe"
+  ( bash probe.sh "$probe" >"$work/$probe/out" 2>&1; echo "$?" >"$work/$probe/exit" ) &
+done
+wait  # shell-lint:exit-collected 每项把退出码写进 $work/<项>/exit，紧接着逐个读
+for probe in alpha beta; do
+  [[ "$(cat "$work/$probe/exit")" == 0 ]] || { echo "$probe 没过"; exit 1; }
+done

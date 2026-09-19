@@ -1,0 +1,1 @@
+{"tool_name": "Bash", "tool_input": {"command": "echo \"用 pgrep -f 会命中自己\""}}

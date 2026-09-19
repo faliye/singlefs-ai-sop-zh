@@ -1,0 +1,3 @@
+exit=1
+want=evil.sh:3
+want=$RESULT_PATH 赋值

@@ -1,0 +1,5 @@
+exit=1
+want=evil.sh:7
+want=evil.sh:14
+want=退出码还是 0
+want=没写退出码收在哪

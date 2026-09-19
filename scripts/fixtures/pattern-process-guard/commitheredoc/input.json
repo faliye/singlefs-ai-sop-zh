@@ -1,0 +1,1 @@
+{"tool_name": "Bash", "tool_input": {"command": "git commit -m \"$(cat <<'EOF'\n等进程的写法换掉\npkill -f cargo 那处改成 proc.py stop\nEOF\n)\""}}
