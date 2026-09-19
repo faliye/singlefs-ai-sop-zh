@@ -142,6 +142,15 @@ cp -r "$FX/doc-lint/projok" "$r/scripts/fixtures/doc-lint/"
 run_scripted "doc-lint/扫描范围不随包所在路径变" 0 "文档铁律检查通过（检查 1，跳过 0" -- \
   env DOC_LINT_LANG=zh bash "$r/scripts/doc-lint.sh" "$r/scripts/fixtures/doc-lint/projok"
 
+# 判据编不过要当场红。2026-09-17 给上下文指代加光秃的方位形态时写了圈码区间 `①-⑳`，grep 报
+# Invalid collation character，而那条 grep 外面套着 `|| true`：整条检查对每份 kb 静默判绿，dirref 样本照样过。
+# 这里拷一份脚本、把圈码那一格改回区间写法，要求它报「编不过」，而不是「检查通过」。
+b="$tmpd/brokenctx"; mkdir -p "$b/scripts"
+cp "$SCRIPTS/lib.sh" "$SCRIPTS/doc-lint.sh" "$b/scripts/"; cp "$SCRIPTS/../I18N" "$b/I18N"
+run_scripted "doc-lint/判据编不过要当场红" 1 "上下文指代的判据 grep 编不过" -- \
+  bash -c 'sed -i "s/①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳/①-⑳/" "$1/scripts/doc-lint.sh" && grep -q "①-⑳" "$1/scripts/doc-lint.sh" || { echo "没改到圈码那一格，这条用例什么也没测"; exit 3; }
+           env DOC_LINT_LANG=zh bash "$1/scripts/doc-lint.sh" "$2"' brokenctx "$b" "$FX/doc-lint/dirref"
+
 # ════ gate-lint ══════════════════════════════════════════
 head1 "门禁自检：gate-lint 的判别力"
 for d in "$FX"/gate-lint/*/; do
