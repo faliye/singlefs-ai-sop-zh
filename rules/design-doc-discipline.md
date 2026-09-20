@@ -32,8 +32,7 @@
   判据看它指向什么：指向**这段代码现在为什么长这样**就留，
   指向**一个已经不存在的旧版本**就删。
 
-`CLAUDE.md` 和 `rules/*.md` **连文末的历史版本都不留**，历史一律放 `CHANGELOG.md`。
-它们是每次开工都要通读的规矩，混进历史会冲淡。
+`CLAUDE.md` 与 `rules/*.md` 另有一套写法，见 `rules-discipline.md`。
 
 正文里的历史陈述与历史节的位置由 `scripts/doc-lint.sh` 强制，它只扫 `.md`；代码注释那一条靠 review。
 

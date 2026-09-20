@@ -227,6 +227,31 @@ while IFS= read -r not_impl_line; do
   [[ -n "$not_impl_line" ]] && EXTRA_NOT_IMPL+=("$not_impl_line")
 done < <(bash "$SCRIPTS/doc-lint.sh" --not-impl 2>/dev/null || true)
 
+# ── 阶段 1a2：规则纪律 ──────────────────────────────────
+# 规则只写怎么做，历史与原因搬进案卷（rules/rules-discipline.md）。
+# 上游包自己的 rules/ 只在上游判；项目的 .claude/rules/ 在哪边跑都判。
+# 装进项目的副本不判：它由上游自己的门禁管，跟 doc-lint 同规矩。
+# 退出码 77 = 那个目录下一个 .md 都没有，记「本次未跑」，不记通过。
+run_rules_lint() { # run_rules_lint <阶段名> <规则目录> <额外要扫的文件…>
+  head1 "$1"
+  local rules_rc=0 stage_name="$1" rules_dir="$2"; shift 2
+  GATE_IN_STAGE=1 RULES_LINT_DIR="$rules_dir" RULES_LINT_FILES="$*" bash "$SCRIPTS/rules-lint.sh" "$ROOT" || rules_rc=$?
+  case "$rules_rc" in
+    0)  record "$stage_name" PASS ;;
+    77) NOT_RUN+=("$stage_name        本次无对象可判：$rules_dir 下面一个 .md 都没有") ;;
+    *)  record "$stage_name" FAIL ;;
+  esac
+}
+# CLAUDE.md、agent 定义与 skill 正文一起扫：它们和规则一样是照着执行的，
+# 射程漏掉谁，历史与原因就会全挤到那一份里。
+if is_pkg_itself "$ROOT"; then
+  run_rules_lint "规则纪律" "$SCRIPTS/../rules" CLAUDE.md "agents/*.md" "skills/*/SKILL.md"
+fi
+if [[ -d "$ROOT/.claude/rules" ]]; then
+  run_rules_lint "规则纪律（项目本地）" "$ROOT/.claude/rules" CLAUDE.md \
+    ".claude/agents/*.md" ".claude/agent-common.md" ".claude/main-agent.md" ".claude/skills/*/SKILL.md"
+fi
+
 # ── 阶段 1b：命名纪律 ───────────────────────────────────
 # 名字要让模型光看名字就读得出含义（rules/code-discipline.md）。机器判得了的是单字母和常见缩写那一半。
 # 退出码 3 = 没有要查的 .rs，与 Show me test 同一个约定：记「本次未跑」，不记通过。

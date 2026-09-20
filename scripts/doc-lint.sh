@@ -272,7 +272,7 @@ while IFS= read -r f; do
   # 而本仓 14 份规范文本全带着这张牌，于是 design-doc-discipline 声称由本脚本强制的
   # 那条「rules 连文末历史节都不留」，对它真正管的那批文件一次也没红过（复核实测）。
   structfail=0
-  if [[ "$base" == "CLAUDE.md" && $has_hist -eq 1 ]]; then
+    if [[ "$base" == "CLAUDE.md" && $has_hist -eq 1 ]]; then
     bad "$rel  CLAUDE.md 不许有「$HIST_HEAD」节，历史外置到 kb/ 或 CHANGELOG.md"
     howto "把这一节整段挪到 CHANGELOG.md 或 kb/。CLAUDE.md 每次开工都要通读，" \
           "混进历史会稀释它（rules/design-doc-discipline.md）。"

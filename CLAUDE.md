@@ -40,6 +40,7 @@
 @rules/writing-discipline.md
 @rules/design-doc-discipline.md
 @rules/kb-discipline.md
+@rules/rules-discipline.md
 @rules/test-discipline.md
 @rules/evidence-discipline.md
 @rules/verify-before-claiming.md

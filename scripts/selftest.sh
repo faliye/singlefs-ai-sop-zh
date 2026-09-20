@@ -281,6 +281,24 @@ for d in "$FX"/shell-lint/*/; do
 done
 collect_fixtures
 
+# ════ rules-lint ═════════════════════════════════════════
+# 样本目录本身当项目根喂进去：里面有 rules/ 和可选的 .claude/rules-lint-exclude。
+# 每个红样本只犯一处，want 指着那一条检查自己的消息——只比退出码的话，
+# 一个「因为别的检查红了」的样本也算过。
+head1 "门禁自检：rules-lint 的判别力"
+# 样本与判据都是中文的。别的语言仓里 rules-lint 报未实现（退出码 77），
+# 拿这批样本去喂只会逐个判错——所以这里显式说明不跑，不是静默跳过。
+if [[ "$(sed -n 's/^this=//p' "$SCRIPTS/../I18N" 2>/dev/null)" == zh ]]; then
+  for d in "$FX"/rules-lint/*/; do
+    [[ -d "$d" ]] || continue
+    spawn_fixture "rules-lint/$(basename "$d")" "$d" \
+      env RULES_LINT_DIR="$d/rules" RULES_LINT_FILES="CLAUDE.md" bash "$SCRIPTS/rules-lint.sh" "$d"
+  done
+  collect_fixtures
+else
+  warn "rules-lint 的判别力样本只在中文仓跑：它的判据是中文词表，本仓这一项未实现"
+fi
+
 # ════ pattern-process-guard（会话钩子）═══════════════════
 # 样本是钩子的 JSON 输入（input.json），不是 .sh：shell-lint / gate-lint 不扫它们。
 # 红的 want 带「第一处：」那一行，钉住是哪一行命中的——只比退出码的话，一个因为别的行红了的样本也算过。
@@ -609,7 +627,7 @@ mk_gate_pkg() { # mk_gate_pkg <目录> [要让哪个桩失败]
   printf 'family=f\nthis=zh\nreference=zh\ndefault=zh\nlanguages=zh\n' > "$d/I18N"
   printf '# 规则甲\n' > "$d/rules/a.md"
   local n
-  for n in gate-lint selftest shell-lint doc-lint naming-lint show-me-test check manifest i18n-sync version-discipline changelog-lint; do
+  for n in gate-lint selftest shell-lint doc-lint rules-lint naming-lint show-me-test check manifest i18n-sync version-discipline changelog-lint; do
     if [[ "$n" == "$failing" ]]; then
       printf '#!/usr/bin/env bash\necho "  桩 %s 判红"\nexit 1\n' "$n" > "$d/scripts/$n.sh"
     else
@@ -622,12 +640,12 @@ mk_gate_pkg() { # mk_gate_pkg <目录> [要让哪个桩失败]
 # —— 这几个 want 钉住的是「阶段没被人悄悄从 gate.sh 里删掉」
 r="$tmpd/gate-green"; mk_gate_pkg "$r"
 run_scripted "gate/全绿则退出码 0" 0 \
-  "已实现的门禁阶段全部通过" 门禁自检 门禁判别力 "shell 纪律" 文档铁律 命名纪律 "Show me test" \
+  "已实现的门禁阶段全部通过" 门禁自检 门禁判别力 "shell 纪律" 文档铁律 规则纪律 命名纪律 "Show me test" \
   规则清单 各语言同步 版本纪律 "CHANGELOG 连续" \
   -- bash "$r/scripts/gate.sh" "$r"
 
 # 任一阶段红 ⇒ 整道门禁必须红。这是判决点，缺了它前面所有检查都白做。
-for st in doc-lint naming-lint selftest gate-lint shell-lint show-me-test version-discipline changelog-lint manifest; do
+for st in doc-lint rules-lint naming-lint selftest gate-lint shell-lint show-me-test version-discipline changelog-lint manifest; do
   r="$tmpd/gate-red-$st"; mk_gate_pkg "$r" "$st"
   run_scripted "gate/$st 红则门禁红" 1 门禁未通过 -- bash "$r/scripts/gate.sh" "$r"
 done
