@@ -4,7 +4,7 @@
 # 为什么（rules/command-safety.md「`pkill -f` / `killall` 一律禁用」那一节）：
 #   模式串会命中发出这条命令的 shell 自己的命令行：拿它杀进程会连自己一起杀，拿它当等待条件的循环永远不退出，
 #   而且不报错，外面看到的只是「还在等」。scripts/shell-lint.sh 的 S2、S3 只扫脚本文件，会话里手敲的命令它看不见，
-#   规则里的一句提醒又拦不住手敲的命令（singlefs 2026-09-17、2026-09-19 两次实测：子 agent 拿 pgrep -f 当等待条件，
+#   规则里的一句提醒又拦不住手敲的命令（使用者项目两次实测：子 agent 拿 pgrep -f 当等待条件，
 #   在后台空转到调度的一方查进度才发现）。所以在执行之前拒绝。
 #
 # 判据在哪：scripts/lib.sh 的 PATTERN_KILL_RE、PATTERN_PGREP_RE，与 shell-lint 的 S2、S3 是同一份；

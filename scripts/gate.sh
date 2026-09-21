@@ -115,12 +115,28 @@ START_TREE="$(worktree_fingerprint "$ROOT")"
 
 # 这一轮的 diff 基准算一次，导给每个阶段（含项目本地阶段）。
 # 此前只有 show-me-test 自己算，项目本地阶段各按各的口径取基准：同一轮里两个阶段判的不是同一批改动，
-# 而它们的注释都写着「与 Show me test 同一套口径」（审计实测于 singlefs 的 61 号阶段）。
+# 而它们的注释都写着「与 Show me test 同一套口径」（审计实测于使用者项目的一个本地阶段）。
 # 与 GATE_BASE 分成两个名字：GATE_BASE 的含义是「人指定了窗口」，文末 gate-ok 那一条要靠它区分。
 # 不写成 `export X="$(…)"`：export 是内建命令，它会把命令替换的退出码吞掉，
 # GATE_BASE 写错时 diff_base 的拒绝就传不出来（command-safety.md 里「子 shell 赋值」的同族）。
 GATE_DIFF_BASE="$(diff_base "$ROOT")"
 export GATE_DIFF_BASE
+
+# ⚠️ **中途退出要说出来。** 门禁在半路死掉（脚本写坏、函数先用后定、某个阶段把 shell 带走）时，
+# 后面的阶段一个都不跑，而汇总行也不打印——外面看到的与「跑过了」长得一模一样，
+# 只在 stderr 留一句话（rules/show-me-test.md：门禁不许假装通过）。
+# 实测：0.0.55 的 gate.sh 里一处函数先用后定，让装了 .claude/agents/ 的项目整道门禁在第 253 行断掉，
+# 只跑了 121 项、没有汇总行、退出码却不是 0 也没人看——是下游的会话自己发现的。
+GATE_SUMMARY_PRINTED=0
+gate_exit_guard() {
+  local rc=$?
+  (( GATE_SUMMARY_PRINTED )) && return
+  printf '  ✗ 门禁没跑完就退出了（退出码 %s），一行汇总都没打印\n' "$rc" >&2
+  printf '     → 怎么办：上面最后打印的那个阶段就是断点，从那里往下看。\n' >&2
+  printf '               中途退出时「没跑」和「跑过了」在输出里长得一样，所以这一条必须自己说出来。\n' >&2
+  exit "$(( rc == 0 ? 1 : rc ))"
+}
+trap gate_exit_guard EXIT
 
 STAGES=(); RESULTS=(); NOT_RUN=()
 record() { STAGES+=("$1"); RESULTS+=("$2"); }
@@ -130,6 +146,20 @@ run_stage() { # run_stage <名称> <命令...>
   head1 "$name"
   # GATE_IN_STAGE：告诉子脚本标题已经打过了，别再打同名的一遍
   if GATE_IN_STAGE=1 "$@"; then record "$name" PASS; else record "$name" FAIL; fi
+}
+
+# 退出码 77 = 这一轮无对象可判，记「本次未跑」，既不算通过也不算失败
+# （rules/show-me-test.md：exit 0 的跳过在汇总里与「判过了」一模一样）。
+run_stage_may_skip() { # run_stage_may_skip <名称> <无对象时怎么说> <命令...>
+  local name="$1" nothing="$2"; shift 2
+  head1 "$name"
+  local rc=0
+  GATE_IN_STAGE=1 "$@" || rc=$?
+  case "$rc" in
+    0)  record "$name" PASS ;;
+    77) NOT_RUN+=("$name        $nothing") ;;
+    *)  record "$name" FAIL ;;
+  esac
 }
 
 # ── 阶段 0：规范版本一致性 ───────────────────────────────
@@ -207,7 +237,7 @@ fi
 
 # ── 阶段 0b：门禁自身（每条拒绝都要给出路）──────────────
 # 项目本地阶段（.claude/gate.d/）也交给两个 lint：它们和共享阶段一样会拒绝提交者，
-# 而此前一条都没被查过——一喂就是 7 条没有出路的拒绝（singlefs 实测）。
+# 而此前一条都没被查过——一喂就是 7 条没有出路的拒绝（使用者项目实测）。
 LINT_EXTRA=(); [[ -d "$ROOT/.claude/gate.d" ]] && LINT_EXTRA=("$ROOT/.claude/gate.d")
 run_stage "门禁自检" bash "$SCRIPTS/gate-lint.sh" "${LINT_EXTRA[@]}"
 # 每条拒绝有没有出路是一回事，检查本身红不红得起来是另一回事。
@@ -216,6 +246,33 @@ run_stage "门禁判别力" bash "$SCRIPTS/selftest.sh"
 # command-safety.md 里可机检的那五条：pkill -f / killall、pgrep -f、子 shell 赋值往外带值、git 的撤销命令、无守卫的 rm -rf。
 # 做成检查的起因：一个测试装置违反了其中一条整整一轮，而那条纪律当时只是文档里的提醒句。
 run_stage "shell 纪律" bash "$SCRIPTS/shell-lint.sh" "${LINT_EXTRA[@]}"
+# 暂存区里的执行位：手工只暂存「这一轮的」时写死 100644，可执行位就丢在历史里，
+# 而工作区那份还是可执行的——在工作区上跑的门禁一声不吭。
+MODE_DIRS=("$SCRIPTS"); [[ -d "$ROOT/.claude/gate.d" ]] && MODE_DIRS+=("$ROOT/.claude/gate.d")
+[[ -d "$ROOT/.claude/scripts" ]] && MODE_DIRS+=("$ROOT/.claude/scripts")
+run_stage_may_skip "脚本执行位" "本次无对象可判：不在 git 仓库里，暂存区的模式无从判起" \
+  bash "$SCRIPTS/script-modes.sh" "${MODE_DIRS[@]}"
+# 项目本地阶段自己会不会红：上面那个「门禁判别力」只覆盖共享脚本，
+# 项目在 .claude/gate.d/ 里接的那一批没人验，而恒绿的检查与真在跑的检查长得一模一样。
+run_stage_may_skip "本地阶段判别力" "本次无对象可判：$ROOT/.claude/gate.d 下没有本地阶段" \
+  bash "$SCRIPTS/stage-selftest.sh" "$ROOT/.claude/gate.d"
+# 文档里的相对链接与「第 N 节」指向：两类失效都是静默的，点开是空的那种还算好，
+# 恰好指到另一个同名文件时连「打不开」这个信号都没有。
+run_stage "链接指向" bash -c 'cd "$1" && python3 "$2"' _ "$ROOT" "$SCRIPTS/link-targets.py"
+# 变更史的「其 N」是先到先得的公共编号：并发会话各写各的，取号前不查最大号就会撞，
+# 而别处拿「日期（其 N）」当锚点引用时，一个日期下两条同号条目指向哪一条无从判断。
+run_stage_may_skip "历史条目编号" "本次无对象可判：$ROOT/.claude/kb 下没有变更史文件" \
+  bash "$SCRIPTS/history-ordinal.sh" "$ROOT"
+# 工具层的闸：规则里的提醒拦不住手敲的命令，钩子能；而钩子被删掉或改坏时那道闸静默消失。
+run_stage_may_skip "工具层的闸" "本次无对象可判：没有 .claude/settings.json 或一个钩子都没有" \
+  bash "$SCRIPTS/hooks-registered.sh" "$ROOT"
+# 分段计时不许在转发输出的循环里打时间戳（rules/command-safety.md）：转打会阻塞，
+# 子进程写管道不被挡，行到达的时间戳里就混进前面几行的打印积压，看着像调度抖动。
+run_stage_may_skip "转发计时" "本次无对象可判：仓里没有 .rs / .py" \
+  bash -c 'python3 "$1" --check "$2"' _ "$SCRIPTS/relay-timing-lint.py" "$ROOT"
+# 编号引用散在源码注释与记录里，doc-lint 只管 markdown，够不着那些地方。
+run_stage_may_skip "编号与简称" "本次无对象可判：$ROOT/.claude/kb 不在，或一个 .rs / .md 都没扫到" \
+  bash "$SCRIPTS/number-name-sync.sh" "$ROOT"
 
 # ── 阶段 1：文档铁律 ────────────────────────────────────
 run_stage "文档铁律" bash "$SCRIPTS/doc-lint.sh" "$ROOT"
@@ -247,8 +304,13 @@ run_rules_lint() { # run_rules_lint <阶段名> <规则目录> <额外要扫的�
 if is_pkg_itself "$ROOT"; then
   run_rules_lint "规则纪律" "$SCRIPTS/../rules" CLAUDE.md "agents/*.md" "skills/*/SKILL.md"
 fi
-if [[ -d "$ROOT/.claude/rules" ]]; then
-  run_rules_lint "规则纪律（项目本地）" "$ROOT/.claude/rules" CLAUDE.md \
+# 规则目录取项目有的那个：只有 .claude/agents/ 没有 .claude/rules/ 的项目，
+# agent 定义也要被扫到——它和规则一样是照着执行的（rules/rules-discipline.md）。
+PROJECT_RULES_DIR=""
+[[ -d "$ROOT/.claude/rules" ]] && PROJECT_RULES_DIR="$ROOT/.claude/rules"
+[[ -z "$PROJECT_RULES_DIR" && -d "$ROOT/.claude/agents" ]] && PROJECT_RULES_DIR="$ROOT/.claude/agents"
+if [[ -n "$PROJECT_RULES_DIR" ]]; then
+  run_rules_lint "规则纪律（项目本地）" "$PROJECT_RULES_DIR" CLAUDE.md \
     ".claude/agents/*.md" ".claude/agent-common.md" ".claude/main-agent.md" ".claude/skills/*/SKILL.md"
 fi
 
@@ -316,7 +378,7 @@ fi
 # 键 → 缺的是什么。项目本地阶段在头部写 `# gate-covers: <键>`（一行一个，字面照抄键），
 # 它这一轮跑了而且通过，汇总里这一项才换成「由哪个阶段覆盖」；跑红了、退 77 了，都照旧列在未实现里。
 # 覆盖只说明「有一个阶段在做这件事，这一轮过了」，它做到多大范围，看那个阶段自己的名字与说明。
-# 清单写死的时候，singlefs 每次门禁都跑崩溃点重放与真设备阶段，汇总却照样打印「缺被测对象」。
+# 清单写死的时候，使用者项目每次门禁都跑崩溃点重放与真设备阶段，汇总却照样打印「缺被测对象」。
 # 「最终判据」不点名任何装置：准入标准由项目定，项目没接上、或这一轮没跑过，它就一直列在这里。
 NOT_IMPL_KEYS=("模型对拍" "崩溃点重放" "最终判据" "命名纪律（shell）")
 declare -A NOT_IMPL_WHAT=(
@@ -394,7 +456,7 @@ fi
 # ── 跑的过程中工作区变没变 ───────────────────────────
 # 门禁的结论只对它读到的那一版成立。跑的过程中有人改文件（自己还在改，或别的会话在改），
 # 前面的阶段读旧版、后面的阶段读新版，汇总出来的红绿不对应任何一版，而输出里看不出来。
-# 实测（singlefs，2026-09-16）：一次是边改 kb 边跑全量门禁，只好停掉重跑；另一次跑到一半别的会话改好了一行，
+# 实测于使用者项目：一次是边改 kb 边跑全量门禁，只好停掉重跑；另一次跑到一半别的会话改好了一行，
 # 文档铁律红在一个收尾时已经不存在的状态上。
 END_TREE="$(worktree_fingerprint "$ROOT")"
 if [[ -z "$START_TREE" || -z "$END_TREE" ]]; then
@@ -412,6 +474,7 @@ else
 fi
 
 # ── 汇总 ────────────────────────────────────────────────
+GATE_SUMMARY_PRINTED=1
 head1 "门禁结果"
 failed=0
 for i in "${!STAGES[@]}"; do
@@ -458,7 +521,7 @@ if [[ -n "$START_HEAD" && -z "${GATE_BASE:-}" ]]; then
     warn "跑的过程中 HEAD 变了（${START_HEAD:0:7} → ${now_head:0:7}）：gate-ok 只记到开跑时那个提交"
     howto "那之后的提交没在这一轮验过，要它们过闸就再跑一遍门禁。"
   fi
-  git -C "$ROOT" update-ref refs/singlefs/gate-ok "$START_HEAD" 2>/dev/null || true
+  git -C "$ROOT" update-ref refs/sop/gate-ok "$START_HEAD" 2>/dev/null || true
 fi
 ok "已实现的门禁阶段全部通过（共 ${#STAGES[@]} 个）"
 warn "Gate proves evidence requirements, not semantic correctness."

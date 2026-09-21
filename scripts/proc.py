@@ -2,7 +2,7 @@
 """找进程、按 pid 等进程、按 pid 停进程：替掉 `pgrep -f` / `pkill -f` / `killall`。
 
 为什么：`pgrep -f` / `pkill -f` 拿模式串去比整条命令行，而发出这条命令的 shell 自己的命令行里就带着那个模式串——
-拿它当等待条件的循环永远不退出，拿它杀进程会连自己一起杀（singlefs 2026-09-17、2026-09-19 两次实测；
+拿它当等待条件的循环永远不退出，拿它杀进程会连自己一起杀（使用者项目两次实测；
 rules/command-safety.md 禁用这几种写法，脚本里由 scripts/shell-lint.sh 的 S2、S3 判，会话里手敲的命令由
 scripts/claude-hooks/pattern-process-guard.sh 在执行前拒绝）。这里三件事都按 pid 办：
 
@@ -136,7 +136,7 @@ def selftest():
         if wait([sleepers[0].pid], 2, 0.05) != []:
             failures.append("停掉之后 wait 应当立刻返回")
         # 拒绝停祖先：在一次性的 bash 里让 proc.py 去停这个 bash（它的父进程）。拒绝时 bash 接着打出退出码；
-        # 破坏开关打开时被停掉的只是这个一次性的 bash，不是跑自检的那一支（singlefs 2026-09-19 实测：拿真的 getppid 试，把调用它的 shell 一起停了）
+        # 破坏开关打开时被停掉的只是这个一次性的 bash，不是跑自检的那一支（使用者项目实测：拿真的 getppid 试，把调用它的 shell 一起停了）
         refusal = subprocess.run(["bash", "-c", f'"{sys.executable}" "{os.path.abspath(__file__)}" stop $$ --grace 1; echo "exit=$?"'],
                                  capture_output=True, text=True, timeout=30)
         if "exit=2" not in refusal.stdout:

@@ -205,7 +205,7 @@ run_scripted "doc-lint/语言被覆盖时要自报" 0 "语言由 DOC_LINT_LANG �
 
 # 扫描范围不许随包所在的路径变。副本排除项此前写成 */singlefs-ai-sop/* 加「ROOT 在包里就不排除」：
 # 同一个样本 projok 在 zh 仓里「检查 1」、在项目副本（路径里有 /singlefs-ai-sop/）里「检查 2」——
-# 0.0.50 同步到 singlefs 时那边的 selftest 因此红了一例。这里把脚本拷到一个路径里带 /singlefs-ai-sop/ 的地方再跑同一个样本。
+# 0.0.50 同步到使用者项目时那边的 selftest 因此红了一例。这里把脚本拷到一个路径里带 /singlefs-ai-sop/ 的地方再跑同一个样本。
 r="$tmpd/elsewhere/singlefs-ai-sop"; mkdir -p "$r/scripts/fixtures/doc-lint"
 cp "$SCRIPTS/lib.sh" "$SCRIPTS/doc-lint.sh" "$r/scripts/"; cp "$SCRIPTS/../I18N" "$r/I18N"
 cp -r "$FX/doc-lint/projok" "$r/scripts/fixtures/doc-lint/"
@@ -384,7 +384,7 @@ run_scripted "show-me-test/未跟踪文件里的内联测试算数" 0 伴随测�
 # 分两次提交躲开 diff 窗口：第一次改代码不带测试，第二次只改文档。
 # 基准退到已推送点之后，两个 commit 都在窗口里，攒多少次都躲不掉（对抗测试实测）。
 r="$tmpd/smt-twocommits"; mk_repo "$r"
-git -C "$r" update-ref refs/singlefs/gate-ok HEAD     # 门禁在基线那里通过过
+git -C "$r" update-ref refs/sop/gate-ok HEAD     # 门禁在基线那里通过过
 printf 'pub fn g() -> u32 { 2 }\n' >> "$r/crates/foo/src/lib.rs"
 git -C "$r" add -A
 git -C "$r" -c user.email=selftest@local -c user.name=selftest commit -qm "改代码"
@@ -494,6 +494,91 @@ run_scripted "selftest/样本里的日期也要可能" 0 "不可能的 0 个" --
 # 目录嵌在一个更晚才开始的仓里时（SOP 副本放在项目的 .claude/ 下就是这种形状），拿外层仓的第一个提交当下界，
 # 真日期会被判成不可能。这里造一个 2026-09-15 才开始的外层仓，里面的子目录写着 2026-09-01：
 # 按外层仓算早出了 7 天的宽限，按这个包的起点算在宽限之内。
+# ── 编号与简称：源码注释与记录里引的简称与登记位不符 ──────
+r="$tmpd/number-name"; mkdir -p "$r/.claude/kb/decisions" "$r/src"
+printf '## D1 数据可移动性 —— 已定\n\n正文。\n' > "$r/.claude/kb/decisions/01-a.md"
+printf '// 照 D1（数据可移动性）办。\n' > "$r/src/a.rs"
+run_scripted "number-name-sync/简称与登记位一致时通过" 0 "编号与简称一致" -- \
+  bash "$SCRIPTS/number-name-sync.sh" "$r"
+printf '// 照 D1（旧名字）办。\n' > "$r/src/a.rs"
+run_scripted "number-name-sync/简称与登记位不符判红" 1 "登记处是「数据可移动性」" -- \
+  bash "$SCRIPTS/number-name-sync.sh" "$r"
+mkdir -p "$tmpd/number-name-none"
+run_scripted "number-name-sync/没有 kb 退 77" 77 "" -- \
+  bash "$SCRIPTS/number-name-sync.sh" "$tmpd/number-name-none"
+
+# ── 转发计时：它自己的红绿样本还判得对吗 ──────────────
+run_scripted "relay-timing-lint/自证 16 个样本判得对" 0 "自证：16 个红绿样本判得对" -- \
+  python3 "$SCRIPTS/relay-timing-lint.py" --selftest
+
+# ── 工具层的闸：钩子注册着没有、自检过不过 ──────────────
+r="$tmpd/hooks-reg"; mkdir -p "$r/.claude/hooks"
+printf '#!/usr/bin/env bash\n[[ "${1:-}" == --selftest ]] && { echo "  自检：查了 2 种情形"; exit 0; }\nexit 0\n' > "$r/.claude/hooks/guard.sh"
+chmod +x "$r/.claude/hooks/guard.sh"
+# 包自带的钩子（pattern-process-guard）也要注册，规则在 rules/command-safety.md
+printf '{"hooks":{"PreToolUse":[{"matcher":"Write","hooks":[{"type":"command","command":"bash guard.sh"},{"type":"command","command":"bash pattern-process-guard.sh"}]}]}}\n' > "$r/.claude/settings.json"
+run_scripted "hooks-registered/注册着且自检过就通过" 0 "个钩子都注册着" -- \
+  bash "$SCRIPTS/hooks-registered.sh" "$r"
+printf '{"hooks":{"PreToolUse":[]}}\n' > "$r/.claude/settings.json"
+run_scripted "hooks-registered/一条都没注册时判红" 1 "一条钩子都没注册" -- \
+  bash "$SCRIPTS/hooks-registered.sh" "$r"
+printf '{"hooks":{"PreToolUse":[{"matcher":"Write","hooks":[{"type":"command","command":"bash other.sh"}]}]}}\n' > "$r/.claude/settings.json"
+run_scripted "hooks-registered/钩子没被注册到时判红" 1 "没在 settings.json 里注册" -- \
+  bash "$SCRIPTS/hooks-registered.sh" "$r"
+# 自检会红的钩子：注册着也不算数——自检就是这道闸「会拒绝」的证据
+printf '#!/usr/bin/env bash\n[[ "${1:-}" == --selftest ]] && { echo "  自检：有一种情形没拦住"; exit 1; }\nexit 0\n' > "$r/.claude/hooks/guard.sh"
+printf '{"hooks":{"PreToolUse":[{"matcher":"Write","hooks":[{"type":"command","command":"bash guard.sh"},{"type":"command","command":"bash pattern-process-guard.sh"}]}]}}\n' > "$r/.claude/settings.json"
+run_scripted "hooks-registered/钩子自检没过时判红" 1 "个钩子的自检没过" -- \
+  bash "$SCRIPTS/hooks-registered.sh" "$r"
+run_scripted "hooks-registered/没有 settings.json 退 77" 77 "" -- \
+  bash "$SCRIPTS/hooks-registered.sh" "$tmpd/hooks-none"
+
+# ── 历史条目编号：本次新增的条目撞了已有的号 ──────────────
+r="$tmpd/hist-ordinal"; mkdir -p "$r/.claude/kb"
+git -C "$r" init -q
+printf '# 变更史\n\n### 2026-09-17（其一）：建档\n- 起点。\n' > "$r/.claude/kb/decisions-history.md"
+git -C "$r" add -A; git -C "$r" -c user.name=t -c user.email=t@t commit -qm init
+run_scripted "history-ordinal/没有新增条目时通过" 0 "没有撞号" -- \
+  bash "$SCRIPTS/history-ordinal.sh" "$r"
+printf '\n### 2026-09-17（其一）：又一条\n- 撞号了。\n' >> "$r/.claude/kb/decisions-history.md"
+run_scripted "history-ordinal/新增的条目撞号判红" 1 "处撞号" -- \
+  bash "$SCRIPTS/history-ordinal.sh" "$r"
+run_scripted "history-ordinal/没有变更史文件退 77" 77 "" -- \
+  bash "$SCRIPTS/history-ordinal.sh" "$tmpd"
+
+# ── 本地阶段判别力：项目在 .claude/gate.d/ 里接的阶段，自己会不会红 ──
+r="$tmpd/stage-selftest"; mkdir -p "$r/.claude/gate.d/fixtures/10-demo.sh/red" "$r/.claude/gate.d/fixtures/10-demo.sh/green"
+# 样本阶段里不写 ✗ / ✓：gate-lint 扫的是本文件的字面，写了就成了「一处没有出路的拒绝」
+printf '#!/usr/bin/env bash\n[[ -f "${1:-.}/bad.txt" ]] && { echo "  拒绝：有 bad.txt"; exit 1; }\necho "  通过：没有 bad.txt"\n' > "$r/.claude/gate.d/10-demo.sh"
+printf 'exit=1\nwant=有 bad.txt\n' > "$r/.claude/gate.d/fixtures/10-demo.sh/red/expect"
+: > "$r/.claude/gate.d/fixtures/10-demo.sh/red/bad.txt"
+printf 'exit=0\n' > "$r/.claude/gate.d/fixtures/10-demo.sh/green/expect"
+run_scripted "stage-selftest/样本判得对就通过" 0 "有样本的阶段判得都对" -- \
+  bash "$SCRIPTS/stage-selftest.sh" "$r/.claude/gate.d"
+# 阶段坏成恒绿时必须红：把那个阶段改成永远 exit 0，红样本当场判错
+printf '#!/usr/bin/env bash\necho "  通过：没有 bad.txt"\n' > "$r/.claude/gate.d/10-demo.sh"
+run_scripted "stage-selftest/阶段变恒绿时判红" 1 "期望退出 1，实测 0" -- \
+  bash "$SCRIPTS/stage-selftest.sh" "$r/.claude/gate.d"
+# 没有本地阶段目录时退 77（本次无对象可判），不许报绿
+run_scripted "stage-selftest/没有本地阶段退 77" 77 "" -- \
+  bash "$SCRIPTS/stage-selftest.sh" "$tmpd/stage-selftest-none"
+
+# ── 脚本执行位：暂存区里丢了可执行位，工作区那份还是可执行的 ──────
+# 手工暂存时写死 100644 就是这个形态，而在工作区上跑的门禁一声不吭。
+r="$tmpd/script-modes"; mkdir -p "$r/scripts"
+git -C "$r" init -q
+printf '#!/usr/bin/env bash\necho hi\n' > "$r/scripts/tool.sh"; chmod +x "$r/scripts/tool.sh"
+git -C "$r" add -A; git -C "$r" -c user.name=t -c user.email=t@t commit -qm init
+run_scripted "script-modes/模式与工作区一致时通过" 0 "暂存区里的模式与工作区一致" -- \
+  bash "$SCRIPTS/script-modes.sh" "$r/scripts"
+git -C "$r" update-index --chmod=-x scripts/tool.sh
+run_scripted "script-modes/暂存区里丢了执行位判红" 1 ".sh 要可执行" -- \
+  bash "$SCRIPTS/script-modes.sh" "$r/scripts"
+# 射程写窄到一个脚本都没有时，不许报绿（rules/show-me-test.md：扫到 0 项也不是通过）
+mkdir -p "$r/empty"
+run_scripted "script-modes/扫到 0 个脚本判红" 1 "一个已跟踪的 .sh / .py 都没查到" -- \
+  bash "$SCRIPTS/script-modes.sh" "$r/empty"
+
 r="$tmpd/date-walkup"; mkdir -p "$r/outer/sub/kb"
 git -C "$r/outer" init -q
 printf '起点\n' > "$r/outer/README.md"; git -C "$r/outer" add -A
@@ -504,7 +589,7 @@ run_scripted "doc-lint/日期下界不往上找外层仓" 0 "文档铁律检查�
   env DOC_LINT_LANG=zh bash "$SCRIPTS/doc-lint.sh" "$r/outer/sub"
 
 # 下界从第一个提交往前宽限 7 天：git init 之前做的工作会带着当时的日期进第一个提交
-# （singlefs 的初版提交里就有前一天的历史条目）。两例钉住宽限的两边：之内放行，之外照样判红。
+# （使用者项目的初版提交里就有前一天的历史条目）。两例钉住宽限的两边：之内放行，之外照样判红。
 r="$tmpd/date-grace"
 for side in within beyond; do
   mkdir -p "$r/$side/kb"; git -C "$r/$side" init -q
@@ -627,13 +712,18 @@ mk_gate_pkg() { # mk_gate_pkg <目录> [要让哪个桩失败]
   printf 'family=f\nthis=zh\nreference=zh\ndefault=zh\nlanguages=zh\n' > "$d/I18N"
   printf '# 规则甲\n' > "$d/rules/a.md"
   local n
-  for n in gate-lint selftest shell-lint doc-lint rules-lint naming-lint show-me-test check manifest i18n-sync version-discipline changelog-lint; do
+  for n in gate-lint selftest shell-lint doc-lint rules-lint naming-lint show-me-test check manifest i18n-sync version-discipline changelog-lint script-modes stage-selftest history-ordinal hooks-registered number-name-sync; do
     if [[ "$n" == "$failing" ]]; then
       printf '#!/usr/bin/env bash\necho "  桩 %s 判红"\nexit 1\n' "$n" > "$d/scripts/$n.sh"
     else
       printf '#!/usr/bin/env bash\nexit 0\n' > "$d/scripts/$n.sh"
     fi
   done
+  # 桩脚本也要可执行：门禁的「脚本执行位」阶段判暂存区里的模式，printf 写出来的是 644。
+  chmod +x "$d/scripts"/*.sh
+  # python 写的共享脚本也要有桩：gate.sh 直接 python3 它，缺了就是退出码 2。
+  printf '#!/usr/bin/env python3\nraise SystemExit(0)\n' > "$d/scripts/link-targets.py"
+  printf '#!/usr/bin/env python3\nraise SystemExit(0)\n' > "$d/scripts/relay-timing-lint.py"
 }
 
 # 全绿：退出码 0，且每个阶段名都要出现在汇总里
@@ -766,6 +856,16 @@ r="$tmpd/gate-symlink"; mk_gate_pkg "$r/pkg"; ln -s "$r/pkg" "$r/link"
 run_scripted "gate/经符号链接也认得出 SOP 仓自身" 0 "本仓即 SOP 本身" -- \
   bash "$r/link/scripts/gate.sh" "$r/pkg"
 
+# ── 门禁中途退出时要自己喊出来 ──────────────────────
+# 实测：0.0.55 里一处函数先用后定，让装了 .claude/agents/ 的项目整道门禁断在半路，
+# 只在 stderr 留一句 command not found，没有汇总行——外面看不出「没跑」和「跑过了」的区别。
+r="$tmpd/gate-halt"; mk_gate_pkg "$r/pkg"; mk_staged_project "$r/proj"
+# 在第一个阶段之后插一处必然失败的调用，模拟脚本半路死掉
+sed -i 's|^head1 "规范版本"$|head1 "规范版本"\nthis_function_does_not_exist|' "$r/pkg/scripts/gate.sh"
+# 退出码原样保留（bash 的「命令未找到」是 127）：断点的性质比「统一成 1」有用
+run_scripted "gate/中途退出时说出来并返回非 0" 127 "门禁没跑完就退出了" -- \
+  bash "$r/pkg/scripts/gate.sh" "$r/proj"
+
 # gate-ok 记的是**开跑时**的 HEAD。跑完再解析一次的话，另一个会话在这一轮跑的过程中提交，
 # 那个从没验过的提交会被一并盖章，此后永远落在 diff 窗口外（审计实测）。
 r="$tmpd/gate-okref"; mk_gate_pkg "$r/pkg"; mk_staged_project "$r/proj"
@@ -778,7 +878,7 @@ okref_check=(bash -c '
   start="$(git -C "$2" rev-parse HEAD)"
   bash "$1/scripts/gate.sh" "$2" >/dev/null 2>&1
   [[ "$(git -C "$2" rev-parse HEAD)" != "$start" ]] || { echo "场景没摆成：跑的过程中 HEAD 没变"; exit 1; }
-  if [[ "$(git -C "$2" rev-parse refs/singlefs/gate-ok)" == "$start" ]]; then echo "gate-ok 指向开跑时那个提交"
+  if [[ "$(git -C "$2" rev-parse refs/sop/gate-ok)" == "$start" ]]; then echo "gate-ok 指向开跑时那个提交"
   else echo "gate-ok 指向跑完时那个提交"; exit 1; fi' okref_check)
 run_scripted "gate/gate-ok 记的是开跑时的 HEAD" 0 "gate-ok 指向开跑时那个提交" -- "${okref_check[@]}" "$r/pkg" "$r/proj"
 
@@ -1311,7 +1411,7 @@ fi
 
 # 接管清单：项目自己改过的那几份不该算「落后」——kb 骨架本来就是给项目改的。
 # 少了它，任何一个动过自己 kb 的项目，装完第一次之后版本戳就再也刷不动
-# （实测于 singlefs：12 份「落后」全是项目自己改的，门禁阶段 0 因此长红）。
+# （实测于使用者项目：12 份「落后」全是项目自己改的，门禁阶段 0 因此长红）。
 mkdir -p "$r2/.claude"
 printf '.claude/kb/decisions.md  # 决策正文归项目，模板只给了格式\n' > "$r2/.claude/install-owned"
 run_scripted "install/接管的那份不算落后" 0 "按 .claude/install-owned 不比对" -- \

@@ -31,6 +31,7 @@
 #      变量为空时它从根目录往下删。写成 `"${VAR:?}/..."` 就拦住了。
 #
 #   S6 不带参数的 `wait`
+#   S7 pipefail 下以提前退出的 `grep -q` 收尾的管道
 #      它的退出码恒为 0：并行跑的检测项红了几个，父进程一个字都不知道
 #      （实测 2026-09-19：三个后台作业里第二个 exit 7，光秃的 wait 报 0；
 #      后台体里写 `|| bad=1` 也一样是 0，因为后台是子 shell，就是 S1 那条）。
@@ -93,6 +94,18 @@ S6_RE="$CMD_POS"'wait[[:space:]]*;?[[:space:]]*(#.*)?$'
 # 豁免标记要带理由：只写 `# shell-lint:exit-collected` 而不说退出码去哪了，等于没说。
 S6_MARK='shell-lint:exit-collected'
 S6_MARK_WITH_REASON="$S6_MARK"'[[:space:]]+[^[:space:]]'
+
+# S7：设了 pipefail 的脚本里，`… | grep -q` 这种以**提前退出的 grep** 收尾的管道。
+# `grep -q` 一命中就退出，前段还没写完就吃 SIGPIPE，管道整体返回 141，
+# 而 `if` 把 141 读成「没命中」——**明明命中，判成没有**。
+# 前段是 `git show` / `git diff` 这种输出可以很大的命令时尤其容易撞上：
+# 机器越忙越容易，也就是说**门禁越在真干活的时候越容易假红**。
+# 复现：`set -uo pipefail; yes X | head -200000 | grep -q X` 稳定返回 141。
+# 原是使用者项目的一个本地阶段，判据通用，收归这里。
+# 两种不判：脚本没设 pipefail（管道退出码本来就只看最后一段）；
+# `grep -q … <<<"$var"` 这种没有前段的形态。
+S7_RE='\|[[:space:]]*grep[[:space:]]+(-[A-Za-z]*q[A-Za-z]*)([[:space:]]|$)'
+S7_PIPEFAIL_RE='^[[:space:]]*set[[:space:]].*pipefail'
 
 # S2 / S3 的判据（PATTERN_KILL_RE、PATTERN_PGREP_RE）与命令位置 CMD_POS 都定义在 lib.sh 一处：
 # S2 / S3 与会话钩子 claude-hooks/pattern-process-guard.sh 共用，CMD_POS 与 gate-lint 共用。
@@ -186,6 +199,21 @@ while IFS= read -r f; do
     done <<< "$hits"
   fi
 
+  # ── S7 pipefail 下以提前退出的 grep -q 收尾的管道 ───────
+  if grep -qE "$S7_PIPEFAIL_RE" "$f"; then
+    if hits="$(grep -nE "$S7_RE" "$f" | grep -vE '^[0-9]+:[[:space:]]*#' || true)"; [[ -n "$hits" ]]; then
+      while IFS= read -r h; do
+        bad "$rel:${h%%:*}  pipefail 下的管道以 grep -q 收尾 —— 命中会被读成没命中"
+        say "        $(printf '%s' "${h#*:}" | cut -c1-80)"
+        howto "grep -q 一命中就退出，前段吃 SIGPIPE，管道整体返回 141，而 if 把它读成「没命中」。" \
+              "把前段的输出先落到变量，再对变量判：" \
+              "out=\$(前段 || true); if grep -q '模式' <<<\"\$out\"; then …" \
+              "前段是 git show / git diff 时尤其要改：输出越大越容易吃 SIGPIPE（rules/command-safety.md）。"
+        fails=$((fails+1))
+      done <<< "$hits"
+    fi
+  fi
+
   # ── S1 子 shell 里的赋值传不回父进程 ────────────────────
   while IFS=$'\037' read -r ln fn var; do
     [[ -z "$ln" ]] && continue
@@ -219,7 +247,7 @@ while IFS= read -r f; do
         if (nm != "") {
           # 定义与收尾写在同一行的（`S() { printf …; }`），函数体就是这一行，不往下找收尾：
           # 往下找会拿下一个函数行首的 } 当收尾，把中间的顶层赋值全算成这个函数的
-          # （singlefs 2026-09-19 实测：研究脚本里 14 处假红，全是这个形态）。
+          # （使用者项目实测：研究脚本里 14 处假红，全是这个形态）。
           one = L[i]; sub(/^[^{]*\{/, "", one)
           if (one ~ /(^|[;&| \t])\}[ \t;]*(#.*)?$/) {
             sub(/\}[ \t;]*(#.*)?$/, "", one)

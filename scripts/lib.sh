@@ -6,10 +6,13 @@ set -euo pipefail
 
 # 字符数不许随 locale 变。C locale 下 awk 的 length() 按字节算，
 # 「24 字」当场变成 8 个汉字，而失败信息还理直气壮报「72 字」。
+# 前段的输出先落到变量再判：pipefail 下 `… | grep -q` 一命中就退出，前段吃 SIGPIPE、
+# 管道返回 141，而 `if` 把它读成「没命中」（shell-lint 的 S7 判这一条）。
+_locales="$(locale -a 2>/dev/null || true)"
 for _loc in C.UTF-8 C.utf8 en_US.UTF-8; do
-  if locale -a 2>/dev/null | grep -qix "$_loc"; then export LC_ALL="$_loc"; break; fi
+  if grep -qix "$_loc" <<<"$_locales"; then export LC_ALL="$_loc"; break; fi
 done
-unset _loc
+unset _loc _locales
 
 if [[ -t 1 ]]; then
   C_RED=$'\033[31m'; C_GRN=$'\033[32m'; C_YEL=$'\033[33m'
@@ -21,7 +24,8 @@ fi
 say()   { printf '%s\n' "$*"; }
 # awk 实现必须钉死。mawk 的 substr/length 按字节走，gawk 在 UTF-8 locale 下按字符走，
 # 同一份 kb 会得出不同判定——「本地可跑且与远端同判」当场失效（rules/show-me-test.md）。
-if ! awk --version 2>/dev/null | head -1 | grep -q GNU; then
+_awk_version="$(awk --version 2>/dev/null | head -1 || true)"
+if ! grep -q GNU <<<"$_awk_version"; then
   printf '%s  ✗%s 需要 gawk：当前 awk 不是 GNU awk\n' "${C_RED:-}" "${C_RST:-}" >&2
   printf '%s     → 怎么办：%s 装 gawk（Debian/Ubuntu: sudo apt install gawk），\n' "${C_YEL:-}" "${C_RST:-}" >&2
   printf '                或把 PATH 里的 awk 指到 gawk。判定结果不许随 awk 实现变。\n' >&2
@@ -104,7 +108,7 @@ project_start_date() { # project_start_date <目录> → YYYY-MM-DD 或空
   git -C "$dir" log --reverse --format=%ad --date=short 2>/dev/null | head -1 || true
 }
 # 下界从第一个提交往前放宽 DATE_GRACE_DAYS 天：git init 之前做的工作，会带着当时的日期进第一个提交。
-# 实测：singlefs 的第一个提交在 2026-08-26，那次提交里就有 5 条 2026-08-25 的历史条目，按第一个提交卡死全被判成不可能。
+# 实测于使用者项目：第一个提交的当天，那次提交里就有 5 条前一天的历史条目，按第一个提交卡死全被判成不可能。
 # 实测只早一天，放宽一周；宽得越多，放过的编造日期越多。2026-01-01 这种早了大半年的照样拦得住。
 DATE_GRACE_DAYS=7
 date_lower_bound() { # date_lower_bound <起点 YYYY-MM-DD 或空> → 下界或空
@@ -120,7 +124,7 @@ require_date_arithmetic() {
 }
 # 「今天」按地球上最晚的那个时区（UTC+14）算：比它还晚的日期，在哪儿都还没到。
 # 只取本机时钟的日期不行：本机时钟是 UTC、人在东京时，东京 00:00–09:00 写下的当天日期比 UTC 的今天晚一天，
-# 会被判成「晚于今天」（审核实测：singlefs 的 194 个提交里有 8 个在这个时段按东京日期写了历史条目）。
+# 会被判成「晚于今天」（审核实测于使用者项目：194 个提交里有 8 个在这个时段按东京日期写了历史条目）。
 # 用 POSIX 写法 UTC-14（符号与直觉相反，表示 UTC+14），不依赖系统装没装时区数据。
 latest_today() { TZ=UTC-14 date +%F; }
 # 在范围内时不输出、返回 1；不在范围内时打印「为什么不可能」、返回 0。
@@ -194,7 +198,7 @@ diff_base() {
             printf '%s' "$up"; return 0
           fi
           local ok
-          if ok="$(git -C "$root" rev-parse -q --verify refs/singlefs/gate-ok 2>/dev/null)" \
+          if ok="$(git -C "$root" rev-parse -q --verify refs/sop/gate-ok 2>/dev/null)" \
              && [[ -n "$ok" && "$ok" != "$(git -C "$root" rev-parse HEAD)" ]] \
              && git -C "$root" merge-base --is-ancestor "$ok" HEAD 2>/dev/null; then
             printf '%s' "$ok"; return 0

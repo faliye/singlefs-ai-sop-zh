@@ -1,0 +1,4 @@
+exit=1
+want=evil.sh:6
+want=evil.sh:10
+want=命中会被读成没命中
