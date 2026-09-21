@@ -399,7 +399,11 @@ while IFS= read -r f; do
   #       那个 `## D22 单元原子性怎么合成` 的标题不会跟着走。
   #       尾字排除是实测出来的：kb 里真有「该节点」，不排除就是假红。
   #       「本工程」「本仓」「本轮」「本机」不在其内——它们指的是项目，不是文档位置。
-  if [[ "$f" == */kb/*.md && $WORDLIST -eq 1 ]]; then
+  # 射程含规范文本（CLAUDE.md、rules/、agents/、skills/*/SKILL.md）：规则同样被单条引用、
+  # 被 grep 摘出来喂进上下文，「上一节说的是」摘出来就断（rules/rules-discipline.md 第 7 条）。
+  # 规则定义文件扫的是 $scan——反引号与「」里的举例已挖掉，列举指代词的那几张表不判。
+  if [[ ( "$f" == */kb/*.md || "$f" == */rules/*.md || "$base" == "CLAUDE.md" || "$f" == */agents/*.md || "$f" == */skills/*/SKILL.md ) && $WORDLIST -eq 1 ]]; then
+    if [[ "$f" == */kb/*.md ]]; then dockind="kb 正文"; else dockind="规范正文"; fi
     # 方位指代（见下 / 见上表 / 上面那张表）与上下文指代同一个病：检索结果里没有上下。
     # 「上一条」「下一条」**不在其内**——实测假红压倒真红：一个已登记的简称就叫
     # 「上一条时间线的残留」，还有「记下一条自评」「装得下一条记录」这类动宾。
@@ -430,13 +434,14 @@ while IFS= read -r f; do
     ctxrc=0; printf '\n' | grep -E "$ctx" > /dev/null || ctxrc=$?
     [[ $ctxrc -le 1 ]] || die "上下文指代的判据 grep 编不过（退出码 $ctxrc），这一条对哪份 kb 都没判过" \
       "是 doc-lint 的判据写坏了，不是文档的错：把 ctx 单独喂给 grep -E 看报错（非 ASCII 字符的区间 grep 不认），改好再跑。"
-    if refs="$(printf '%s\n' "$body" | grep -nE "$ctx" || true)"; [[ -n "$refs" ]]; then
+    if refs="$(printf '%s\n' "$scan" | grep -nE "$ctx" || true)"; [[ -n "$refs" ]]; then
       while IFS= read -r r; do
         rln="$(printf '%s' "$r" | sed 's/^[0-9]*://; s/\t.*//')"
         rtx="$(printf '%s' "$r" | sed 's/^[0-9]*://; s/^[0-9]*\t//')"
-        bad "$rel:$rln  kb 正文不许用上下文指代"
+        bad "$rel:$rln  $dockind不许用上下文指代"
         say "        > $(printf '%s' "$rtx" | cut -c1-80)"
-        howto "把被指代的内容直接写出来，或链到那条事实所在的文件。" \
+        howto "把被指代的内容直接写出来：小节写成它的标题，表写成它判的那件事，" \
+              "别处的事实链到它所在的文件。" \
               "检索会把这一条单独端出来，指代当场断掉——而模型不会说看不懂，它会补一个。"
         filefail=1
       done <<< "$refs"
@@ -466,11 +471,11 @@ while IFS= read -r f; do
     selfrc=0; printf '\n' | grep -E -e "$self" -e "$selfskip" > /dev/null || selfrc=$?
     [[ $selfrc -le 1 ]] || die "自指称呼的判据 grep 编不过（退出码 $selfrc），这一条对哪份 kb 都没判过" \
       "是 doc-lint 的判据写坏了，不是文档的错：把 self 与 selfskip 单独喂给 grep -E 看报错，改好再跑。"
-    if selfs="$(printf '%s\n' "$body" | grep -nE "$self" | grep -vE "$selfskip" || true)"; [[ -n "$selfs" ]]; then
+    if selfs="$(printf '%s\n' "$scan" | grep -nE "$self" | grep -vE "$selfskip" || true)"; [[ -n "$selfs" ]]; then
       while IFS= read -r r; do
         rln="$(printf '%s' "$r" | sed 's/^[0-9]*://; s/\t.*//')"
         rtx="$(printf '%s' "$r" | sed 's/^[0-9]*://; s/^[0-9]*\t//')"
-        bad "$rel:$rln  kb 正文不许用自指称呼"
+        bad "$rel:$rln  $dockind不许用自指称呼"
         say "        > $(printf '%s' "$rtx" | cut -c1-80)"
         howto "把当前位置写成名字：条目写成「D22（单元原子性怎么合成）」，" \
               "章节写成它的标题，文档写成它的文件名。" \

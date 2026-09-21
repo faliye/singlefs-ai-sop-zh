@@ -74,7 +74,7 @@
 | rules | 项目 `CLAUDE.md` 用 `@.claude/singlefs-ai-sop/rules/x.md` 引用，项目里不留副本 |
 | 项目本地规则 | 放 `.claude/rules/x.md`，项目 `CLAUDE.md` 里用 `@.claude/rules/x.md` 引用。不上游 |
 | skills | 项目 `.claude/skills/<名>/SKILL.md` 是**桩**：frontmatter + 指向共享正文 |
-| agents | 项目 `.claude/agents/<名>.md` 是**桩**，同上。约定见 `agents/INDEX.md` |
+| agents | 项目 `.claude/agents/<名>.md` 是**桩**：frontmatter + 指向共享正文。约定见 `agents/INDEX.md` |
 | scripts | 项目 `.claude/scripts/x.sh` 是**包装**：设好环境后 `exec` 共享脚本 |
 
 桩和包装里不写正文，也不写逻辑。正文只该有一处，写进桩里就多出第二处，两处早晚说不同的话。

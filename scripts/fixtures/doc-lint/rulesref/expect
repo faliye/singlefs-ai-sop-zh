@@ -1,0 +1,8 @@
+exit=1
+want=规范正文不许用上下文指代
+want=> 样本01
+want=> 样本02
+want=> 样本03
+want=> 样本04
+want=> 样本05
+want=> 样本06

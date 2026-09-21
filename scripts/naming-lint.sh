@@ -297,7 +297,6 @@ res result / resource / response
 resp response
 ret return_value
 rhs right_hand_side
-sb superblock
 sec second / section
 seq sequence / sequential
 sig signal / signature
