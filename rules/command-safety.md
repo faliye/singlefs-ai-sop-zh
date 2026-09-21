@@ -108,8 +108,8 @@ pid 没记下来的，用 `scripts/proc.py find 可执行文件名 [--argument �
 | 每项把退出码写进自己的文件，收的时候逐个读 | 读得到 |
 
 所以收束只有两种写法：逐个 `wait "$pid"` 取退出码，或者每项把退出码落进自己的文件、
-收的时候按固定顺序逐个读。singlefs 的 `.claude/gate.d/55-qemu-first-transaction.sh` 是后一种：
-三台虚机同时跑，各自把退出码写进 `$work/<模式>/vm-exit`，收的时候按模式表的顺序逐个判。
+收的时候按固定顺序逐个读。后一种的写法：并行的每一项各写一个退出码文件，
+收的时候按派活时那张表的顺序逐个判。
 
 `scripts/shell-lint.sh` 的 S6 判这一条：命令位置上不带参数的 `wait` 判红。
 退出码确实在别处收了的，在那一行写 `# shell-lint:exit-collected <怎么收的>`，理由不许省——

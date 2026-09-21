@@ -1,6 +1,6 @@
 ---
 name: crash-test
-description: 跑 singlefs 的验证套件——崩溃点重放、模型对拍。判断写路径对不对时用它。
+description: 跑本项目的验证套件——崩溃点重放、模型对拍。判断写路径对不对时用它。
 ---
 
 # 验证套件

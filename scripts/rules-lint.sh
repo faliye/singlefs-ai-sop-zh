@@ -57,7 +57,14 @@ if [[ -n "$PACKAGE_LANGUAGE" && "$PACKAGE_LANGUAGE" != zh ]]; then
   exit 77
 fi
 
-RULES_LINT_SCAN="$SCAN" RULES_LINT_ROOT="$ROOT" RULES_LINT_FILES="${RULES_LINT_FILES:-}" python3 - <<'PY'
+# 使用这套 SOP 的项目叫什么，登记在**被扫那个仓**的 I18N 的 consumers= 里——
+# 上游脚本不写死下游的名字。读 $ROOT 的 I18N 而不是本包的：项目根没有 I18N，
+# 所以项目拿 RULES_LINT_DIR 扫自己的规则时这一条无对象可判（项目写自己的名字是正常的）。
+CONSUMERS="$(sed -n 's/^consumers=//p' "$ROOT/I18N" 2>/dev/null || true)"
+PACKAGE_FAMILY="$(sed -n 's/^family=//p' "$ROOT/I18N" 2>/dev/null || true)"
+
+RULES_LINT_SCAN="$SCAN" RULES_LINT_ROOT="$ROOT" RULES_LINT_FILES="${RULES_LINT_FILES:-}" \
+  RULES_LINT_CONSUMERS="$CONSUMERS" RULES_LINT_FAMILY="$PACKAGE_FAMILY" python3 - <<'PY'
 import glob, os, re, sys
 
 scan = os.path.realpath(os.environ["RULES_LINT_SCAN"])
@@ -146,9 +153,12 @@ def paragraph_opener(first_line):
                 return word
     return None
 
+CONSUMER_NAMES = [n for n in os.environ.get("RULES_LINT_CONSUMERS", "").split() if n]
+FAMILY = os.environ.get("RULES_LINT_FAMILY", "")
+
 history_sections, argument_sections, dated_lines_found = [], [], []
 explanatory_paragraphs, explanatory_half_sentences = [], []
-lexical_explanations, bare_links = [], []
+lexical_explanations, bare_links, consumer_mentions = [], [], []
 scanned_lines = dated_only_in_quotes = lexical_lines = 0
 
 for path in scanned_targets:
@@ -205,6 +215,13 @@ for path in scanned_targets:
                     lexical_explanations.append(f"{location}（{kind}「{match.group(0).strip()}」）：…{unquoted_line[start:match.end() + 24].strip()}…")
         if HISTORY_LINK.search(line) and not DISCOURAGEMENT.search(line):
             bare_links.append(f"{location}：{line.strip()[:90]}")
+        # ⑧ 使用者项目的名字：本包名（family）先整串挖掉，剩下的还出现就是在写下游的东西
+        if CONSUMER_NAMES:
+            stripped = line.replace(FAMILY, "") if FAMILY else line
+            for name in CONSUMER_NAMES:
+                if name in stripped:
+                    consumer_mentions.append(f"{location}（「{name}」）：{line.strip()[:90]}")
+                    break
     index = 0
     while index < len(lines):
         if not starts_paragraph[index]:
@@ -255,6 +272,10 @@ report(explanatory_half_sentences, "处解释性半句（指令后面挂着「�
 report(lexical_explanations, "处词法说明（「实测」「今天」后跟数、标点后的「免得」「以免」「为了」「所以」）：",
        f"数与经过删掉，要留的{MOVE_HINT}；",
        "执行者要照它分支的前提不删，改写成一条指令（条件 → 动作）。")
+report(consumer_mentions, "处写了使用这套 SOP 的项目的名字——规范是给任何使用者读的，正文里不许出现某一个使用者：",
+       "把那半句删掉，或者改写成不指名的说法：接法写成「项目在 `.claude/gate.d/` 里接一个本地阶段」，",
+       "实测来历整句删掉（规则正文本来就不写来历）。名单在 I18N 的 consumers=。")
+
 report(bare_links, "处指向历史的链接没带劝阻句：",
        "在同一行写上「除非要查来历，别读它。」——劝阻句写成「别读」或「不要读」，一字不许省；",
        "指的不是历史，就别链到 records/ 或 CHANGELOG.md。")
@@ -265,7 +286,10 @@ if failed:
 skipped_names = [os.path.relpath(p, root) for p in skipped]
 skipped_text = "；没扫 0 个" if not skipped_names else \
     f"；没扫 {len(skipped_names)} 个（登记在 .claude/rules-lint-exclude）：{'、'.join(skipped_names)}"
+consumer_text = ("使用者名字 0 处（名单：" + "、".join(CONSUMER_NAMES) + "）") if CONSUMER_NAMES \
+    else "使用者名字这一条无对象可判：被扫的仓没有 I18N 或没登记 consumers="
 print(f"  ✓ 规则只写怎么做（扫了 {len(scanned_targets)} 份文件 {scanned_lines} 行{skipped_text}；"
       f"记录小节 0、论证小节 0、带日期的行 0（另有 {dated_only_in_quotes} 行的日期只在「」或反引号里）、"
-      f"解释性段落 0、解释性半句 0、没带劝阻句的链接 0；词法说明判了 {lexical_lines} 行（围栏与表格行不判），命中 0）")
+      f"解释性段落 0、解释性半句 0、没带劝阻句的链接 0；词法说明判了 {lexical_lines} 行（围栏与表格行不判），命中 0；"
+      f"{consumer_text}）")
 PY

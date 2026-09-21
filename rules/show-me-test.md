@@ -137,8 +137,7 @@
 三样加起来，一个算错的统计量可以在门禁里一直绿着，而它正是给人看的那个结论。
 
 **项目本地阶段与共享阶段同规矩。** 它们一样会拒绝提交者，一样受 `gate-lint`
-与 `shell-lint` 管——`gate.sh` 把 `.claude/gate.d/` 一并交给这两个 lint
-（singlefs 的本地阶段第一次被扫，就是 7 条没有出路的拒绝）。
+与 `shell-lint` 管——`gate.sh` 把 `.claude/gate.d/` 一并交给这两个 lint。
 
 ⚠️ **射程只到 `.claude/gate.d/`。** 项目别处的脚本（研究脚本、hook）一样会拒绝人，却不在这两个 lint 的射程里。
 ⇒ 项目有这类目录，就在 `.claude/gate.d/` 里接一个本地阶段，把它们交给这两个 lint：调用时分别设 `GATE_LINT_DIR`、`SHELL_LINT_DIR` 指到目标目录——

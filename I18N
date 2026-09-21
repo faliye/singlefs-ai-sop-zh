@@ -6,3 +6,5 @@ this=zh
 reference=zh
 default=en
 languages=zh ja en
+# consumers：使用这套 SOP 的项目。规范正文不许写它们的具体内容，由 scripts/rules-lint.sh 判。
+consumers=singlefs
