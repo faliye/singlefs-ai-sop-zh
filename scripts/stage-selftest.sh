@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# gate-similar: selftest.sh 它拿本包自己的样本喂共享脚本；这一道按 <阶段目录>/fixtures/<阶段>/{red,green}/ 的约定喂项目本地阶段，射程与样本格式都不同
 # 项目本地门禁阶段自己会不会红。
 #
 # 拿一组「本该红」和「本该绿」的样本喂给每个本地阶段，看它判得对不对。
@@ -30,6 +31,9 @@ fi
 if [[ ! -d "$GD" ]] || ! compgen -G "$GD/*.sh" >/dev/null; then
   exit 77
 fi
+# 阶段要在样本的临时目录里跑，相对路径到了那里就指不到东西。手跑时传 `.claude/gate.d`，
+# 每个样本都会以 127 收场，而报出来的是「N 个样本判错」，出路指向改 expect 或改那个阶段——两边其实都没毛病。
+GD="$(cd "$GD" && pwd)"
 FX="$GD/fixtures"
 
 if [[ ! -d "$FX" ]]; then
@@ -51,10 +55,10 @@ for stage in "$GD"/*.sh; do
     # 免得把 .git 之类的东西塞进本仓。
     work="$(mktemp -d)"
     cp -a "$d/." "$work/"
-    # 样本在清掉 GATE_BASE / GATE_STAGED_FROM 的环境里跑：`gate.sh --staged` 把真仓的 diff
-    # 基准传给里层，漏进样本就成了临时仓里不存在的提交（实测：--staged 下一对红绿样本一起判错）。
+    # 样本在清掉 GATE_BASE / GATE_STAGED_FROM / GATE_DIFF_BASE 的环境里跑：`gate.sh --staged` 把真仓的 diff
+    # 基准传给里层，`gate.sh` 自己也导出 GATE_DIFF_BASE，漏进样本就成了临时仓里不存在的提交（实测：--staged 下一对红绿样本一起判错）。
     if [[ -f "$work/setup.sh" ]]; then
-      if ! ( cd "$work" && env -u GATE_BASE -u GATE_STAGED_FROM bash setup.sh >/dev/null 2>&1 ); then
+      if ! ( cd "$work" && env -u GATE_BASE -u GATE_STAGED_FROM -u GATE_DIFF_BASE bash setup.sh >/dev/null 2>&1 ); then
         say "  ✗ $(printf '%-28s %-5s' "$name" "$kind") setup.sh 没跑成"   # gate-lint:detail
         fail=$((fail+1)); rm -rf "${work:?}"; continue
       fi
@@ -62,7 +66,7 @@ for stage in "$GD"/*.sh; do
     # 退出码要在 `|| got=$?` 里取：lib.sh 带进来的 set -e 会在样本判红的那一行
     # 把整个脚本带走，而判红正是这里最要看的结果（rules/command-safety.md）。
     out=""; got=0
-    out="$(cd "$work" && env -u GATE_BASE -u GATE_STAGED_FROM bash "$stage" "$work" 2>&1)" || got=$?
+    out="$(cd "$work" && env -u GATE_BASE -u GATE_STAGED_FROM -u GATE_DIFF_BASE bash "$stage" "$work" 2>&1)" || got=$?
     rm -rf "${work:?}"
     okc=1
     if [[ "$got" != "$want_exit" ]]; then

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# hook-events: PreToolUse
 # Claude Code 的 PreToolUse 钩子（Bash 工具）：命令里有按模式找进程的写法（pgrep 或 pkill 带 -f / --full，或 killall），执行前拒绝。
 #
 # 为什么（rules/command-safety.md「`pkill -f` / `killall` 一律禁用」那一节）：

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# gate-similar: 无 查过 shell-lint.sh、gate-lint.sh：它们读脚本正文，没有哪一道读暂存区里的文件模式
 # 脚本的执行位在暂存区里没有丢。
 #
 # 手工只暂存「这一轮的」时，`git update-index --cacheinfo` 要自己写模式；写死 100644 就把
@@ -22,33 +23,42 @@ SCRIPTS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DIRS=("$@")
 ((${#DIRS[@]})) || DIRS=("$SCRIPTS")
 
-ROOT="$(cd "${DIRS[0]}" && git rev-parse --show-toplevel 2>/dev/null || true)"
-if [[ -z "$ROOT" ]]; then
-  warn "不在 git 仓库里，这一条无对象可判（暂存区的模式只有 git 仓里才有）"
+# ⚠️ **每个目录用它自己的仓根解。** 射程里的目录可能分属**不同的 git 仓**：
+# `gate.sh --staged` 把项目摊在临时 worktree 里，而装进来的 SOP 副本仍在真仓。
+# 拿第一个目录的仓根去 `ls-files` 另一个仓里的路径，git 直接 fatal、输出为空，
+# 于是这一条报「一个都没查到」——正好是它自己要防的那种失效（0.0.56 实测，下游会话报的）。
+checked=0; wrong=0; in_repo=0
+for dir in "${DIRS[@]}"; do
+  [[ -d "$dir" ]] || continue
+  dir_root="$(cd "$dir" && git rev-parse --show-toplevel 2>/dev/null || true)"
+  [[ -n "$dir_root" ]] || continue
+  in_repo=1
+  # git ls-files 的输出先整份读进来再逐行判：管道里逐行读时，循环体里的计数留在子 shell
+  # 里出不来（rules/command-safety.md：子 shell 里的赋值传不回父进程）。
+  entries="$(git -C "$dir_root" ls-files -s -z -- "$dir" | tr '\0' '\n' || true)"
+  while IFS= read -r entry; do
+    [[ -n "$entry" ]] || continue
+    mode="${entry%% *}"; path="${entry#*$'\t'}"
+    case "$path" in */fixtures/*) continue ;; esac
+    case "$path" in *.sh|*.py) ;; *) continue ;; esac
+    checked=$((checked + 1))
+    full="$dir_root/$path"
+    if [[ "$path" == *.sh && "$mode" != 100755 ]]; then
+      say "  ✗ $path 在暂存区里是 $mode，.sh 要可执行"   # gate-lint:detail
+      wrong=$((wrong + 1)); continue
+    fi
+    [[ -f "$full" ]] || continue
+    if { [[ -x "$full" ]] && [[ "$mode" != 100755 ]]; } || { [[ ! -x "$full" ]] && [[ "$mode" == 100755 ]]; }; then
+      say "  ✗ $path 在暂存区里是 $mode，与工作区的执行位不一致"   # gate-lint:detail
+      wrong=$((wrong + 1))
+    fi
+  done <<< "$entries"
+done
+
+if (( in_repo == 0 )); then
+  warn "射程里没有一个目录在 git 仓库里，这一条无对象可判（暂存区的模式只有 git 仓里才有）"
   exit 77
 fi
-
-checked=0; wrong=0
-# git ls-files 的输出先整份读进来再逐行判：管道里逐行读时，循环体里的计数留在子 shell
-# 里出不来（rules/command-safety.md：子 shell 里的赋值传不回父进程）。
-entries="$(git -C "$ROOT" ls-files -s -z -- "${DIRS[@]}" | tr '\0' '\n' || true)"
-while IFS= read -r entry; do
-  [[ -n "$entry" ]] || continue
-  mode="${entry%% *}"; path="${entry#*$'\t'}"
-  case "$path" in */fixtures/*) continue ;; esac
-  case "$path" in *.sh|*.py) ;; *) continue ;; esac
-  checked=$((checked + 1))
-  full="$ROOT/$path"
-  if [[ "$path" == *.sh && "$mode" != 100755 ]]; then
-    say "  ✗ $path 在暂存区里是 $mode，.sh 要可执行"   # gate-lint:detail
-    wrong=$((wrong + 1)); continue
-  fi
-  [[ -f "$full" ]] || continue
-  if { [[ -x "$full" ]] && [[ "$mode" != 100755 ]]; } || { [[ ! -x "$full" ]] && [[ "$mode" == 100755 ]]; }; then
-    say "  ✗ $path 在暂存区里是 $mode，与工作区的执行位不一致"   # gate-lint:detail
-    wrong=$((wrong + 1))
-  fi
-done <<< "$entries"
 
 if (( checked == 0 )); then
   bad "一个已跟踪的 .sh / .py 都没查到（射程：${DIRS[*]}）"

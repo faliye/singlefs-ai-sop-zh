@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# gate-similar: doc-lint.sh 它判 markdown 里的「编号（简称）」；这一道把同一条判据延到源码注释、脚本与记录。登记标题的解析两边各写了一份，没抽成共用：doc-lint 那份在 awk 里、按 markdown 的结构认，抽出来要先把它从 awk 里拆出来
+# gate-similar: link-targets.py 读 .claude/doc-lint-exclude、找 SOP 副本目录的两个函数，它、这一道与 relay-timing-lint.py 各写了一份，三份已经分叉（候选路径、结尾斜杠的处理不同）；抽成共用要先定哪一份的行为对，没在加查重门禁的这一次动它们
 # 编号与简称在 doc-lint 够不到的地方也要一致。
 #
 # `doc-lint.sh` 管的是 markdown。而编号引用还散在**源码注释、脚本、记录**里，

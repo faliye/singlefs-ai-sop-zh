@@ -515,9 +515,25 @@ run_scripted "relay-timing-lint/自证 16 个样本判得对" 0 "自证：16 个
 r="$tmpd/hooks-reg"; mkdir -p "$r/.claude/hooks"
 printf '#!/usr/bin/env bash\n[[ "${1:-}" == --selftest ]] && { echo "  自检：查了 2 种情形"; exit 0; }\nexit 0\n' > "$r/.claude/hooks/guard.sh"
 chmod +x "$r/.claude/hooks/guard.sh"
-# 包自带的钩子（pattern-process-guard）也要注册，规则在 rules/command-safety.md
-printf '{"hooks":{"PreToolUse":[{"matcher":"Write","hooks":[{"type":"command","command":"bash guard.sh"},{"type":"command","command":"bash pattern-process-guard.sh"}]}]}}\n' > "$r/.claude/settings.json"
+# 包自带的钩子也要注册：pattern-process-guard 挂 PreToolUse（rules/command-safety.md），
+# gate-reuse-check 挂 Stop 与 SubagentStop（rules/sop-first.md「加门禁或钩子之前，先找已有的」）
+hooks_registered_settings() { # hooks_registered_settings <Stop 之外还挂不挂 SubagentStop：yes / no>
+  local subagent_stop=''
+  [[ "$1" == yes ]] && subagent_stop=',"SubagentStop":[{"hooks":[{"type":"command","command":"bash gate-reuse-check.sh"}]}]'
+  printf '{"hooks":{"PreToolUse":[{"matcher":"Write","hooks":[{"type":"command","command":"bash guard.sh"},{"type":"command","command":"bash pattern-process-guard.sh"}]}],"Stop":[{"hooks":[{"type":"command","command":"bash gate-reuse-check.sh"}]}]%s}}\n' "$subagent_stop" > "$r/.claude/settings.json"
+}
+hooks_registered_settings yes
 run_scripted "hooks-registered/注册着且自检过就通过" 0 "个钩子都注册着" -- \
+  bash "$SCRIPTS/hooks-registered.sh" "$r"
+hooks_registered_settings no
+run_scripted "hooks-registered/声明的事件没挂全判红" 1 "gate-reuse-check.sh→SubagentStop" -- \
+  bash "$SCRIPTS/hooks-registered.sh" "$r"
+# 按文件名的边界认：注册的是 old-guard.sh，不等于 guard.sh 注册着
+printf '{"hooks":{"PreToolUse":[{"matcher":"Write","hooks":[{"type":"command","command":"bash .claude/hooks/old-guard.sh"},{"type":"command","command":"bash pattern-process-guard.sh"}]}],"Stop":[{"hooks":[{"type":"command","command":"bash gate-reuse-check.sh"}]}],"SubagentStop":[{"hooks":[{"type":"command","command":"bash gate-reuse-check.sh"}]}]}}\n' > "$r/.claude/settings.json"
+run_scripted "hooks-registered/名字是别的钩子名的一截也不算注册" 1 "没在 settings.json 里注册" "guard.sh  要挂的事件" -- \
+  bash "$SCRIPTS/hooks-registered.sh" "$r"
+printf '{ 坏掉的 JSON\n' > "$r/.claude/settings.json"
+run_scripted "hooks-registered/settings.json 读不了时说清是文件坏了" 1 "读不了（不是合法的 JSON" -- \
   bash "$SCRIPTS/hooks-registered.sh" "$r"
 printf '{"hooks":{"PreToolUse":[]}}\n' > "$r/.claude/settings.json"
 run_scripted "hooks-registered/一条都没注册时判红" 1 "一条钩子都没注册" -- \
@@ -527,11 +543,120 @@ run_scripted "hooks-registered/钩子没被注册到时判红" 1 "没在 setting
   bash "$SCRIPTS/hooks-registered.sh" "$r"
 # 自检会红的钩子：注册着也不算数——自检就是这道闸「会拒绝」的证据
 printf '#!/usr/bin/env bash\n[[ "${1:-}" == --selftest ]] && { echo "  自检：有一种情形没拦住"; exit 1; }\nexit 0\n' > "$r/.claude/hooks/guard.sh"
-printf '{"hooks":{"PreToolUse":[{"matcher":"Write","hooks":[{"type":"command","command":"bash guard.sh"},{"type":"command","command":"bash pattern-process-guard.sh"}]}]}}\n' > "$r/.claude/settings.json"
+hooks_registered_settings yes
 run_scripted "hooks-registered/钩子自检没过时判红" 1 "个钩子的自检没过" -- \
   bash "$SCRIPTS/hooks-registered.sh" "$r"
 run_scripted "hooks-registered/没有 settings.json 退 77" 77 "" -- \
   bash "$SCRIPTS/hooks-registered.sh" "$tmpd/hooks-none"
+
+# ── 门禁查重：新加的门禁与钩子先对过已有的，不整段抄 ──────
+r="$tmpd/gate-overlap"; mkdir -p "$r/.claude/gate.d" "$r/.claude/hooks"
+git -C "$r" init -q
+overlap_block() { # overlap_block [行数，默认 9]：一段每行都不一样、每行都算有信息的行
+  local step; for ((step = 1; step <= ${1:-9}; step++)); do printf 'echo "第 %s 步：核对登记表里的第 %s 行"\n' "$step" "$step"; done
+}
+rich_identifiers() { local index; for ((index = 1; index <= 25; index++)); do printf 'registry_column_%02d ' "$index"; done; }
+{ printf '#!/usr/bin/env bash\n# gate-stage: 已有的样本阶段\n'; overlap_block; } > "$r/.claude/gate.d/10-existing.sh"
+{ printf '#!/usr/bin/env bash\n# gate-stage: 早就抄了一份的旧阶段\n'; overlap_block; } > "$r/.claude/gate.d/16-legacy-copy.sh"
+printf '#!/usr/bin/env bash\n# gate-stage: 另一个旧阶段\necho "只判一件不相干的事"\n' > "$r/.claude/gate.d/15-plain.sh"
+{ printf '#!/usr/bin/env bash\n# gate-stage: 标识符很多的旧阶段\n'; for word in $(rich_identifiers); do printf 'check_column "%s"\n' "$word"; done; } > "$r/.claude/gate.d/30-rich.sh"
+printf '#!/usr/bin/env bash\n# 已有的钩子\necho "拦 Bash 里的一种写法"\n' > "$r/.claude/hooks/old-guard.sh"
+overlap_settings() { # overlap_settings <新钩子挂的事件> <新钩子的 matcher> [新钩子的命令]：已有钩子挂在 PreToolUse 的 Bash|Write 上
+  local old_entry new_entry
+  old_entry='{"matcher":"Bash|Write","hooks":[{"type":"command","command":"bash .claude/hooks/old-guard.sh"}]}'
+  new_entry="$(printf '{"matcher":"%s","hooks":[{"type":"command","command":"%s"}]}' "$2" "${3:-bash .claude/hooks/new-guard.sh}")"
+  # 同一个事件要放进同一个数组：JSON 里写两个同名的键，后一个会把已有钩子的注册整个盖掉
+  if [[ "$1" == PreToolUse ]]; then
+    printf '{"hooks":{"PreToolUse":[%s,%s]}}\n' "$old_entry" "$new_entry"
+  else
+    printf '{"hooks":{"PreToolUse":[%s],"%s":[%s]}}\n' "$old_entry" "$1" "$new_entry"
+  fi > "$r/.claude/settings.json"
+}
+overlap_settings PostToolUse Bash
+git -C "$r" add -A; git -C "$r" -c user.name=t -c user.email=t@t commit -qm base
+overlap_check=(env GATE_DIFF_BASE="$(git -C "$r" rev-parse HEAD)" python3 "$SCRIPTS/gate-overlap.py")
+# 存量里就有的整段相同（10 与 16）不判：它们都不在这一次的改动里
+run_scripted "gate-overlap/没有新加或改动门禁时退 77" 77 "这一次没有新加或改动门禁与钩子" -- "${overlap_check[@]}" "$r"
+run_scripted "gate-overlap/--list 列出已有的与触发点" 0 "old-guard.sh" "PreToolUse[Bash|Write]" "已有的样本阶段" -- \
+  python3 "$SCRIPTS/gate-overlap.py" --list "$r"
+printf '#!/usr/bin/env bash\necho "新判据：只看一件别的事"\n' > "$r/.claude/gate.d/20-new.sh"
+run_scripted "gate-overlap/新阶段没写 gate-similar 判红" 1 "20-new.sh 是新加的，没写 gate-similar" "按字面最像的几份" -- \
+  "${overlap_check[@]}" "$r"
+printf '#!/usr/bin/env bash\n# gate-similar: 10-existing.sh 它判登记表，这一道判别的事\necho "新判据：只看一件别的事"\n' > "$r/.claude/gate.d/20-new.sh"
+run_scripted "gate-overlap/写明比过谁就通过" 0 "新加的门禁与钩子 1 个（.claude/gate.d/20-new.sh）" -- "${overlap_check[@]}" "$r"
+printf '#!/usr/bin/env bash\n# gate-similar: 99-nowhere.sh 它判登记表，这一道判别的事\necho "新判据：只看一件别的事"\n' > "$r/.claude/gate.d/20-new.sh"
+run_scripted "gate-overlap/点名的不存在判红" 1 "「99-nowhere.sh」不是已有的门禁或钩子" -- "${overlap_check[@]}" "$r"
+printf '#!/usr/bin/env bash\n# gate-similar: 10-existing.sh 不同\necho "新判据：只看一件别的事"\n' > "$r/.claude/gate.d/20-new.sh"
+run_scripted "gate-overlap/理由太短判红" 1 "理由不到 8 个字" -- "${overlap_check[@]}" "$r"
+# 字面上很像的已有一份：写「无」不算，要点名
+{ printf '#!/usr/bin/env bash\n# gate-similar: 无 查过全表，没有管同一件事的\n'; printf ': %s\n' "$(rich_identifiers)"; } > "$r/.claude/gate.d/20-new.sh"
+run_scripted "gate-overlap/字面上很像的没点名判红" 1 "30-rich.sh  字面上很像" -- "${overlap_check[@]}" "$r"
+# 新阶段整段抄了已有的一份：写了声明也红
+{ printf '#!/usr/bin/env bash\n# gate-similar: 10-existing.sh 它只判登记表里的行号\n'; overlap_block; } > "$r/.claude/gate.d/20-new.sh"
+run_scripted "gate-overlap/新阶段整段抄已有的判红" 1 "20-new.sh:3-11 与 .claude/gate.d/10-existing.sh:3 起（连续 9 行相同）" -- \
+  "${overlap_check[@]}" "$r"
+# 门槛钉在 CLONE_MINIMUM_LINES：7 行不判，8 行判；多敲几个空格也还是同一行
+{ printf '#!/usr/bin/env bash\n# gate-similar: 10-existing.sh 它只判登记表里的行号\n'; overlap_block 7; } > "$r/.claude/gate.d/20-new.sh"
+run_scripted "gate-overlap/整段相同不到门槛不判" 0 "没有整段相同" -- "${overlap_check[@]}" "$r"
+{ printf '#!/usr/bin/env bash\n# gate-similar: 10-existing.sh 它只判登记表里的行号\n'; overlap_block 8; } > "$r/.claude/gate.d/20-new.sh"
+run_scripted "gate-overlap/整段相同到了门槛判红" 1 "连续 8 行相同" -- "${overlap_check[@]}" "$r"
+{ printf '#!/usr/bin/env bash\n# gate-similar: 10-existing.sh 它只判登记表里的行号\n'; overlap_block | sed 's/ /   /g'; } > "$r/.claude/gate.d/20-new.sh"
+run_scripted "gate-overlap/多敲空格绕不过整段相同" 1 "连续 9 行相同" -- "${overlap_check[@]}" "$r"
+{ printf '#!/usr/bin/env bash\n# gate-similar: 10-existing.sh 它只判登记表里的行号\n# gate-overlap:copy-kept 10-existing.sh 样本要两份各自独立跑\n# gate-overlap:copy-kept 16-legacy-copy.sh 这一份也是样本，要各自独立跑\n'; overlap_block; } > "$r/.claude/gate.d/20-new.sh"
+run_scripted "gate-overlap/写了 copy-kept 就放行并报出来" 0 "按 copy-kept 留着两份的" -- "${overlap_check[@]}" "$r"
+{ printf '#!/usr/bin/env bash\n# gate-similar: 10-existing.sh 它只判登记表里的行号\n# gate-overlap:copy-kept 99-nowhere.sh 样本要两份各自独立跑\n'; overlap_block; } > "$r/.claude/gate.d/20-new.sh"
+run_scripted "gate-overlap/copy-kept 点名不存在判红" 1 "copy-kept 有 1 处写得不对" -- "${overlap_check[@]}" "$r"
+# 抄了装进来的共享脚本也算：对照范围含本包的 scripts/
+{ printf '#!/usr/bin/env bash\n# gate-similar: 10-existing.sh 它只判登记表里的行号\n'; sed -n '/^diff_base()/,/^}/p' "$SCRIPTS/lib.sh"; } > "$r/.claude/gate.d/20-new.sh"
+run_scripted "gate-overlap/抄共享脚本也判红" 1 "lib.sh" "整段相同" -- "${overlap_check[@]}" "$r"
+rm -f "$r/.claude/gate.d/20-new.sh"
+# 往已有的阶段里贴一整段：不是新文件，加进来的行照样判
+cp "$r/.claude/gate.d/15-plain.sh" "$tmpd/overlap-15-plain.sh"
+overlap_block >> "$r/.claude/gate.d/15-plain.sh"
+run_scripted "gate-overlap/往已有的阶段里贴一整段判红" 1 "15-plain.sh:4-12" -- "${overlap_check[@]}" "$r"
+cp "$tmpd/overlap-15-plain.sh" "$r/.claude/gate.d/15-plain.sh"
+# 只动了存量重复旁边的一行：窗口里没有一整段是这一次加的，不判
+cp "$r/.claude/gate.d/16-legacy-copy.sh" "$tmpd/overlap-16-legacy-copy.sh"
+printf 'echo "旧阶段里补的一行，和谁都不一样"\n' >> "$r/.claude/gate.d/16-legacy-copy.sh"
+run_scripted "gate-overlap/存量重复旁边改一行不判" 0 "改过的 1 份脚本" -- "${overlap_check[@]}" "$r"
+cp "$tmpd/overlap-16-legacy-copy.sh" "$r/.claude/gate.d/16-legacy-copy.sh"
+# 两份都改过：旧的那份只加了一行，新的那份整段是新加的——要报整段那一侧
+cp "$r/.claude/gate.d/10-existing.sh" "$tmpd/overlap-10-existing.sh"
+printf 'echo "第 10 步：核对登记表里的第 10 行"\n' >> "$r/.claude/gate.d/10-existing.sh"
+{ printf '#!/usr/bin/env bash\n# gate-similar: 10-existing.sh 它只判登记表里的行号\n'; overlap_block 10; } > "$r/.claude/gate.d/25-copy.sh"
+run_scripted "gate-overlap/两份都改过时报整段那一侧" 1 "连续 10 行相同" -- "${overlap_check[@]}" "$r"
+cp "$tmpd/overlap-10-existing.sh" "$r/.claude/gate.d/10-existing.sh"; rm -f "$r/.claude/gate.d/25-copy.sh"
+# 新钩子与已有钩子挂在同一个触发点上：写「无」不算，要点名
+overlap_settings PreToolUse Bash
+printf '#!/usr/bin/env bash\n# hook-events: PreToolUse\n# gate-similar: 无 查过全表，没有管同一件事的\necho "拦 Bash 里的另一种写法"\n' > "$r/.claude/hooks/new-guard.sh"
+run_scripted "gate-overlap/同触发点的钩子没点名判红" 1 "old-guard.sh  挂在同一个触发点上：PreToolUse[Bash|Write]" -- \
+  "${overlap_check[@]}" "$r"
+printf '#!/usr/bin/env bash\n# hook-events: PreToolUse\n# gate-similar: old-guard.sh 它拦的是另一类命令，拒绝时要写的出路不同\necho "拦 Bash 里的另一种写法"\n' > "$r/.claude/hooks/new-guard.sh"
+run_scripted "gate-overlap/同触发点的钩子点了名就通过" 0 "new-guard.sh" -- "${overlap_check[@]}" "$r"
+printf '#!/usr/bin/env bash\n# gate-similar: old-guard.sh 它拦的是另一类命令，拒绝时要写的出路不同\necho "拦 Bash 里的另一种写法"\n' > "$r/.claude/hooks/new-guard.sh"
+run_scripted "gate-overlap/新钩子没写 hook-events 判红" 1 "没写 hook-events" -- "${overlap_check[@]}" "$r"
+# 事件不同、matcher 不相交，都不算同一个触发点
+printf '#!/usr/bin/env bash\n# hook-events: PreToolUse\n# gate-similar: 无 查过全表，没有管同一件事的\necho "拦 Edit 里的一种写法"\n' > "$r/.claude/hooks/new-guard.sh"
+overlap_settings PreToolUse Edit
+run_scripted "gate-overlap/matcher 不相交的钩子写「无」可以" 0 "new-guard.sh" -- "${overlap_check[@]}" "$r"
+printf '#!/usr/bin/env bash\n# hook-events: PostToolUse\n# gate-similar: 无 查过全表，没有管同一件事的\necho "Bash 跑完之后记一笔"\n' > "$r/.claude/hooks/new-guard.sh"
+overlap_settings PostToolUse Bash
+run_scripted "gate-overlap/事件不同的钩子写「无」可以" 0 "new-guard.sh" -- "${overlap_check[@]}" "$r"
+rm -f "$r/.claude/hooks/new-guard.sh"
+# 钩子不在 .claude/hooks/、也不是 .sh：注册命令指到它，它就是钩子
+mkdir -p "$r/.claude/tools"
+printf '# 拦 Bash 里的另一种写法\nprint("拦")\n' > "$r/.claude/tools/new-guard.py"
+overlap_settings PreToolUse Bash 'python3 \"$CLAUDE_PROJECT_DIR\"/.claude/tools/new-guard.py'
+run_scripted "gate-overlap/注册命令指到的别处的钩子也判" 1 ".claude/tools/new-guard.py 是新加的，没写 gate-similar" -- "${overlap_check[@]}" "$r"
+rm -rf "${r:?}/.claude/tools"; overlap_settings PostToolUse Bash
+run_scripted "gate-overlap/外层的 diff 基准漏进来判不了" 3 "解析不到提交" -- \
+  env GATE_DIFF_BASE=0000000000000000000000000000000000000000 python3 "$SCRIPTS/gate-overlap.py" "$r"
+mkdir -p "$tmpd/overlap-no-git/.claude/gate.d"
+run_scripted "gate-overlap/不在 git 仓里退 77" 77 "不在 git 仓里" -- python3 "$SCRIPTS/gate-overlap.py" "$tmpd/overlap-no-git"
+
+# ── 收工钩子：agent 这一轮新建了门禁或钩子，收工前先自检能不能复用已有的 ──
+run_scripted "gate-reuse-check/自检的每种情形都判得对" 0 "gate-reuse-check 自检：13 种情形判得都对" -- \
+  bash "$SCRIPTS/claude-hooks/gate-reuse-check.sh" --selftest
 
 # ── 历史条目编号：本次新增的条目撞了已有的号 ──────────────
 r="$tmpd/hist-ordinal"; mkdir -p "$r/.claude/kb"
@@ -555,6 +680,10 @@ printf 'exit=1\nwant=有 bad.txt\n' > "$r/.claude/gate.d/fixtures/10-demo.sh/red
 printf 'exit=0\n' > "$r/.claude/gate.d/fixtures/10-demo.sh/green/expect"
 run_scripted "stage-selftest/样本判得对就通过" 0 "有样本的阶段判得都对" -- \
   bash "$SCRIPTS/stage-selftest.sh" "$r/.claude/gate.d"
+# 外层 gate.sh 导出的 GATE_DIFF_BASE 是真仓的提交号，漏进样本就成了临时仓里不存在的提交：样本看得到它就判错
+printf '#!/usr/bin/env bash\n[[ -n "${GATE_DIFF_BASE:-}" ]] && { echo "  拒绝：看得到外层的基准"; exit 1; }\n[[ -f "${1:-.}/bad.txt" ]] && { echo "  拒绝：有 bad.txt"; exit 1; }\necho "  通过：没有 bad.txt"\n' > "$r/.claude/gate.d/10-demo.sh"
+run_scripted "stage-selftest/样本看不到外层的 GATE_DIFF_BASE" 0 "有样本的阶段判得都对" -- \
+  env GATE_DIFF_BASE=0000000000000000000000000000000000000000 bash "$SCRIPTS/stage-selftest.sh" "$r/.claude/gate.d"
 # 阶段坏成恒绿时必须红：把那个阶段改成永远 exit 0，红样本当场判错
 printf '#!/usr/bin/env bash\necho "  通过：没有 bad.txt"\n' > "$r/.claude/gate.d/10-demo.sh"
 run_scripted "stage-selftest/阶段变恒绿时判红" 1 "期望退出 1，实测 0" -- \
@@ -578,6 +707,20 @@ run_scripted "script-modes/暂存区里丢了执行位判红" 1 ".sh 要可执�
 mkdir -p "$r/empty"
 run_scripted "script-modes/扫到 0 个脚本判红" 1 "一个已跟踪的 .sh / .py 都没查到" -- \
   bash "$SCRIPTS/script-modes.sh" "$r/empty"
+# ⚠️ 射程可能跨**两个 git 仓**：gate.sh --staged 把项目摊在临时 worktree 里，
+# 而装进来的 SOP 副本仍在真仓。拿第一个目录的仓根去 ls-files 另一个仓里的路径，
+# git 直接 fatal、输出为空，这一条就报「一个都没查到」（0.0.56 实测，下游会话报的）。
+# 上面那个用例把第一个仓的执行位改坏了，先还原——否则这一条永远红，测不到跨仓那件事
+git -C "$r" update-index --chmod=+x scripts/tool.sh
+r2="$tmpd/script-modes-other"; mkdir -p "$r2/tools"
+git -C "$r2" init -q
+printf '#!/usr/bin/env bash\necho hi\n' > "$r2/tools/other.sh"; chmod +x "$r2/tools/other.sh"
+git -C "$r2" add -A; git -C "$r2" -c user.name=t -c user.email=t@t commit -qm init
+run_scripted "script-modes/射程跨两个仓时两边都查" 0 "查了 2 个脚本" -- \
+  bash "$SCRIPTS/script-modes.sh" "$r/scripts" "$r2/tools"
+git -C "$r2" update-index --chmod=-x tools/other.sh
+run_scripted "script-modes/跨仓时第二个仓的红也要报出来" 1 "tools/other.sh" -- \
+  bash "$SCRIPTS/script-modes.sh" "$r/scripts" "$r2/tools"
 
 r="$tmpd/date-walkup"; mkdir -p "$r/outer/sub/kb"
 git -C "$r/outer" init -q
@@ -724,13 +867,14 @@ mk_gate_pkg() { # mk_gate_pkg <目录> [要让哪个桩失败]
   # python 写的共享脚本也要有桩：gate.sh 直接 python3 它，缺了就是退出码 2。
   printf '#!/usr/bin/env python3\nraise SystemExit(0)\n' > "$d/scripts/link-targets.py"
   printf '#!/usr/bin/env python3\nraise SystemExit(0)\n' > "$d/scripts/relay-timing-lint.py"
+  printf '#!/usr/bin/env python3\nraise SystemExit(0)\n' > "$d/scripts/gate-overlap.py"
 }
 
 # 全绿：退出码 0，且每个阶段名都要出现在汇总里
 # —— 这几个 want 钉住的是「阶段没被人悄悄从 gate.sh 里删掉」
 r="$tmpd/gate-green"; mk_gate_pkg "$r"
 run_scripted "gate/全绿则退出码 0" 0 \
-  "已实现的门禁阶段全部通过" 门禁自检 门禁判别力 "shell 纪律" 文档铁律 规则纪律 命名纪律 "Show me test" \
+  "已实现的门禁阶段全部通过" 门禁自检 门禁判别力 "shell 纪律" 门禁查重 文档铁律 规则纪律 命名纪律 "Show me test" \
   规则清单 各语言同步 版本纪律 "CHANGELOG 连续" \
   -- bash "$r/scripts/gate.sh" "$r"
 

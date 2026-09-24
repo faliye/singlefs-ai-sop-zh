@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# gate-similar: shell-lint.sh 它按正则判 shell 脚本；这一道要解析 Rust 与 Python 的循环体（抹字符串、配花括号、走 ast），语言与解析法都不同
+# gate-similar: link-targets.py 读 .claude/doc-lint-exclude 的函数，它、这一道与 number-name-sync.sh 各写了一份，三份已经分叉；抽成共用要先定哪一份的行为对，没在加查重门禁的这一次动它们
 """读子进程输出的循环里，不许一边给行打时间戳、一边把行转打出去。
 
 用法：

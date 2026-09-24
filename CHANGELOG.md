@@ -3,6 +3,40 @@
 规则与门禁的版本历史。`CLAUDE.md` 与 `rules/*.md` 不留历史节（design-doc-discipline），
 历史一律记在这里；逐条改动细节见 `git log`，提交信息即变更说明。
 
+## 0.0.57 — 2026-09-25
+
+**新加门禁或钩子之前，先找已有的：agent 收工时由收工钩子拦下来自检，提交前由门禁阶段「门禁查重」再判一遍。**
+
+新规矩（`rules/sop-first.md`「加门禁或钩子之前，先找已有的」）：
+- 已有的管同一件事就追加进去，判同一批对象就合并，共用的逻辑抽成库；非单独加不可，在新文件里逐个写 `# gate-similar: <已有的> <为什么不并进它>`。
+- 新钩子在文件头写 `# hook-events:`，列出要挂的每个事件。
+
+新脚本：
+- `scripts/claude-hooks/gate-reuse-check.sh`（收工钩子，挂 `Stop` 与 `SubagentStop`）：主 agent 与子 agent 收工时，只看这个会话开始以来它自己写过的门禁与钩子。
+  没写声明、同一触发点上或字面上很像的已有一份没点名、整段抄了已有的，就拦下收工。同一份判定在续跑里只拦一次，结果变了再拦。
+- `scripts/gate-overlap.py`（门禁阶段「门禁查重」）：判定都在这里，收工钩子也调它。存量不翻，只判新加与改动的部分；
+  整段相同的门槛是连续 8 行（去掉空行、注释与短行，压过空白之后）。`--list` 列出已有的门禁、钩子与各自的触发点。
+- `scripts/hook-registrations.py`：读 settings.json 里的钩子、认「一条注册命令指向哪个钩子」只在这一处，`hooks-registered.sh` 与 `gate-overlap.py` 共用。
+  `hooks-registered.sh` 此前按子串认，`guard.sh` 会被认成 `old-guard.sh` 的注册。
+
+`hooks-registered.sh`（「工具层的闸」）：
+- 钩子文件头写了 `# hook-events:`，每个事件都要有一条注册指向它。只挂 Stop、不挂 SubagentStop，子 agent 那里这道闸就不在。
+- 没注册时逐个报出该挂的事件；装进来的副本里的钩子只给「注册」这条出路，不给「删掉」。settings.json 读不了时，说清是文件本身坏了。
+
+回扫：0.0.56 收上来的七个阶段落在这一版的 diff 窗口里，逐个补上 `gate-similar`，
+并如实写明两处还没抽成共用的重复：读 `.claude/doc-lint-exclude` 的函数有三份且已分叉；登记标题的解析与 doc-lint 各写一份。
+
+本仓自己也生效：三个语言仓各加一份 `.claude/settings.json`，注册包里的两个钩子。
+
+**升级要做的**：使用者项目在 `.claude/settings.json` 的 `Stop` 与 `SubagentStop` 上各注册一次 `gate-reuse-check.sh`（写法在它的文件头），不注册「工具层的闸」判红。
+
+同一版并入另一个会话的修补：
+- `gate.sh --staged` 跑绿时，说明这一轮没给 gate-ok 前移，以及怎样让它前移。
+- `script-modes.sh` 每个目录用它自己的仓根解：`--staged` 时项目在临时 worktree、副本在真仓，拿一个仓根去 `ls-files` 另一个仓，会报「一个都没查到」。
+- `stage-selftest.sh` 把阶段目录换成绝对路径，并在样本里清掉 `GATE_DIFF_BASE`。
+
+自检从 395 涨到 427 个用例；收工钩子自带 13 种情形的自检；打了 21 条变异，全部被抓到。
+
 ## 0.0.56 — 2026-09-21
 
 **规范正文不写某一个使用者的东西，这回连脚本注释一起清干净；使用者项目的十二条通用检查收归上游；修 0.0.55 里一处让下游门禁拦腰断掉的先用后定。**

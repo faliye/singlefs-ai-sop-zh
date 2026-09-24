@@ -97,6 +97,14 @@ if [[ $WANT_STAGED -eq 1 ]]; then
   if GATE_BASE="$staged_diff_base" GATE_STAGED_FROM="$src_root" bash "$staged_gate" "$staged_tree"; then staged_rc=0; else staged_rc=$?; fi
   trap - INT TERM EXIT
   staged_cleanup
+  # --staged 这一轮不会给 gate-ok 前移：外层必定给里层设 GATE_BASE，而写 gate-ok 的守卫要求它为空
+  # （窗口是人为收窄的，盖章会把中间的提交漏掉，文末那一段写着理由）。不说的话，下一轮的 diff 窗口
+  # 照旧从上一次不带 --staged 跑绿那一点起算，已经验过的文件又把重阶段全量拉起来，而没人知道为什么。
+  if [[ "$staged_rc" -eq 0 ]]; then
+    previous_ok="$(git -C "$src_root" rev-parse --short refs/sop/gate-ok 2>/dev/null || true)"
+    ok "这一轮没有给 gate-ok 前移（--staged 的窗口是人为收窄的）：下一轮的 diff 基准仍从 ${previous_ok:-「从未写过，退回默认算法」} 起算"
+    ok "  要让它前移，就在工作区干净的时候不带 --staged 再跑一次"
+  fi
   exit "$staged_rc"
 fi
 # --staged 的握手变量只在这一层用：读进本地变量就从环境里拿掉，不再往下传。
@@ -266,6 +274,9 @@ run_stage_may_skip "历史条目编号" "本次无对象可判：$ROOT/.claude/k
 # 工具层的闸：规则里的提醒拦不住手敲的命令，钩子能；而钩子被删掉或改坏时那道闸静默消失。
 run_stage_may_skip "工具层的闸" "本次无对象可判：没有 .claude/settings.json 或一个钩子都没有" \
   bash "$SCRIPTS/hooks-registered.sh" "$ROOT"
+# 新加的门禁与钩子先对过已有的：能追加就追加、能合并就合并，不另起一份，更不整段抄一份（rules/sop-first.md）。
+run_stage_may_skip "门禁查重" "本次无对象可判：这一次没有新加或改动门禁与钩子，或不在 git 仓里" \
+  python3 "$SCRIPTS/gate-overlap.py" "$ROOT"
 # 分段计时不许在转发输出的循环里打时间戳（rules/command-safety.md）：转打会阻塞，
 # 子进程写管道不被挡，行到达的时间戳里就混进前面几行的打印积压，看着像调度抖动。
 run_stage_may_skip "转发计时" "本次无对象可判：仓里没有 .rs / .py" \
