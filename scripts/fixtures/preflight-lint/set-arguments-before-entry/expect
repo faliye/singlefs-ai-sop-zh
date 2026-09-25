@@ -1,0 +1,2 @@
+exit=1
+want=.claude/gate.d/10-x.sh:6 开跑之前没先判条件：这一行在调 preflight 之前就干活了：set -- 甲 乙

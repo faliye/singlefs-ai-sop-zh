@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# admission: always 判的是此刻全仓的文本，几秒跑完；每一轮门禁都现判，上一轮的结论不替这一轮作保
+# run-condition: command git gawk
 # 文档铁律的自动检查。rules/writing-discipline.md 和它分出去的 design-doc、kb 两篇靠这个脚本强制，不靠自觉。
 #
 # 检查十二条：
@@ -34,6 +36,7 @@
 # 定义规则本身的文件加 <!-- doc-lint:rule-definition -->：正文照查，只把反引号与「」里举的例子在比对词表前挖掉。
 
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+preflight "${BASH_SOURCE[0]}" "$@"; set -- ${PREFLIGHT_ARGUMENTS[@]+"${PREFLIGHT_ARGUMENTS[@]}"}
 
 # `--not-impl` 要在解析项目根之前认出来：不然它先被当成项目根，被下面那句 die 拒掉。
 # 认出来之后把参数换成本包自己的目录，让后面的流程有个确定的 ROOT（这一支跑不到扫描那一步）。

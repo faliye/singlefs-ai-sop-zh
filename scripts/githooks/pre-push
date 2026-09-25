@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
+# admission: always git 在每一次 push 之前调它，判的是这一次要推的 ref
+# run-condition: none 只读 git 从标准输入喂进来的 ref，不碰别的环境（判条件本身要 python3，见 preflight.sh）
 # git 的 pre-push 钩子：直接 git push master 一律拒绝，指回 scripts/push-all.sh。
 #   启用（每个语言仓各一次）：git config core.hooksPath scripts/githooks
 # 推 master 要全部语言仓一起验、一起推，而验证要十几分钟。git push 是先连上远端、再跑这个钩子的，
 # 在这里验，那条连接就闲着等十几分钟，会被掐断（2026-09-25 推 0.0.57 时实测 Broken pipe）。
 # 所以这里只拦、不验：push-all.sh 先验完三个仓，才逐个新开连接推，那几次推送带着 SOP_PUSH_ALL_INNER=1，在这里直接放行。
+source "$(dirname "${BASH_SOURCE[0]}")/../preflight.sh"
+preflight "${BASH_SOURCE[0]}" "$@"; set -- ${PREFLIGHT_ARGUMENTS[@]+"${PREFLIGHT_ARGUMENTS[@]}"}
 [[ "${SOP_PUSH_ALL_INNER:-}" == 1 ]] && exit 0
 # git 把要推的 ref 从标准输入喂进来，一行一条：<本地ref> <本地sha> <远端ref> <远端sha>。
 # 只有推 master 才拦；推一个特性分支、一个 tag，按普通 push 放行。

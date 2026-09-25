@@ -4,6 +4,8 @@
 # gate-similar: hooks-registered.sh 它判钩子注册着没有、自检过没有，不判这一轮新建的钩子该不该单独存在
 # gate-similar: pattern-process-guard.sh 它挂在 PreToolUse 的 Bash 上、在命令执行前拦；这里挂在 Stop 与 SubagentStop 上，触发点不同
 # gate-similar: handback-scratch-check.sh 同挂在 SubagentStop 上，但它判子 agent 交回时临时目录里还留着自己建的编译目录与仓副本，这里判这一轮新写的门禁与钩子该不该单独存在，对象与放行条件都不同；读钩子输入那一段两边共用 claude-hook-lib.sh
+# admission: always Claude Code 在 agent 收工时调它，判的是这个会话此刻写过的门禁与钩子
+# run-condition: command python3 git
 # Claude Code 的 Stop / SubagentStop 钩子（收工的尾门禁）：agent 这一轮新建了门禁或钩子，收工前先自检它是不是非得单独加。
 #
 # 主 agent 收工触发 Stop，子 agent 收工触发 SubagentStop，两个都要注册。
@@ -36,6 +38,8 @@ PACKAGE_ROOT="$(cd "$HOOK_DIRECTORY/../.." && pwd)"
 GATE_OVERLAP="$PACKAGE_ROOT/scripts/gate-overlap.py"
 STATE_DIRECTORY="${GATE_REUSE_CHECK_STATE_DIRECTORY:-${TMPDIR:-/tmp}/gate-reuse-check}"
 source "$PACKAGE_ROOT/scripts/claude-hook-lib.sh"
+source "$PACKAGE_ROOT/scripts/preflight.sh"
+preflight "${BASH_SOURCE[0]}" "$@"; set -- ${PREFLIGHT_ARGUMENTS[@]+"${PREFLIGHT_ARGUMENTS[@]}"}
 
 judge_stop() { # judge_stop < 钩子 JSON → 退出码 0 放行、2 拦下、1 没判
   local fields hook_event_name stop_hook_active agent_transcript main_transcript transcript session_directory session_id agent_id

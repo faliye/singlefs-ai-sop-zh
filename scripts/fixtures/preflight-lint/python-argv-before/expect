@@ -1,0 +1,2 @@
+exit=1
+want=.claude/scripts/tool.py:10 在调 preflight 之前读了 sys.argv

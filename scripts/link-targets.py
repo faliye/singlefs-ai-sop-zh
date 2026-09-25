@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 # gate-similar: doc-lint.sh 它按词表与形态判文档里的字句，不解析 ](相对路径) 链接，也不数「第 N 节」指到哪；这一道在盘上解析链接目标、数目标文档的节
+# admission: always 判的是此刻全仓的文本，几秒跑完；每一轮门禁都现判，上一轮的结论不替这一轮作保
+# run-condition: none 只读仓里的 markdown，不碰别的环境
 """文档里的相对链接与「第 N 节」指向，指不指得到。
 
 原是使用者项目的一个本地阶段，判据通用（与文件系统无关），收归这里。
@@ -15,6 +17,11 @@
 这一条是实测踩过的：第一版就是那么写的，报「0 处指不到」，而当时正有一条坏链接。
 """
 import os, re, sys
+# 开跑之前先判准入与运行条件（rules/preflight-discipline.md）；不写 __pycache__：门禁跑到一半冒出一个未跟踪的目录，「工作区跑的过程中没变」就对不上
+sys.dont_write_bytecode = True
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+from preflight import preflight  # noqa: E402
+preflight(__file__)
 
 SKIP = {'.git', 'node_modules', 'target'}
 # 上游副本里的 templates/ 是**给别的项目用的模板**，它的相对路径按「拷到项目根之后」写，

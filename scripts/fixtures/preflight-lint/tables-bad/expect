@@ -1,0 +1,5 @@
+exit=1
+want=登记的目录不存在：no-such-directory
+want=排除的路径不存在：no-such-file.sh
+want=这一行一个要判的脚本都没排到：.claude/gate.d/notes.tsv
+want=.claude/preflight-exclude:3 这一行没写理由

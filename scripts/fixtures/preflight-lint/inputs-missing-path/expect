@@ -1,0 +1,2 @@
+exit=1
+want=inputs-changed 登记的 ./no-such-input 不存在

@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
+# admission: always 每一轮门禁都现编现测：编译器、依赖与构建缓存的状态不在任何输入清单里
+# run-condition: command cargo
 # 快速本地检查：格式 / lint / 构建 / 单测。
 # 这是快速反馈，**不是准入标准**。准入标准见 gate.sh。
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+preflight "${BASH_SOURCE[0]}" "$@"; set -- ${PREFLIGHT_ARGUMENTS[@]+"${PREFLIGHT_ARGUMENTS[@]}"}
 
 ROOT="${1:-$(project_root)}"
 cd "$ROOT"

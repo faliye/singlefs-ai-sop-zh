@@ -1,0 +1,6 @@
+exit=1
+want=admission: 认不出「sometimes」
+want=always 后面的理由不足
+want=check 要写成「<命令> :: <不满足时怎么办>」
+want=single-instance 不带参数
+want=command 后面没写可执行文件名

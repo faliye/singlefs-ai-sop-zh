@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# admission: always 判的是此刻 CHANGELOG 与 VERSION 对不对得上，一秒跑完；每一轮门禁都现判
+# run-condition: command git gawk
 # CHANGELOG 连续性：每一版都有自己的一节，最新一节就是 VERSION。
 #
 # 版本纪律（version-discipline.sh）只管「改了规范本体就抬 VERSION」，不管 CHANGELOG 跟没跟上。
@@ -17,6 +19,7 @@
 #
 # 只对 SOP 仓本身有意义（gate.sh 在 ROOT 是 SOP 仓时才调它），各语言仓各判各的 CHANGELOG。
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+preflight "${BASH_SOURCE[0]}" "$@"; set -- ${PREFLIGHT_ARGUMENTS[@]+"${PREFLIGHT_ARGUMENTS[@]}"}
 
 ROOT="${1:-$(project_root)}"
 [[ -d "$ROOT" ]] || die "找不到仓根：$ROOT" \

@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# admission: always 交回与收工时各调一次，判的是此刻临时目录里还剩什么
+# run-condition: check test -d /proc :: 它按进程与 statx 认归属，只在 Linux 上用；别的系统上不装这个钩子
 """子 agent 交回之前，它自己建的编译目录与仓副本还在不在（rules/session-wrapup.md「子 agent 交回之前，删掉自己建的编译目录与仓副本」）。
 
 钩子 claude-hooks/handback-scratch-check.sh 在交回工具（SubagentHandback）的 PreToolUse 与 SubagentStop 上调它。
@@ -36,6 +38,10 @@ import subprocess
 import sys
 import time
 import traceback
+# 开跑之前先判准入与运行条件（rules/preflight-discipline.md）；不写 __pycache__：门禁跑到一半冒出一个未跟踪的目录，「工作区跑的过程中没变」就对不上
+sys.dont_write_bytecode = True
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+from preflight import preflight  # noqa: E402
 
 PACKAGE_SCRIPTS_DIRECTORY = os.path.dirname(os.path.realpath(__file__))
 
@@ -413,6 +419,7 @@ def main():
 
 
 if __name__ == '__main__':
+    preflight(__file__)
     try:
         sys.exit(main())
     except Exception:  # noqa: BLE001 —— 脚本自己出错与「还有没删的」分开报，收工钩子据此不拦

@@ -1,0 +1,2 @@
+exit=1
+want=if __name__ == '__main__': 的第一句不是 preflight

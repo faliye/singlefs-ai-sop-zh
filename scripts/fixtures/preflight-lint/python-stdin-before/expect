@@ -1,0 +1,2 @@
+exit=1
+want=.claude/scripts/tool.py:9 在调 preflight 之前就读标准输入、起子进程或开文件了

@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# admission: always 判的是此刻全仓的文本，几秒跑完；每一轮门禁都现判，上一轮的结论不替这一轮作保
+# run-condition: command gawk
 # 门禁自身的门禁：每一条拒绝，都必须同时给出下一步。
 #
 # 为什么要有这个脚本（rules/sop-first.md）：
@@ -38,6 +40,7 @@
 #
 # GATE_LINT_DIR 可指定要扫的目录（selftest 拿样本喂它用），默认扫本脚本所在目录。
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+preflight "${BASH_SOURCE[0]}" "$@"; set -- ${PREFLIGHT_ARGUMENTS[@]+"${PREFLIGHT_ARGUMENTS[@]}"}
 
 SCRIPTS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # 默认扫**整个包**，不只是 scripts/：install.sh 在仓根，它是使用者跑的第一个脚本，

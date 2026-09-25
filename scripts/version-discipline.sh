@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# admission: always 判的是这一次 diff 窗口里改没改规范本体、抬没抬版本，一秒跑完
+# run-condition: command git
 # 版本纪律：改了规范本体就必须同时抬 VERSION。
 #
 # **「规范本体」管哪些路径，以本脚本下面那条 GOVERNED 为准，别处一律链过来。**
@@ -15,6 +17,7 @@
 # 只对 SOP 仓本身有意义（gate.sh 在 ROOT 是 SOP 仓时才调它）；
 # 消费项目改的是自己的代码，不受这条管。
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+preflight "${BASH_SOURCE[0]}" "$@"; set -- ${PREFLIGHT_ARGUMENTS[@]+"${PREFLIGHT_ARGUMENTS[@]}"}
 
 ROOT="${1:-$(project_root)}"
 [[ -d "$ROOT" ]] || die "找不到仓根：$ROOT" \

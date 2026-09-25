@@ -31,6 +31,9 @@
 | 参照仓 | reference repository | 参照リポジトリ | 清单与门禁脚本维护在哪个仓；不等于权威<br>where the manifest and gate scripts are maintained; not the authority<br>マニフェストとゲートスクリプトの維持先。権威とは別 |
 | 会失败的检查 | failing check | 失敗しうる検査 | 与「提醒句」相对<br>as opposed to a reminder sentence<br>「注意書き」の対語 |
 | 出路 | remedy | 対処 | 每条拒绝必须带的下一步<br>the next step every rejection must carry<br>拒否のたびに必ず添える次の一手 |
+| 准入条件 | admission condition | 受付条件 | 什么时候该调一个脚本：这一次调有没有意义，写在文件头的 `admission:`<br>when a script should be called — whether this call can tell anything new; the `admission:` lines at its head<br>いつスクリプトを呼ぶべきか——今回呼ぶ意味があるか。冒頭の `admission:` 行 |
+| 运行条件 | run condition | 実行条件 | 什么时候不能调一个脚本：环境撑不撑得住，写在文件头的 `run-condition:`<br>when a script must not be called — whether the environment can carry it; the `run-condition:` lines at its head<br>いつスクリプトを呼んではならないか——環境が持ちこたえるか。冒頭の `run-condition:` 行 |
+| 强制跑 | forced run | 強制実行 | 条件没满足、带 `--force` 照跑的那一次；结果不记通过<br>a run made with `--force` although a condition was not met; its result is not recorded as a pass<br>条件を満たさないまま `--force` で走らせた回。結果は合格と記録しない |
 | 证据 | evidence | 根拠 | acceptance is evidence-bound 里的那个<br>the one in "acceptance is evidence-bound"<br>"acceptance is evidence-bound" のそれ |
 | 口径 | measurement basis | 計測条件 | 一个数字是怎么测出来的<br>how a number was measured<br>その数値がどう測られたか |
 | 实测 / 推理 | measured / inferred | 実測 / 推論 | kb 里每条结论二选一标注<br>every kb conclusion is marked one or the other<br>kb の結論はどちらかを明記する |

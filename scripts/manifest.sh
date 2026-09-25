@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# admission: always 判的是此刻规范文本与清单对不对得上，一秒跑完
+# run-condition: command sha256sum
 # 规则清单：给译文仓对账用的唯一接口。
 #
 #   manifest.sh            校验清单是否与当前规范文本一致，并查覆盖率（门禁用）
@@ -11,6 +13,7 @@
 # 译文各自成仓，生成时抄走这份清单；之后只要比两份清单就知道哪几篇过期了。
 # 本仓因此只多一个小文件，仍然是单语言、薄的。
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+preflight "${BASH_SOURCE[0]}" "$@"; set -- ${PREFLIGHT_ARGUMENTS[@]+"${PREFLIGHT_ARGUMENTS[@]}"}
 
 PKG="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MF="$PKG/MANIFEST.sha256"

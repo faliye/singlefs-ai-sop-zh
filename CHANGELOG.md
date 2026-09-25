@@ -3,6 +3,50 @@
 规则与门禁的版本历史。`CLAUDE.md` 与 `rules/*.md` 不留历史节（design-doc-discipline），
 历史一律记在这里；逐条改动细节见 `git log`，提交信息即变更说明。
 
+## 0.0.59 — 2026-09-26
+
+**每个脚本在开头写明什么时候该调、什么时候不能调，开跑之前先判：条件不满足就拒绝执行（退出码 78），带 `--force` 才照跑，照跑的记成「强制跑」；门禁阶段在起之前由 gate.sh 判，不满足就不起。**
+
+新规矩：
+- `rules/preflight-discipline.md`「准入与运行条件」：文件头写 `admission:`（什么时候该调：这一次调有没有意义）与 `run-condition:`（什么时候不能调：环境撑不撑得住），两类各至少一行，写了几行要全部满足。
+  写法 `always <理由>`、`inputs-changed <路径…> [env:<变量名>…] [arguments]`、`check <命令> :: <出路>`、`none <理由>`、`command <可执行文件名…>`、`single-instance`。
+  实验的准入写 `inputs-changed`，登记代码、决策、跑前登记：它们自上次成功跑完以来没变，重跑就被拒；几行 `inputs-changed` 合成一份输入。
+- 射程是全部脚本：本包的 `install.sh`、`scripts/`（含钩子），项目的 `.claude/gate.d/`、`.claude/scripts/`、`.claude/hooks/`，以及项目在 `.claude/preflight-dirs` 登记的实验目录（.sh、.py、.rs 都判）。
+  库、样本逐个登记进排除表（本包 `PACKAGE_EXCLUDED`，项目 `.claude/preflight-exclude`），只 exec 共享脚本的包装不另判。
+- 三语 `CLAUDE.md` 与项目模板 `templates/CLAUDE.project.md` 引这条规则；术语表加「准入条件」「运行条件」「强制跑」。
+
+新脚本：
+- `scripts/preflight.py`：解析声明、现判、记「上次成功」的输入指纹（记在仓的公共 git 目录 `sop-preflight/` 下），只此一处。
+  记的是开跑时判的那份指纹；收尾时重算对不上（跑的过程中输入被改了）、强制跑的、跑失败的，都不记。
+  判条件的子进程不读调用方的标准输入（钩子的 JSON、git 喂给 pre-push 的 ref 都在那里），也不带 git 钩子留下的 `GIT_*` 变量；没有 git 时按「不在 git 仓里」往下判，不崩。
+- `scripts/preflight.sh`：shell 一侧的 `preflight` 与 `preflight_record_success`，只定义函数、不改 shell 选项。lib.sh source 它；
+  钩子与 pre-push 直接 source 它，不必为了判条件多出 set -e 与 gawk 两样依赖。开头照抄一行：`preflight "${BASH_SOURCE[0]}" "$@"; set -- ${PREFLIGHT_ARGUMENTS[@]+"${PREFLIGHT_ARGUMENTS[@]}"}`；
+  脚本路径与 preflight.py 的路径都先转成绝对路径，脚本之后 cd 到别处照样记得下指纹。没有 python3 判不了，按不满足拒绝（78），`--force` 照跑。
+- `scripts/preflight-lint.py`，新门禁阶段「准入与运行条件」：两类声明齐不齐、写法认不认得、写没写在代码之前、`inputs-changed` 的路径在不在、
+  开头先调了 `preflight` 没有（shell 看它之前 source 过 lib.sh 或 preflight.sh、只有 set 选项 / source / 整行赋值；python 看 `__main__` 段第一句，
+  它之前的顶层语句不许读参数、读标准输入、起子进程、开文件；Rust 看 `fn main` 第一句）、写了 `inputs-changed` 的调没调 `preflight_record_success`、排除表与登记表指不指得到；包装只认 install.sh 铺的那几行。
+
+`gate.sh`：
+- 收 `--force`；起每个阶段之前先判它的条件，不满足就不起，汇总里记「本次未跑」并列出没满足的条件。
+- `gate.sh --force` 把 `--force` 转给条件没满足的阶段，这样跑过的记「强制跑过」，不记通过、不算覆盖未实现清单里的项。
+- 起不起只信门禁的预判：阶段起了之后退 78（它调的脚本拒绝了传出来的也一样）按失败记。
+- 有阶段强制跑过、或者因为「输入没变」之外的原因没起，这一轮不前移 gate-ok，末句不说「全部通过」；退出码只看有没有阶段判红。
+- 项目没有 `.claude/preflight-dirs` 时，汇总里把实验脚本这一类记成「本次未查」。
+
+本仓自己也生效：`scripts/` 下 28 份脚本、4 个钩子与 `install.sh` 全部写了条件并在开头先判；`env.sh` 多查一项 python3。
+`selftest.sh` 的准入是 `inputs-changed ./ ../I18N ../install.sh ../VERSION ../templates ../agents ../skills`：这些自上次通过以来没变，门禁里「门禁判别力」就记「本次未跑」、不再重跑。
+`stage-selftest.sh` 给写了条件的本地阶段喂样本时带 `--force`：样本只验判得对不对，不被「输入没变」挡住，也不记成上次成功。
+
+**升级要做的**：
+- 按 `rules/preflight-discipline.md` 自检每个门禁阶段、项目脚本、钩子与实验：文件头写两类条件，开头先调 `preflight`；实验写 `inputs-changed` 并在成功跑完时记指纹。
+- 建 `.claude/preflight-dirs` 登记实验目录（没有实验也建，写一行注释）；库、样本与还没改完的脚本逐个登记进 `.claude/preflight-exclude`，写明理由，改完一个删一行。
+- 项目 `CLAUDE.md` 加一行 `@.claude/singlefs-ai-sop/rules/preflight-discipline.md`（缺了文档铁律判红）。
+- 写产物的实验，把 `PREFLIGHT_FORCED` 写进产物；引用强制跑的产物时写明。Rust 实验的 `preflight` 函数由项目自己写，契约在规则的「开头先判」一节。
+
+自检从 438 涨到 496 个用例；变异 38 条（gate.sh 9、preflight.py 10、preflight.sh 5、preflight-lint.py 13、stage-selftest.sh 1），全部判红；37 条红在预期的那一例，另 1 条（强制跑时不记的那道守卫）红在「--force 照跑」那一例：行为另有指纹交接兜着，只剩提示句看得出来。
+对抗复核一轮，打中 11 处（跑的过程中改了的输入被记成测过了、多行 inputs-changed 只认最后一行、阶段起了之后传出来的 78 被当成没起、cd 之后记不下指纹、缺 git 时崩溃等），逐条修掉并各有用例盯着。
+
+
 ## 0.0.58 — 2026-09-26
 
 **子 agent 交回之前删掉自己建的编译目录与仓副本，由钩子拦；测试装置删掉自己建的镜像，由门禁阶段「跑完没留下临时文件」判；推 master 改成先验完、再连远端。**

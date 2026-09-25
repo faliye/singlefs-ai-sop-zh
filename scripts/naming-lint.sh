@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# admission: always 判的是此刻全仓的文本，几秒跑完；每一轮门禁都现判，上一轮的结论不替这一轮作保
+# run-condition: command gawk
 # 命名纪律里机器判得了的那一半（rules/code-discipline.md 的「名字」一节）。
 #
 #   naming-lint.sh <项目根>
@@ -31,6 +33,7 @@
 # 后一条写成相对 ROOT 的前缀：selftest 拿样本目录当 ROOT 跑时，样本照查
 # （写成 */fixtures/* 的话样本永远被跳过，自检就成了摆设——doc-lint 踩过）。
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+preflight "${BASH_SOURCE[0]}" "$@"; set -- ${PREFLIGHT_ARGUMENTS[@]+"${PREFLIGHT_ARGUMENTS[@]}"}
 
 ROOT="${1:-$(project_root)}"
 [[ -d "$ROOT" ]] || die "找不到项目根：$ROOT" \

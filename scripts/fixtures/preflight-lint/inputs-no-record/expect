@@ -1,0 +1,2 @@
+exit=1
+want=写了 inputs-changed，却没有一处调 preflight_record_success

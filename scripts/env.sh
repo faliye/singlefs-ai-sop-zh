@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
+# admission: always 它查的就是此刻这台机器缺什么，每次查都可能不一样
+# run-condition: none 它自己就是查环境的：缺什么照报，不因为缺东西就不查
 # 环境自检。缺什么直接报什么，不猜、不降级、不静默跳过。
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+preflight "${BASH_SOURCE[0]}" "$@"; set -- ${PREFLIGHT_ARGUMENTS[@]+"${PREFLIGHT_ARGUMENTS[@]}"}
 
 head1 "环境自检"
 missing=0
@@ -22,6 +25,7 @@ req() { # req <命令> <说明> <是否必须:hard|soft>
 # 门禁脚本自己依赖的工具。此前一项都没查：缺了它们门禁不是不跑，是**报错的方向不对**——
 # 例如 sort 不认 -V 时，0.0.9 → 0.0.10 这次真抬的版本会被版本纪律判成降级（审核实测）。
 req gawk     "判定不许随 awk 实现变（lib.sh 已经拦，这里报出来是为了一次看全）。装：sudo apt install gawk" hard
+req python3  "每个脚本开头判准入与运行条件（scripts/preflight.py），好几道门禁阶段也是 python 写的。没有它，别的脚本都按条件不满足拒绝" hard
 req sha256sum "规则清单与译文溯源的哈希" hard
 req timeout  "门禁自检给每个用例设超时；没有它挂死的检查既不红也不绿" hard
 

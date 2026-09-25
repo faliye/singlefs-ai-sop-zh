@@ -1,0 +1,4 @@
+exit=0
+want=判了 4 个脚本（登记目录 2、脚本 1、门禁阶段 1）
+want=包装 1 个
+want=排除 1 个：.claude/gate.d/lib-helper.py（被阶段 import 的库

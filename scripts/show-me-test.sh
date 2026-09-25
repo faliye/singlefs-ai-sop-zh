@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# admission: always 判的是这一次 diff 窗口里的改动，窗口随提交在动
+# run-condition: command git
 # Show me test 阶段：改了 crates 代码就必须带测试（rules/show-me-test.md）。
 # 从 gate.sh 里拆出来，selftest 才能拿样本仓单独喂它（rules/sop-first.md：
 # 没有自检能力的门禁是摆设）。
@@ -12,6 +14,7 @@
 #   2. tests/ 下只有非代码文件不算测试改动（`echo x > tests/note.txt` 曾经就能过）
 #   3. build.rs 也是代码：编译期执行，改它同样要带测试
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+preflight "${BASH_SOURCE[0]}" "$@"; set -- ${PREFLIGHT_ARGUMENTS[@]+"${PREFLIGHT_ARGUMENTS[@]}"}
 
 ROOT="${1:-$(project_root)}"
 [[ -d "$ROOT" ]] || die "找不到项目根：$ROOT" \

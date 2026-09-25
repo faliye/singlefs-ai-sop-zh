@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# admission: inputs-changed ./ ../I18N ../install.sh ../VERSION ../templates ../agents ../skills
+# run-condition: command git python3 gawk
 # 门禁自己的测试：拿一组「本该红」和「本该绿」的样本喂给各个门禁脚本，看它判得对不对。
 #
 # 为什么必须有（rules/sop-first.md）：
@@ -39,6 +41,7 @@
 # 上下文指代那条消息也含这四个字。所以：一个样本触发多类违规时，
 # 每一类都要有自己的 want；宁可多写几个单一职责的样本。
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+preflight "${BASH_SOURCE[0]}" "$@"; set -- ${PREFLIGHT_ARGUMENTS[@]+"${PREFLIGHT_ARGUMENTS[@]}"}
 
 SCRIPTS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FX="$SCRIPTS/fixtures"
@@ -207,7 +210,7 @@ run_scripted "doc-lint/语言被覆盖时要自报" 0 "语言由 DOC_LINT_LANG �
 # 同一个样本 projok 在 zh 仓里「检查 1」、在项目副本（路径里有 /singlefs-ai-sop/）里「检查 2」——
 # 0.0.50 同步到使用者项目时那边的 selftest 因此红了一例。这里把脚本拷到一个路径里带 /singlefs-ai-sop/ 的地方再跑同一个样本。
 r="$tmpd/elsewhere/singlefs-ai-sop"; mkdir -p "$r/scripts/fixtures/doc-lint"
-cp "$SCRIPTS/lib.sh" "$SCRIPTS/doc-lint.sh" "$r/scripts/"; cp "$SCRIPTS/../I18N" "$r/I18N"
+cp "$SCRIPTS/lib.sh" "$SCRIPTS/preflight.py" "$SCRIPTS/preflight.sh" "$SCRIPTS/proc.py" "$SCRIPTS/doc-lint.sh" "$r/scripts/"; cp "$SCRIPTS/../I18N" "$r/I18N"
 cp -r "$FX/doc-lint/projok" "$r/scripts/fixtures/doc-lint/"
 run_scripted "doc-lint/扫描范围不随包所在路径变" 0 "文档铁律检查通过（检查 1，跳过 0" -- \
   env DOC_LINT_LANG=zh bash "$r/scripts/doc-lint.sh" "$r/scripts/fixtures/doc-lint/projok"
@@ -216,7 +219,7 @@ run_scripted "doc-lint/扫描范围不随包所在路径变" 0 "文档铁律检�
 # Invalid collation character，而那条 grep 外面套着 `|| true`：整条检查对每份 kb 静默判绿，dirref 样本照样过。
 # 这里拷一份脚本、把圈码那一格改回区间写法，要求它报「编不过」，而不是「检查通过」。
 b="$tmpd/brokenctx"; mkdir -p "$b/scripts"
-cp "$SCRIPTS/lib.sh" "$SCRIPTS/doc-lint.sh" "$b/scripts/"; cp "$SCRIPTS/../I18N" "$b/I18N"
+cp "$SCRIPTS/lib.sh" "$SCRIPTS/preflight.py" "$SCRIPTS/preflight.sh" "$SCRIPTS/proc.py" "$SCRIPTS/doc-lint.sh" "$b/scripts/"; cp "$SCRIPTS/../I18N" "$b/I18N"
 run_scripted "doc-lint/判据编不过要当场红" 1 "上下文指代的判据 grep 编不过" -- \
   bash -c 'sed -i "s/①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳/①-⑳/" "$1/scripts/doc-lint.sh" && grep -q "①-⑳" "$1/scripts/doc-lint.sh" || { echo "没改到圈码那一格，这条用例什么也没测"; exit 3; }
            env DOC_LINT_LANG=zh bash "$1/scripts/doc-lint.sh" "$2"' brokenctx "$b" "$FX/doc-lint/dirref"
@@ -240,7 +243,7 @@ head1 "门禁自检：默认扫描范围"
 # 门禁自己红（本轮实测：`die "单测失败"` 写在 printf 里，gate-lint 当场判红）。
 mk_scan_pkg() { # mk_scan_pkg <目录> <要拷进包根的样本文件>
   mkdir -p "$1/scripts"
-  cp "$SCRIPTS/lib.sh" "$SCRIPTS/gate-lint.sh" "$SCRIPTS/shell-lint.sh" "$1/scripts/"
+  cp "$SCRIPTS/lib.sh" "$SCRIPTS/preflight.py" "$SCRIPTS/preflight.sh" "$SCRIPTS/proc.py" "$SCRIPTS/gate-lint.sh" "$SCRIPTS/shell-lint.sh" "$1/scripts/"
   cp "$FX/scan/clean.sh" "$1/scripts/clean.sh"
   cp "$2" "$1/rootscript.sh"
 }
@@ -264,7 +267,7 @@ run_scripted "gate-lint/大文件也判得出没报计数" 1 "成功摘要没报
 # 副本带着一整套**故意写坏的**样本，扫了就当成项目自己的违规报出来（审计实测）。
 r="$tmpd/lint-copy"; pkg="$r/proj/.claude/f"
 mkdir -p "$pkg/scripts/fixtures/gate-lint/bad" "$pkg/scripts/fixtures/shell-lint/bad" "$r/proj/.claude/gate.d"
-cp "$SCRIPTS/lib.sh" "$SCRIPTS/gate-lint.sh" "$SCRIPTS/shell-lint.sh" "$pkg/scripts/"
+cp "$SCRIPTS/lib.sh" "$SCRIPTS/preflight.py" "$SCRIPTS/preflight.sh" "$SCRIPTS/proc.py" "$SCRIPTS/gate-lint.sh" "$SCRIPTS/shell-lint.sh" "$pkg/scripts/"
 printf 'family=f\nthis=zh\nreference=zh\ndefault=zh\nlanguages=zh\n' > "$pkg/I18N"
 cp "$FX/scan/root-nakeddie.sh" "$pkg/scripts/fixtures/gate-lint/bad/evil.sh"
 cp "$FX/scan/root-pkill.sh"    "$pkg/scripts/fixtures/shell-lint/bad/evil.sh"
@@ -325,6 +328,91 @@ run_scripted "proc/PROC_BREAK=timeout 必须判红" 1 "10 秒没返回" -- \
   env PROC_BREAK=timeout python3 "$SCRIPTS/proc.py" --selftest
 run_scripted "proc/PROC_BREAK=stopself 必须判红" 1 "stop 停自己的祖先应当拒绝" -- \
   env PROC_BREAK=stopself python3 "$SCRIPTS/proc.py" --selftest
+
+# ════ 准入与运行条件（rules/preflight-discipline.md）═══════
+# 三样各自要会红：preflight-lint 判文件头与开头；preflight.py 现判时拒绝得了、--force 放得过、输入没变拦得住；
+# gate.sh 条件不满足时不起那个阶段。
+head1 "门禁自检：准入与运行条件的判别力"
+for d in "$FX"/preflight-lint/*/; do
+  spawn_fixture "preflight-lint/$(basename "$d")" "$d" python3 "$SCRIPTS/preflight-lint.py" "$d"
+done
+collect_fixtures
+
+# 本包自己的默认范围：install.sh、scripts/、scripts/claude-hooks/、scripts/githooks/ 四处都要扫到，排除表指到的每一份都要在。
+mk_preflight_package() { # mk_preflight_package <目录>：只带判条件那几份真脚本的最小包
+  mkdir -p "$1/scripts/claude-hooks" "$1/scripts/githooks"
+  cp "$SCRIPTS/lib.sh" "$SCRIPTS/preflight.py" "$SCRIPTS/preflight.sh" "$SCRIPTS/proc.py" "$SCRIPTS/preflight-lint.py" \
+    "$SCRIPTS/claude-hook-lib.sh" "$SCRIPTS/session-transcript.py" "$1/scripts/"
+  cp "$SCRIPTS/../I18N" "$1/I18N"
+}
+r="$tmpd/preflight-scope-clean"; mk_preflight_package "$r"
+run_scripted "preflight-lint/本包的默认范围全写了就绿" 0 "判了 2 个脚本（脚本 2）" "排除 5 个" -- python3 "$r/scripts/preflight-lint.py" "$r"
+r="$tmpd/preflight-scope"; mk_preflight_package "$r"
+for undeclared in install.sh scripts/undeclared.sh scripts/claude-hooks/undeclared-hook.sh scripts/githooks/pre-commit; do
+  printf '#!/usr/bin/env bash\necho 没写条件\n' > "$r/$undeclared"
+done
+run_scripted "preflight-lint/本包的默认范围四处都扫到" 1 "install.sh:1 文件头没写 admission" "scripts/undeclared.sh:1 文件头没写 admission" \
+  "scripts/claude-hooks/undeclared-hook.sh:1 文件头没写 admission" "scripts/githooks/pre-commit:1 文件头没写 admission" \
+  -- python3 "$r/scripts/preflight-lint.py" "$r"
+r="$tmpd/preflight-scope-excluded"; mk_preflight_package "$r"; rm "$r/scripts/session-transcript.py"
+run_scripted "preflight-lint/排除表指到不存在的要红" 1 "PACKAGE_EXCLUDED 里的 scripts/session-transcript.py 不在判的范围里" \
+  -- python3 "$r/scripts/preflight-lint.py" "$r"
+
+# 现判：样本脚本拷进一个临时 git 仓，按次序跑。每一步的前提是上一步留下的指纹，次序不能换。
+r="$tmpd/preflight-runtime"; mkdir -p "$r/scripts"
+cp "$SCRIPTS/lib.sh" "$SCRIPTS/preflight.py" "$SCRIPTS/preflight.sh" "$SCRIPTS/proc.py" "$FX"/preflight-runtime/* "$r/scripts/"
+printf '第一版输入\n' > "$r/input.txt"; printf 'cd 样本的输入\n' > "$r/input-cd.txt"; git -C "$r" init -q
+run_scripted "preflight/输入第一次出现就跑，参数原样交回" 0 "跑了 参数=[甲 乙] 强制=[]" -- bash "$r/scripts/experiment.sh" 甲 乙
+run_scripted "preflight/输入没变就拒绝重跑，退出码 78" 78 "以来没变，重跑得不到新信息" "拒绝执行（退出码 78）" \
+  -- bash "$r/scripts/experiment.sh" 甲
+run_scripted "preflight/--force 照跑、标强制、从参数里摘掉" 0 "跑了 参数=[甲] 强制=[准入 inputs-changed" "不记成「上次成功」" \
+  -- bash "$r/scripts/experiment.sh" 甲 --force
+run_scripted "preflight/登记的环境变量变了算输入变了" 0 "跑了 参数=[] 强制=[]" -- env SAMPLE_ROUNDS=3 bash "$r/scripts/experiment.sh"
+printf '第二版输入\n' > "$r/input.txt"
+run_scripted "preflight/运行条件不满足就拒绝" 78 "设了 SAMPLE_BLOCKED 就不许跑" -- env SAMPLE_BLOCKED=1 bash "$r/scripts/experiment.sh"
+run_scripted "preflight/强制跑的那一次不记（前半：强制跑）" 0 "强制=[运行 check" -- env SAMPLE_BLOCKED=1 bash "$r/scripts/experiment.sh" --force
+run_scripted "preflight/强制跑的那一次不记（后半：照判输入变了）" 0 "跑了 参数=[] 强制=[]" -- bash "$r/scripts/experiment.sh"
+printf '第三版输入\n' > "$r/input.txt"
+run_scripted "preflight/跑失败的那一次不记（前半：跑失败）" 5 "样本按要求跑失败" -- env SAMPLE_FAIL=1 bash "$r/scripts/experiment.sh"
+run_scripted "preflight/跑失败的那一次不记（后半：照判输入变了）" 0 "跑了 参数=[] 强制=[]" -- bash "$r/scripts/experiment.sh"
+printf '第四版输入\n' > "$r/input.txt"
+run_scripted "preflight/跑的过程中输入变了就不记（前半：改了输入）" 0 "跑的过程中登记的输入变了" \
+  -- env SAMPLE_CHANGE_INPUT=1 bash "$r/scripts/experiment.sh"
+run_scripted "preflight/跑的过程中输入变了就不记（后半：照判输入变了）" 0 "跑了 参数=[] 强制=[]" -- bash "$r/scripts/experiment.sh"
+printf '代码甲\n' > "$r/code.txt"; printf '决策甲\n' > "$r/decision.txt"
+run_scripted "preflight/两行 inputs-changed（前半：第一次跑）" 0 "跑了" -- bash "$r/scripts/two-inputs.sh"
+printf '代码乙\n' > "$r/code.txt"
+run_scripted "preflight/两行 inputs-changed（后半：第一行的输入变了也算）" 0 "跑了" -- bash "$r/scripts/two-inputs.sh"
+run_scripted "preflight/cd 到别处之后照样记得下指纹（前半）" 0 "跑了" -- bash -c 'cd "$1" && bash scripts/cd-then-record.sh' cd_then_record "$r"
+run_scripted "preflight/cd 到别处之后照样记得下指纹（后半：没变就拒绝）" 78 "以来没变" \
+  -- bash -c 'cd "$1" && bash scripts/cd-then-record.sh' cd_then_record "$r"
+run_scripted "preflight/没有 python3 就拒绝" 78 "没有 python3，判不了准入与运行条件" \
+  -- env PATH=/nonexistent-for-selftest "$BASH" "$r/scripts/minimal.sh"
+run_scripted "preflight/没有 python3 时 --force 照跑、标强制" 0 "强制=[没有 python3" \
+  -- env PATH=/nonexistent-for-selftest "$BASH" "$r/scripts/minimal.sh" --force
+mkdir -p "$r/python-only"; ln -s "$(command -v python3)" "$r/python-only/python3"
+run_scripted "preflight/没有 git 按条件不满足拒绝，不崩" 78 "运行 command（第 3 行）：缺 git" \
+  -- env PATH="$r/python-only" python3 "$r/scripts/preflight.py" check "$r/scripts/minimal.sh"
+run_scripted "preflight/判条件不读走调用方的标准输入" 0 "标准输入=[钩子的输入]" \
+  -- bash -c 'printf "钩子的输入" | bash "$1"' stdin_guard "$r/scripts/stdin-guard.sh"
+run_scripted "preflight/条件写坏了就不跑" 1 "认不出「sometimes」" "判不了" "正文：没跑" \
+  -- bash -c 'script_output="$(bash "$1" 2>&1)"; script_exit_code=$?; printf "%s\n" "$script_output"
+              if grep -q 不该跑到这里 <<<"$script_output"; then echo "正文：跑了"; else echo "正文：没跑"; fi
+              exit "$script_exit_code"' malformed "$r/scripts/malformed.sh"
+run_scripted "preflight/同一个脚本已有实例在跑就拒绝" 78 "已有 1 个实例在跑" -- bash -c '
+  stop_file="$2/stop"; first_output="$2/first.out"
+  SAMPLE_STOP_FILE="$stop_file" bash -o pipefail "$1" > "$first_output" 2>&1 & first_process_id=$!
+  for ((waited_tenths = 0; waited_tenths < 100; waited_tenths++)); do
+    if grep -q 起来了 "$first_output" 2>/dev/null; then break; fi
+    sleep 0.1
+  done
+  second_exit_code=0; bash "$1" || second_exit_code=$?
+  touch "$stop_file"; wait "$first_process_id"
+  exit "$second_exit_code"' single_instance "$r/scripts/single.sh" "$r"
+run_scripted "preflight/没有别的实例就照跑" 0 "起来了" -- bash "$r/scripts/single.sh"
+run_scripted "preflight/python 脚本条件不满足就拒绝" 78 "设了 SAMPLE_BLOCKED 就不许跑" -- env SAMPLE_BLOCKED=1 python3 "$r/scripts/tool.py" 甲
+run_scripted "preflight/python 脚本 --force 照跑、从 sys.argv 里摘掉" 0 "跑了 参数=['甲'] 强制=[运行 check" \
+  -- env SAMPLE_BLOCKED=1 python3 "$r/scripts/tool.py" 甲 --force
 
 # ════ show-me-test（要 git 仓才摆得出场景，现搭现跑）═════
 head1 "门禁自检：show-me-test 的判别力"
@@ -707,6 +795,15 @@ run_scripted "stage-selftest/阶段变恒绿时判红" 1 "期望退出 1，实�
 # 没有本地阶段目录时退 77（本次无对象可判），不许报绿
 run_scripted "stage-selftest/没有本地阶段退 77" 77 "" -- \
   bash "$SCRIPTS/stage-selftest.sh" "$tmpd/stage-selftest-none"
+# 写了准入与运行条件的阶段带 --force 喂样本：它的条件（这里是一条永远不满足的）不挡判别力自检（rules/preflight-discipline.md）
+r="$tmpd/stage-selftest-conditions"; mkdir -p "$r/.claude/gate.d/fixtures/10-demo.sh/red" "$r/.claude/gate.d/fixtures/10-demo.sh/green" "$r/.claude/singlefs-ai-sop/scripts"
+cp "$SCRIPTS/lib.sh" "$SCRIPTS/preflight.py" "$SCRIPTS/preflight.sh" "$SCRIPTS/proc.py" "$r/.claude/singlefs-ai-sop/scripts/"
+printf '#!/usr/bin/env bash\n# admission: always 样本：每次调都有意义\n# run-condition: check false :: 样本：这条条件永远不满足\nsource "$(dirname "${BASH_SOURCE[0]}")/../singlefs-ai-sop/scripts/lib.sh"\npreflight "${BASH_SOURCE[0]}" "$@"; set -- ${PREFLIGHT_ARGUMENTS[@]+"${PREFLIGHT_ARGUMENTS[@]}"}\n[[ -f "${1:-.}/bad.txt" ]] && { echo "  拒绝：有 bad.txt"; exit 1; }\necho "  通过：没有 bad.txt"\n' > "$r/.claude/gate.d/10-demo.sh"
+printf 'exit=1\nwant=有 bad.txt\n' > "$r/.claude/gate.d/fixtures/10-demo.sh/red/expect"
+: > "$r/.claude/gate.d/fixtures/10-demo.sh/red/bad.txt"
+printf 'exit=0\n' > "$r/.claude/gate.d/fixtures/10-demo.sh/green/expect"
+run_scripted "stage-selftest/写了条件的阶段带 --force 喂样本" 0 "有样本的阶段判得都对" -- \
+  bash "$SCRIPTS/stage-selftest.sh" "$r/.claude/gate.d"
 
 # ── 脚本执行位：暂存区里丢了可执行位，工作区那份还是可执行的 ──────
 # 手工暂存时写死 100644 就是这个形态，而在工作区上跑的门禁一声不吭。
@@ -809,11 +906,11 @@ run_scripted "doc-lint/英日两种实测写法的日期也查" 1 "kb/en.md:3  �
 # 包里没有 I18N 时照常判：sed 读不到文件退 2，赋值带着这个退出码，set -e 当场把脚本带走、一个字都不打。
 # doc-lint 与 manifest 各一处（审核实测）；同一形态的另外六处已经带着 `|| true`。
 r="$tmpd/noi18n-doclint"; mkdir -p "$r/pkg/scripts" "$r/proj/kb"
-cp "$SCRIPTS/lib.sh" "$SCRIPTS/doc-lint.sh" "$r/pkg/scripts/"
+cp "$SCRIPTS/lib.sh" "$SCRIPTS/preflight.py" "$SCRIPTS/preflight.sh" "$SCRIPTS/proc.py" "$SCRIPTS/doc-lint.sh" "$r/pkg/scripts/"
 printf '# 决策\n\n正文只写现状。\n\n## 历史版本\n' > "$r/proj/kb/a.md"
 run_scripted "doc-lint/包里没有 I18N 也照常判" 0 "文档铁律检查通过" -- bash "$r/pkg/scripts/doc-lint.sh" "$r/proj"
 r="$tmpd/noi18n-manifest"; mkdir -p "$r/scripts" "$r/rules"
-cp "$SCRIPTS/lib.sh" "$SCRIPTS/manifest.sh" "$r/scripts/"
+cp "$SCRIPTS/lib.sh" "$SCRIPTS/preflight.py" "$SCRIPTS/preflight.sh" "$SCRIPTS/proc.py" "$SCRIPTS/manifest.sh" "$r/scripts/"
 printf '# 规则\n\n正文。\n' > "$r/rules/a.md"; printf "# 包\\n" > "$r/CLAUDE.md"
 run_scripted "manifest/包里没有 I18N 也照常判" 0 "清单与规范文本一致" -- \
   bash -c 'bash "$1/scripts/manifest.sh" --update >/dev/null && bash "$1/scripts/manifest.sh"' _ "$r"
@@ -825,7 +922,7 @@ head1 "门禁自检：bump.sh 的判别力"
 mk_bump_pkg() { # mk_bump_pkg <族目录> <声明的语言...>
   local family_root="$1"; shift
   mkdir -p "$family_root/f-zh/scripts"
-  cp "$SCRIPTS/lib.sh" "$SCRIPTS/bump.sh" "$family_root/f-zh/scripts/"
+  cp "$SCRIPTS/lib.sh" "$SCRIPTS/preflight.py" "$SCRIPTS/preflight.sh" "$SCRIPTS/proc.py" "$SCRIPTS/bump.sh" "$family_root/f-zh/scripts/"
   printf '#!/usr/bin/env bash\nexit 0\n' > "$family_root/f-zh/scripts/manifest.sh"
   printf 'family=f\nthis=zh\nreference=zh\ndefault=zh\nlanguages=%s\n' "$*" > "$family_root/f-zh/I18N"
   printf '0.0.1\n' > "$family_root/f-zh/VERSION"
@@ -863,34 +960,38 @@ run_scripted "install/包装说得清副本不在" 1 "找不到共享脚本" -- 
 # 改成把 gate.sh + lib.sh 拷进一个临时包，各子脚本换成**桩**（按参数决定退出码）。
 # 这样测的正是 run_stage 的记录、汇总的判读、以及最终退出码——与子脚本无关。
 head1 "门禁自检：gate.sh 判决逻辑的判别力"
+STUB_CONDITIONS='# admission: always 桩：selftest 里替真脚本占位，每次调都有意义
+# run-condition: none 桩：不碰任何环境'
 mk_gate_pkg() { # mk_gate_pkg <目录> [要让哪个桩失败]
   local d="$1" failing="${2:-}"
   mkdir -p "$d/scripts" "$d/rules"
-  cp "$SCRIPTS/lib.sh" "$SCRIPTS/gate.sh" "$d/scripts/"
+  cp "$SCRIPTS/lib.sh" "$SCRIPTS/preflight.py" "$SCRIPTS/preflight.sh" "$SCRIPTS/proc.py" "$SCRIPTS/gate.sh" "$d/scripts/"
   printf '0.0.0\n' > "$d/VERSION"
   printf 'family=f\nthis=zh\nreference=zh\ndefault=zh\nlanguages=zh\n' > "$d/I18N"
   printf '# 规则甲\n' > "$d/rules/a.md"
   local n
   for n in gate-lint selftest shell-lint doc-lint rules-lint naming-lint show-me-test check manifest i18n-sync version-discipline changelog-lint script-modes stage-selftest history-ordinal hooks-registered number-name-sync; do
+    # 桩也写准入与运行条件：gate.sh 起每个阶段之前先判它（rules/preflight-discipline.md），没写的会逐个报一句「没写，照跑」
     if [[ "$n" == "$failing" ]]; then
-      printf '#!/usr/bin/env bash\necho "  桩 %s 判红"\nexit 1\n' "$n" > "$d/scripts/$n.sh"
+      printf '#!/usr/bin/env bash\n%s\necho "  桩 %s 判红"\nexit 1\n' "$STUB_CONDITIONS" "$n" > "$d/scripts/$n.sh"
     else
-      printf '#!/usr/bin/env bash\nexit 0\n' > "$d/scripts/$n.sh"
+      printf '#!/usr/bin/env bash\n%s\nexit 0\n' "$STUB_CONDITIONS" > "$d/scripts/$n.sh"
     fi
   done
   # 桩脚本也要可执行：门禁的「脚本执行位」阶段判暂存区里的模式，printf 写出来的是 644。
   chmod +x "$d/scripts"/*.sh
   # python 写的共享脚本也要有桩：gate.sh 直接 python3 它，缺了就是退出码 2。
-  printf '#!/usr/bin/env python3\nraise SystemExit(0)\n' > "$d/scripts/link-targets.py"
-  printf '#!/usr/bin/env python3\nraise SystemExit(0)\n' > "$d/scripts/relay-timing-lint.py"
-  printf '#!/usr/bin/env python3\nraise SystemExit(0)\n' > "$d/scripts/gate-overlap.py"
+  local python_stub
+  for python_stub in link-targets relay-timing-lint gate-overlap preflight-lint; do
+    printf '#!/usr/bin/env python3\n%s\nraise SystemExit(0)\n' "$STUB_CONDITIONS" > "$d/scripts/$python_stub.py"
+  done
 }
 
 # 全绿：退出码 0，且每个阶段名都要出现在汇总里
 # —— 这几个 want 钉住的是「阶段没被人悄悄从 gate.sh 里删掉」
 r="$tmpd/gate-green"; mk_gate_pkg "$r"
 run_scripted "gate/全绿则退出码 0" 0 \
-  "已实现的门禁阶段全部通过" 门禁自检 门禁判别力 "shell 纪律" 门禁查重 文档铁律 规则纪律 命名纪律 "Show me test" \
+  "已实现的门禁阶段全部通过" 门禁自检 准入与运行条件 门禁判别力 "shell 纪律" 门禁查重 文档铁律 规则纪律 命名纪律 "Show me test" \
   规则清单 各语言同步 版本纪律 "CHANGELOG 连续" 跑完没留下临时文件 \
   -- bash "$r/scripts/gate.sh" "$r"
 
@@ -899,6 +1000,44 @@ for st in doc-lint rules-lint naming-lint selftest gate-lint shell-lint show-me-
   r="$tmpd/gate-red-$st"; mk_gate_pkg "$r" "$st"
   run_scripted "gate/$st 红则门禁红" 1 门禁未通过 -- bash "$r/scripts/gate.sh" "$r"
 done
+
+# gate.sh 的编排：阶段的条件不满足就不起它（rules/preflight-discipline.md「gate.sh 怎么编排」）。
+# 拿「规则清单」那个桩当被判的阶段：它跑了就在包根留一个标记文件。
+BLOCKED_STUB_CONDITIONS='# admission: always 桩：每次调都有意义
+# run-condition: check test ! -e "$PREFLIGHT_SCRIPT_DIRECTORY/../blocked" :: 桩：包根有 blocked 文件就不许跑，删掉它'
+MARK_STUB_RAN='touch "$(dirname "$0")/../manifest-ran"; exit 0'
+mk_condition_stub() { # mk_condition_stub <包目录> <文件头的条件行> <正文>：把「规则清单」的桩换成带这些条件的
+  printf '#!/usr/bin/env bash\n%s\n%s\n' "$2" "$3" > "$1/scripts/manifest.sh"; chmod +x "$1/scripts/manifest.sh"
+}
+gate_then_check_marker=(bash -c '
+  gate_output="$(bash "$1/scripts/gate.sh" "$1" "${@:2}" 2>&1)"; gate_exit_code=$?
+  printf "%s\n" "$gate_output"
+  if [[ -e "$1/manifest-ran" ]]; then echo "标记：阶段跑过了"; else echo "标记：阶段没跑"; fi
+  if grep -q "这一轮不前移 gate-ok" <<<"$gate_output"; then echo "gate-ok：这一轮不前移"; else echo "gate-ok：照常"; fi
+  exit "$gate_exit_code"' gate_then_check_marker)
+r="$tmpd/gate-preflight-refused"; mk_gate_pkg "$r"; mk_condition_stub "$r" "$BLOCKED_STUB_CONDITIONS" "$MARK_STUB_RAN"; touch "$r/blocked"
+run_scripted "gate/阶段条件不满足就不起它" 0 "规则清单        本次未跑：条件不满足，没起它" "包根有 blocked 文件就不许跑" \
+  "标记：阶段没跑" "gate-ok：这一轮不前移" "1 个阶段因为条件不满足没起" "这一轮不算「全部通过」" -- "${gate_then_check_marker[@]}" "$r"
+r="$tmpd/gate-preflight-forced"; mk_gate_pkg "$r"; mk_condition_stub "$r" "$BLOCKED_STUB_CONDITIONS" "$MARK_STUB_RAN"; touch "$r/blocked"
+run_scripted "gate/--force 照起，记「强制跑过」" 0 "规则清单（强制跑过" "这一轮不算「全部通过」" "标记：阶段跑过了" "gate-ok：这一轮不前移" \
+  -- "${gate_then_check_marker[@]}" "$r" --force
+r="$tmpd/gate-preflight-met"; mk_gate_pkg "$r"; mk_condition_stub "$r" "$BLOCKED_STUB_CONDITIONS" "$MARK_STUB_RAN"
+run_scripted "gate/条件满足就照常起" 0 "已实现的门禁阶段全部通过" "标记：阶段跑过了" "gate-ok：照常" -- "${gate_then_check_marker[@]}" "$r"
+# 起了之后退 78：分不出是它自己的条件变了，还是它调的脚本拒绝了（传出来的 78），跑了一半的检查也可能被吞掉，按失败记
+r="$tmpd/gate-preflight-stage78"; mk_gate_pkg "$r"; mk_condition_stub "$r" "$STUB_CONDITIONS" 'echo "  桩：前一半判完了"; exit 78'
+run_scripted "gate/阶段起了之后退 78 按失败记" 1 "规则清单：起了之后退了 78" "门禁未通过" -- "${gate_then_check_marker[@]}" "$r"
+r="$tmpd/gate-preflight-malformed"; mk_gate_pkg "$r"; mk_condition_stub "$r" '# admission: sometimes 看情况
+# run-condition: none 桩：不碰任何环境' "$MARK_STUB_RAN"
+run_scripted "gate/阶段的条件写坏了判红、不起它" 1 "规则清单：判不了它的准入与运行条件" "门禁未通过" "标记：阶段没跑" \
+  -- "${gate_then_check_marker[@]}" "$r"
+r="$tmpd/gate-preflight-unchanged"; mk_gate_pkg "$r"; mk_condition_stub "$r" '# admission: inputs-changed ./manifest.sh
+# run-condition: none 桩：不碰任何环境' "$MARK_STUB_RAN"
+git -C "$r" init -q; python3 "$r/scripts/preflight.py" record "$r/scripts/manifest.sh" >/dev/null
+run_scripted "gate/只因输入没变而没起的阶段不挡 gate-ok" 0 "规则清单        本次未跑：条件不满足，没起它——准入 inputs-changed" \
+  "标记：阶段没跑" "gate-ok：照常" -- "${gate_then_check_marker[@]}" "$r"
+r="$tmpd/gate-red-preflight-lint"; mk_gate_pkg "$r"
+printf '#!/usr/bin/env python3\n%s\nprint("  桩 preflight-lint 判红")\nraise SystemExit(1)\n' "$STUB_CONDITIONS" > "$r/scripts/preflight-lint.py"
+run_scripted "gate/preflight-lint 红则门禁红" 1 门禁未通过 "桩 preflight-lint 判红" -- bash "$r/scripts/gate.sh" "$r"
 
 # --staged：别的会话没暂存的改动不算，暂存了的算（rules/session-wrapup.md 第 4 条）。
 # 同一处改动不带 --staged 时要算进来——少了这一例，「--staged 的绿」分不清是没算进来还是那个阶段根本不红。
@@ -1093,6 +1232,24 @@ run_scripted "gate/本地阶段退 77 记本次未跑，不算覆盖" 0 "本次�
 r="$tmpd/gate-covers-typo"; mk_gate_pkg "$r/pkg"; mk_covers_project "$r/proj" 0 崩溃重放
 run_scripted "gate/gate-covers 写了清单里没有的项要红" 1 "gate-covers 写了清单里没有的项：「崩溃重放」" \
   -- "${gate_with_not_impl_section[@]}" "$r/pkg" "$r/proj" "$r/out.txt"
+
+# 本地阶段的条件不满足：不起它、不算覆盖；带 --force 起了也只记「强制跑过」，同样不算覆盖（rules/preflight-discipline.md）
+gate_forcing_with_not_impl_section=(bash -c '
+  bash "$1/scripts/gate.sh" "$2" "${@:4}" > "$3" 2>&1; gate_exit_code=$?
+  cat "$3"
+  listed="$(sed -n "/未实现的门禁阶段/,/^\$/p" "$3" | sed -n "s/^ *! \([^：]*\)：.*/\1/p" | tr -d " " | paste -sd " " -)"
+  echo "未实现段：$listed"
+  exit "$gate_exit_code"' gate_forcing_with_not_impl_section)
+mk_blocked_covers_project() { # mk_blocked_covers_project <目录>：覆盖崩溃点重放、而条件永远不满足的本地阶段
+  mk_covers_project "$1" 0 崩溃点重放
+  sed -i '2a # admission: always 桩：每次调都有意义\n# run-condition: check false :: 桩：这条条件永远不满足' "$1/.claude/gate.d/54-sample.sh"
+}
+r="$tmpd/gate-covers-blocked"; mk_gate_pkg "$r/pkg"; mk_blocked_covers_project "$r/proj"
+run_scripted "gate/本地阶段条件不满足就不起、不算覆盖" 0 "样本重放        本次未跑：条件不满足，没起它" \
+  "未实现段：模型对拍 崩溃点重放 最终判据 命名纪律（shell）" -- "${gate_forcing_with_not_impl_section[@]}" "$r/pkg" "$r/proj" "$r/out.txt"
+r="$tmpd/gate-covers-forced"; mk_gate_pkg "$r/pkg"; mk_blocked_covers_project "$r/proj"
+run_scripted "gate/本地阶段强制跑过也不算覆盖" 0 "样本重放（强制跑过" "未实现段：模型对拍 崩溃点重放 最终判据 命名纪律（shell）" \
+  -- "${gate_forcing_with_not_impl_section[@]}" "$r/pkg" "$r/proj" "$r/out.txt" --force
 
 # ── gate.sh 与各脚本之间的约定 ──────────────────────────
 # doc-lint 报的未实现项要出现在汇总里。此前 en / ja 仓那三条检查报了「未实现」，阶段照样记 PASS，
@@ -1395,7 +1552,7 @@ mk_pair() { # mk_pair <目录> —— 参照仓 + 一个完全跟上的 en 译�
 }
 mk_pkg() { # mk_pkg <目录> <族名> —— 最小参照仓（脚本用真的，内容是样本）
   mkdir -p "$1/scripts" "$1/rules" "$1/skills" "$1/templates" "$1/agents"
-  cp "$SCRIPTS/lib.sh" "$SCRIPTS/manifest.sh" "$SCRIPTS/i18n-sync.sh" "$1/scripts/"
+  cp "$SCRIPTS/lib.sh" "$SCRIPTS/preflight.py" "$SCRIPTS/preflight.sh" "$SCRIPTS/proc.py" "$SCRIPTS/manifest.sh" "$SCRIPTS/i18n-sync.sh" "$1/scripts/"
   printf '# 样本规范\n' > "$1/CLAUDE.md"
   printf '# 规则甲\n' > "$1/rules/a.md"
   printf '# 术语\n' > "$1/GLOSSARY.md"
@@ -1795,7 +1952,7 @@ mk_push_family() { # mk_push_family <目录> [门禁判红的语言] [门禁跑�
     git init -q --bare -b master "$root/remote-$language.git"
     git init -q -b master "$clone"
     mkdir -p "$clone/scripts/githooks"
-    cp "$SCRIPTS/push-all.sh" "$SCRIPTS/lib.sh" "$clone/scripts/"
+    cp "$SCRIPTS/push-all.sh" "$SCRIPTS/lib.sh" "$SCRIPTS/preflight.py" "$SCRIPTS/preflight.sh" "$SCRIPTS/proc.py" "$clone/scripts/"
     cp "$SCRIPTS/githooks/pre-push" "$clone/scripts/githooks/"
     if [[ "$language" == "$red_language" ]]; then
       printf '#!/usr/bin/env bash\necho "  桩门禁判红"\nexit 1\n' > "$clone/scripts/gate.sh"
@@ -1885,3 +2042,5 @@ say ""
   howto "样本目录空了。至少要有一个该绿的和一个该红的，否则这个自检本身什么也不证明。"; exit 1; }
 [[ $fails -eq 0 ]] || { bad "门禁自检失败：$fails 个用例判错（共 $cases）"; exit 1; }   # gate-lint:summary
 ok "门禁自检通过：$pass 个用例判定与预期一致（SELFTEST_VERBOSE=1 看逐条）"
+# 记下这一次的输入指纹：scripts/ 与 I18N、install.sh 没变，下一次就不必再跑（文件头的 inputs-changed）
+preflight_record_success

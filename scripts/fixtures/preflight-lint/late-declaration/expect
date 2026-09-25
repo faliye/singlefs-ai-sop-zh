@@ -1,0 +1,2 @@
+exit=1
+want=.claude/gate.d/10-x.sh:6 这条声明写在第一行代码之后，不算

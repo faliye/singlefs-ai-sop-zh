@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# admission: always 读的是此刻的 settings.json，被 hooks-registered.sh 与 gate-overlap.py 每次现调
+# run-condition: none 只读一份 settings.json，不碰别的环境
 """列出 .claude/settings.json 里注册的每一条钩子命令：事件、matcher、命令，一行一条，制表符分隔。
 
 读 settings.json 的钩子、判「一条注册命令指向哪个钩子」都只在这一处。hooks-registered.sh 判「注册着没有、事件挂全没有」，
@@ -13,6 +15,11 @@ gate-overlap.py 判「新钩子和谁挂在同一个触发点上」，两边各�
 import json
 import re
 import sys
+# 开跑之前先判准入与运行条件（rules/preflight-discipline.md）；不写 __pycache__：门禁跑到一半冒出一个未跟踪的目录，「工作区跑的过程中没变」就对不上
+import os  # noqa: E402
+sys.dont_write_bytecode = True
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+from preflight import preflight  # noqa: E402
 
 
 def registered_hooks(settings_path):
@@ -57,4 +64,5 @@ def main():
 
 
 if __name__ == '__main__':
+    preflight(__file__)
     main()

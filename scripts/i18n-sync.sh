@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# admission: always 判的是此刻各语言仓跟没跟上，兄弟目录里的仓随时在变
+# run-condition: command git sha256sum
 # 各语言文本必须同步：改了任何一份，声明的每种语言都要跟上。
 # this 标明本仓是哪种语言；reference 标明参照仓——清单与门禁脚本在那一份里维护，
 # 其余语言的仓拿到的是它的原样复制。default 是给使用者的默认版本。
@@ -32,6 +34,7 @@
 # 判据（按 kb-discipline「矛盾比空白更糟」定，但对已声明的语言收紧）：
 #   已声明的语言缺文件或落后 —— 都失败。声明了却不跟，等于给人一份过期的规则。
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+preflight "${BASH_SOURCE[0]}" "$@"; set -- ${PREFLIGHT_ARGUMENTS[@]+"${PREFLIGHT_ARGUMENTS[@]}"}
 
 PKG="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 UPDATE=0

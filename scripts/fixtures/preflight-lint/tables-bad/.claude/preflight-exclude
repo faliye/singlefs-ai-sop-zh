@@ -1,0 +1,3 @@
+no-such-file.sh  # 指向不存在
+.claude/gate.d/notes.tsv  # 排了一个不是脚本的
+.claude/gate.d/10-ok.sh

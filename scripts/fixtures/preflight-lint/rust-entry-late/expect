@@ -1,0 +1,3 @@
+exit=1
+want=experiments/e1.rs
+want=fn main 的第一句不是 preflight

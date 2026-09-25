@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# admission: always 判的是此刻全仓的文本，几秒跑完；每一轮门禁都现判，上一轮的结论不替这一轮作保
+# run-condition: command python3
 # 规则文件只写怎么做，不写历史与原因（rules/rules-discipline.md）。
 #
 # 扫 rules/*.md：本包自己的，或项目用 RULES_LINT_DIR 交进来的那一份。
@@ -37,6 +39,7 @@
 #   CLAUDE.md、agents/*.md、skills/*/SKILL.md 走这一路：它们和规则一样是照着执行的，
 #   不纳入射程就会重新腐烂。
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+preflight "${BASH_SOURCE[0]}" "$@"; set -- ${PREFLIGHT_ARGUMENTS[@]+"${PREFLIGHT_ARGUMENTS[@]}"}
 
 SCRIPTS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PACKAGE_ROOT="$(cd "$SCRIPTS/.." && pwd)"

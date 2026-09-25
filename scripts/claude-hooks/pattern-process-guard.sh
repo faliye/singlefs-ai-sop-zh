@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # hook-events: PreToolUse
+# admission: always Claude Code 在每一次 Bash 工具调用之前调它，每条命令都要现判
+# run-condition: command python3 grep
 # Claude Code 的 PreToolUse 钩子（Bash 工具）：命令里有按模式找进程的写法（pgrep 或 pkill 带 -f / --full，或 killall），执行前拒绝。
 #
 # 为什么（rules/command-safety.md「`pkill -f` / `killall` 一律禁用」那一节）：
@@ -36,6 +38,7 @@
 #         同一行开了几个 heredoc 的，按次序各找各的收尾行。
 HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$HOOK_DIR/../lib.sh"
+preflight "${BASH_SOURCE[0]}" "$@"; set -- ${PREFLIGHT_ARGUMENTS[@]+"${PREFLIGHT_ARGUMENTS[@]}"}
 PROC_PY="$(cd "$HOOK_DIR/.." && pwd)/proc.py"
 
 # 从钩子输入里取出要判的代码行，一行一条，写到标准输出。python 程序用 -c 传，标准输入留给钩子的 JSON。

@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 # gate-similar: gate-lint.sh 它逐个脚本、逐行判拒绝带不带出路，不看文件之间，也不看这一次改动加了什么
 # gate-similar: hooks-registered.sh 它判钩子注册着、自检过、事件挂全，不看两个钩子是不是挂在同一个触发点上；读 settings.json、认命令指向哪个钩子的那段已抽成 hook-registrations.py，两边共用
+# admission: always 判的是这一次 diff 窗口（或这个会话）里新加与改动的门禁与钩子，窗口随提交在动
+# run-condition: command git
 """新加的门禁与钩子要先对过已有的：能追加就追加，能合并就合并，不另起一份，更不整段抄一份。
 
 判的是新加与改动的部分，不翻存量：
@@ -46,6 +48,10 @@ import shlex
 import subprocess
 import sys
 import traceback
+# 开跑之前先判准入与运行条件（rules/preflight-discipline.md）；不写 __pycache__：门禁跑到一半冒出一个未跟踪的目录，「工作区跑的过程中没变」就对不上
+sys.dont_write_bytecode = True
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+from preflight import preflight  # noqa: E402
 
 PACKAGE_SCRIPTS_DIRECTORY = os.path.dirname(os.path.realpath(__file__))
 PACKAGE_ROOT = os.path.dirname(PACKAGE_SCRIPTS_DIRECTORY)
@@ -800,6 +806,7 @@ def main():
 
 
 if __name__ == '__main__':
+    preflight(__file__)
     try:
         sys.exit(main())
     except CannotJudge as error:

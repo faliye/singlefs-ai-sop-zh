@@ -51,6 +51,12 @@ die()   { bad "$1"; shift
           else howto "这条拒绝没写出路，是本仓自己的缺陷。请给这处 die 补上第二个参数。"; fi
           exit 1; }
 
+# ── 准入与运行条件（rules/preflight-discipline.md）──────────
+# 每个脚本在 source 本文件之后、第一件干活的事之前照抄这一行：
+#   preflight "${BASH_SOURCE[0]}" "$@"; set -- ${PREFLIGHT_ARGUMENTS[@]+"${PREFLIGHT_ARGUMENTS[@]}"}
+# 两个函数（preflight、preflight_record_success）定义在 preflight.sh，只此一处；不 source 本文件的钩子直接 source 它。
+source "$(dirname "${BASH_SOURCE[0]}")/preflight.sh"
+
 # ── 「命令位置」的唯一定义 ──────────────────────────────
 # gate-lint 与 shell-lint 都要判「这个记号是被执行了，还是只是出现在字符串里」。
 # 各写一份的结果：shell-lint 的那份含 `(){}`，gate-lint 的那份没有，于是

@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # gate-similar: 无 查过 shell-lint.sh、gate-lint.sh：它们读脚本正文，没有哪一道读暂存区里的文件模式
+# admission: always 判的是此刻暂存区里的文件模式，一秒跑完
+# run-condition: command git
 # 脚本的执行位在暂存区里没有丢。
 #
 # 手工只暂存「这一轮的」时，`git update-index --cacheinfo` 要自己写模式；写死 100644 就把
@@ -18,6 +20,7 @@
 # （rules/show-me-test.md：扫到 0 项也不是通过）。
 set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+preflight "${BASH_SOURCE[0]}" "$@"; set -- ${PREFLIGHT_ARGUMENTS[@]+"${PREFLIGHT_ARGUMENTS[@]}"}
 
 SCRIPTS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DIRS=("$@")

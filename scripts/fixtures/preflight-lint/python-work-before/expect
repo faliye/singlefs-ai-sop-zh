@@ -1,0 +1,2 @@
+exit=1
+want=.claude/scripts/tool.py:10 开跑之前没先判条件：这一句在调 preflight 之前就干活了

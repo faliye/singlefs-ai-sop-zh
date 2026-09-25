@@ -1,0 +1,2 @@
+exit=1
+want=.claude/gate.d/10-x.sh:5 preflight 那一行之前没有 source lib.sh

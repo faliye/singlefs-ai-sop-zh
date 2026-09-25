@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# admission: always 由人决定什么时候抬（改了规范本体、要提交的时候）；新号是不是比旧号大由它自己判
+# run-condition: command git sed
 # 一次升所有语言的 VERSION —— 版本一致不靠自觉，靠没有别的路可走。
 #
 #   bump.sh <新版本>            升 I18N 里声明的全部语言
@@ -7,6 +9,7 @@
 # 为什么不让人手改 VERSION：每个仓各改一次，漏一个就是各语言版本不一。
 # 而版本不一时，项目侧只会看到自己那一份，看不出别人已经变了。
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+preflight "${BASH_SOURCE[0]}" "$@"; set -- ${PREFLIGHT_ARGUMENTS[@]+"${PREFLIGHT_ARGUMENTS[@]}"}
 PKG="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CF="$PKG/I18N"
 

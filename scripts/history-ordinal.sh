@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # gate-similar: doc-lint.sh 它判每份 kb 文档此刻的文本形态，不看改动；撞号只判这一次新增的条目（存量撞号一改就改坏已经指过去的锚点），要拿 HEAD 比
+# admission: always 判的是这一次 diff 窗口里新增的历史条目，窗口随提交在动
+# run-condition: command git python3
 # 本次新增的历史条目有没有撞号。
 #
 # 变更史的条目标题形如 `### 2026-09-01（其十六）：……`，同一天按「其 N」顺序编号。
@@ -22,6 +24,7 @@
 set -uo pipefail
 # lib.sh 要在 cd 之前按绝对路径 source：cd 之后 BASH_SOURCE 的相对路径就指不到了。
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
+preflight "${BASH_SOURCE[0]}" "$@"; set -- ${PREFLIGHT_ARGUMENTS[@]+"${PREFLIGHT_ARGUMENTS[@]}"}
 # lib.sh 带进来的 set -e 要关掉：下面拿 ((...)) 与 grep -c 的返回值做判断，
 # 条件为假时它们返回 1，-e 会在那一行把整个脚本带走（rules/command-safety.md）。
 set +e

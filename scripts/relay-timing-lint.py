@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 # gate-similar: shell-lint.sh 它按正则判 shell 脚本；这一道要解析 Rust 与 Python 的循环体（抹字符串、配花括号、走 ast），语言与解析法都不同
 # gate-similar: link-targets.py 读 .claude/doc-lint-exclude 的函数，它、这一道与 number-name-sync.sh 各写了一份，三份已经分叉；抽成共用要先定哪一份的行为对，没在加查重门禁的这一次动它们
+# admission: always 判的是此刻仓里的 .rs 与 .py，几秒跑完；每一轮门禁都现判
+# run-condition: command git
 """读子进程输出的循环里，不许一边给行打时间戳、一边把行转打出去。
 
 用法：
@@ -53,6 +55,10 @@ import subprocess
 import sys
 import tempfile
 from typing import Optional
+# 开跑之前先判准入与运行条件（rules/preflight-discipline.md）；不写 __pycache__：门禁跑到一半冒出一个未跟踪的目录，「工作区跑的过程中没变」就对不上
+sys.dont_write_bytecode = True
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+from preflight import preflight  # noqa: E402
 
 # 扫哪几个顶层目录：不给就扫仓根下**所有**目录（跳过 SKIP_DIRECTORIES 那几个）。
 # 项目的源码与装置住在哪由项目定，上游脚本不写死它的目录名。
@@ -937,4 +943,5 @@ def main(arguments: list) -> int:
 
 
 if __name__ == "__main__":
+    preflight(__file__)
     sys.exit(main(sys.argv[1:]))

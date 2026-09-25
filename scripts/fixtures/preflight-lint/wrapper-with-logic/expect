@@ -1,0 +1,2 @@
+exit=1
+want=.claude/scripts/gate.sh:1 文件头没写 admission

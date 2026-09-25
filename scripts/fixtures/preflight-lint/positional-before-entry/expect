@@ -1,0 +1,2 @@
+exit=1
+want=.claude/gate.d/10-x.sh:6 在调 preflight 之前读了参数，--force 还没摘掉

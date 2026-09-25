@@ -1,0 +1,3 @@
+exit=1
+want=.claude/gate.d/10-x.sh:1 文件头没写 admission
+want=.claude/gate.d/10-x.sh:1 文件头没写 run-condition

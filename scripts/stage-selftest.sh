@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # gate-similar: selftest.sh 它拿本包自己的样本喂共享脚本；这一道按 <阶段目录>/fixtures/<阶段>/{red,green}/ 的约定喂项目本地阶段，射程与样本格式都不同
+# admission: always 项目的本地阶段与它们的样本随时在改，不在本包的输入里
+# run-condition: command python3
 # 项目本地门禁阶段自己会不会红。
 #
 # 拿一组「本该红」和「本该绿」的样本喂给每个本地阶段，看它判得对不对。
@@ -22,6 +24,7 @@
 # （rules/show-me-test.md：exit 0 的跳过在汇总里与「判过了」一模一样）。
 set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+preflight "${BASH_SOURCE[0]}" "$@"; set -- ${PREFLIGHT_ARGUMENTS[@]+"${PREFLIGHT_ARGUMENTS[@]}"}
 
 GD="${1:-}"
 if [[ -z "$GD" ]]; then
@@ -47,6 +50,10 @@ pass=0; fail=0; nocase=()
 for stage in "$GD"/*.sh; do
   name="$(basename "$stage")"
   if [[ ! -d "$FX/$name" ]]; then nocase+=("$name"); continue; fi
+  # 样本只验阶段判得对不对，不产出证据：写了准入与运行条件的阶段带 --force 喂（输入没变、环境不齐也照判；
+  # 强制跑的那一次不记成「上次成功」）。没写的不带：它还不认 --force，多一个参数可能被当成项目根（rules/preflight-discipline.md）。
+  stage_force_option=()
+  if python3 "$(dirname "${BASH_SOURCE[0]}")/preflight.py" declared "$stage"; then stage_force_option=(--force); fi
   for kind in red green; do
     d="$FX/$name/$kind"
     [[ -d "$d" ]] || continue
@@ -66,7 +73,7 @@ for stage in "$GD"/*.sh; do
     # 退出码要在 `|| got=$?` 里取：lib.sh 带进来的 set -e 会在样本判红的那一行
     # 把整个脚本带走，而判红正是这里最要看的结果（rules/command-safety.md）。
     out=""; got=0
-    out="$(cd "$work" && env -u GATE_BASE -u GATE_STAGED_FROM -u GATE_DIFF_BASE bash "$stage" "$work" 2>&1)" || got=$?
+    out="$(cd "$work" && env -u GATE_BASE -u GATE_STAGED_FROM -u GATE_DIFF_BASE bash "$stage" "$work" ${stage_force_option[@]+"${stage_force_option[@]}"} 2>&1)" || got=$?
     rm -rf "${work:?}"
     okc=1
     if [[ "$got" != "$want_exit" ]]; then

@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# admission: always 由人决定什么时候推；它自己先把全部语言仓验一遍，验不过一个都不推
+# run-condition: command git
+# run-condition: single-instance
 # 各语言仓一起验、一起推：先把 I18N 里声明的全部语言仓验一遍，验完才连远端，逐个推验过的那个提交。
 #
 #   push-all.sh [各语言仓所在目录]      推 master 只走这一条路
@@ -22,6 +25,7 @@
 #      推的时候写成 <验过的提交>:refs/heads/master，不推「推的那一刻的 master」
 # 都过了：先推其余语言仓，最后推本仓。每次 push 都带 SOP_PUSH_ALL_INNER=1，钩子看到它就直接放行。
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+preflight "${BASH_SOURCE[0]}" "$@"; set -- ${PREFLIGHT_ARGUMENTS[@]+"${PREFLIGHT_ARGUMENTS[@]}"}
 
 # 从 git 钩子、或 git worktree 里带着 GIT_DIR 调本脚本时，GIT_DIR 指向本仓，它压过 `git -C`：
 # 不清掉的话，对其余语言仓的查验和 push 实际都落在本仓上（2026-09-11 实测）。

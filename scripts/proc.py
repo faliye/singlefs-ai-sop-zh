@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# admission: always 找、等、停进程，每次调的时候进程表都不一样
+# run-condition: check test -d /proc :: 没有 /proc：proc.py 只在 Linux 上用
 """找进程、按 pid 等进程、按 pid 停进程：替掉 `pgrep -f` / `pkill -f` / `killall`。
 
 为什么：`pgrep -f` / `pkill -f` 拿模式串去比整条命令行，而发出这条命令的 shell 自己的命令行里就带着那个模式串——
@@ -25,6 +27,10 @@ import signal
 import subprocess
 import sys
 import time
+# 开跑之前先判准入与运行条件（rules/preflight-discipline.md）；不写 __pycache__：门禁跑到一半冒出一个未跟踪的目录，「工作区跑的过程中没变」就对不上
+sys.dont_write_bytecode = True
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+from preflight import preflight  # noqa: E402
 
 BROKEN = os.environ.get("PROC_BREAK", "")
 
@@ -197,4 +203,5 @@ def main():
 
 
 if __name__ == "__main__":
+    preflight(__file__)
     sys.exit(main())

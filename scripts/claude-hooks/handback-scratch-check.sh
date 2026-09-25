@@ -2,6 +2,8 @@
 # hook-events: PreToolUse:SubagentHandback SubagentStop
 # gate-similar: gate-reuse-check.sh 同挂在 SubagentStop 上、读同一份子 agent 会话记录，但它判这一轮新写的门禁与钩子该不该单独存在，这里判临时目录里留没留编译目录与仓副本，对象与放行条件都不同；读钩子输入那一段已抽进 claude-hook-lib.sh 两边共用
 # gate-similar: pattern-process-guard.sh 同在 PreToolUse 上，但它的 matcher 是 Bash、在命令执行前拒绝按模式杀进程；这里的 matcher 是交回工具 SubagentHandback，看的是磁盘上留下了什么
+# admission: always Claude Code 在子 agent 交回与收工时调它，判的是此刻临时目录里还剩什么
+# run-condition: command python3
 # Claude Code 钩子（交回的尾门禁）：子 agent 交回之前，它自己建的编译目录与仓副本要删掉
 # （rules/session-wrapup.md「子 agent 交回之前，删掉自己建的编译目录与仓副本」）。
 #
@@ -42,6 +44,8 @@ HANDBACK_SCRATCH="$PACKAGE_ROOT/scripts/handback-scratch.py"
 STATE_DIRECTORY="${HANDBACK_SCRATCH_CHECK_STATE_DIRECTORY:-${TMPDIR:-/tmp}/handback-scratch-check}"
 HANDBACK_TOOL_NAME=SubagentHandback
 source "$PACKAGE_ROOT/scripts/claude-hook-lib.sh"
+source "$PACKAGE_ROOT/scripts/preflight.sh"
+preflight "${BASH_SOURCE[0]}" "$@"; set -- ${PREFLIGHT_ARGUMENTS[@]+"${PREFLIGHT_ARGUMENTS[@]}"}
 
 judge_handback() { # judge_handback（钩子 JSON 在 stdin）→ 退出码 0 放行、2 拦下、1 没判
   local hook_json fields hook_event_name stop_hook_active agent_transcript main_transcript session_directory session_id agent_id tool_name

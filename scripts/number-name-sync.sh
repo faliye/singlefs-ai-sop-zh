@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # gate-similar: doc-lint.sh 它判 markdown 里的「编号（简称）」；这一道把同一条判据延到源码注释、脚本与记录。登记标题的解析两边各写了一份，没抽成共用：doc-lint 那份在 awk 里、按 markdown 的结构认，抽出来要先把它从 awk 里拆出来
 # gate-similar: link-targets.py 读 .claude/doc-lint-exclude、找 SOP 副本目录的两个函数，它、这一道与 relay-timing-lint.py 各写了一份，三份已经分叉（候选路径、结尾斜杠的处理不同）；抽成共用要先定哪一份的行为对，没在加查重门禁的这一次动它们
+# admission: always 判的是此刻仓里的源码注释、脚本与记录，几秒跑完；每一轮门禁都现判
+# run-condition: command python3
 # 编号与简称在 doc-lint 够不到的地方也要一致。
 #
 # `doc-lint.sh` 管的是 markdown。而编号引用还散在**源码注释、脚本、记录**里，
@@ -17,6 +19,8 @@
 #   number-name-sync.sh [仓根] [要扫的目录…]
 # kb 目录不存在、或一个文件都没扫到时退 77（本次无对象可判），不报绿。
 set -uo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/preflight.sh"
+preflight "${BASH_SOURCE[0]}" "$@"; set -- ${PREFLIGHT_ARGUMENTS[@]+"${PREFLIGHT_ARGUMENTS[@]}"}
 ROOT="${1:-.}"
 cd "$ROOT" 2>/dev/null || exit 2
 shift 2>/dev/null || true

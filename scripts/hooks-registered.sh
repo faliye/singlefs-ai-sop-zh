@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # gate-similar: stage-selftest.sh 它拿 fixtures 下的红绿样本证明 gate.d 的阶段会红；钩子的证据是在 settings.json 里注册着、带 --selftest 自证，输入与协议都不同
+# admission: always 判的是此刻 settings.json 的注册与钩子的自检，两边随时在改
+# run-condition: command python3
 # 工具层的闸注册着、而且会拒绝。
 #
 # 规则里写一句提醒拦不住手敲的命令，能拦住的是一个当场拒绝执行的钩子
@@ -20,6 +22,7 @@
 #   hooks-registered.sh [仓根]
 set -uo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
+preflight "${BASH_SOURCE[0]}" "$@"; set -- ${PREFLIGHT_ARGUMENTS[@]+"${PREFLIGHT_ARGUMENTS[@]}"}
 set +e
 
 ROOT="$(cd "${1:-.}" && pwd)"
