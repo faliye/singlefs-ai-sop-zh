@@ -1,19 +1,21 @@
 #!/usr/bin/env bash
-# git 的 pre-push 钩子：推任何一个语言仓，都交给 push-all.sh 把全部语言仓一起验、一起推。
+# git 的 pre-push 钩子：直接 git push master 一律拒绝，指回 scripts/push-all.sh。
 #   启用（每个语言仓各一次）：git config core.hooksPath scripts/githooks
-# push-all.sh 推其余语言仓时带着 SOP_PUSH_ALL_INNER=1，那几次推送在这里直接放行，不再反过来推本仓。
+# 推 master 要全部语言仓一起验、一起推，而验证要十几分钟。git push 是先连上远端、再跑这个钩子的，
+# 在这里验，那条连接就闲着等十几分钟，会被掐断（2026-09-25 推 0.0.57 时实测 Broken pipe）。
+# 所以这里只拦、不验：push-all.sh 先验完三个仓，才逐个新开连接推，那几次推送带着 SOP_PUSH_ALL_INNER=1，在这里直接放行。
 [[ "${SOP_PUSH_ALL_INNER:-}" == 1 ]] && exit 0
 # git 把要推的 ref 从标准输入喂进来，一行一条：<本地ref> <本地sha> <远端ref> <远端sha>。
-# 只有推 master 才走「全部语言仓一起验、一起推」。此前一律不看 ref：推一个特性分支、一个 tag，
-# 甚至 `git push --dry-run`，都会让另外两个语言仓的 master **真的**被推出去（审计实测）。
-# --dry-run 在钩子里看不出来，所以推 master 的那一次仍然会真推——这一条写在 CLAUDE.md 里，钩子拦不了。
+# 只有推 master 才拦；推一个特性分支、一个 tag，按普通 push 放行。
 pushing_master=0
 while read -r _local_ref _local_sha remote_ref _remote_sha; do
   [[ "$remote_ref" == refs/heads/master ]] && pushing_master=1
 done
 if [[ $pushing_master -eq 0 ]]; then
-  printf '  ! 推的不是 master，不触发「全部语言仓一起验、一起推」\n'
-  printf '     → 怎么办： 要一起推就推 master；本次按普通 push 放行。\n'
+  printf '  ! 推的不是 master，不走「全部语言仓一起验、一起推」\n'
+  printf '     → 怎么办： 要推 master 就跑 bash scripts/push-all.sh；本次按普通 push 放行。\n'
   exit 0
 fi
-exec bash "$(dirname "${BASH_SOURCE[0]}")/../push-all.sh" --from-hook
+printf '  ✗ 直接 git push master 不放行：全部语言仓要一起验、一起推，而验证要十几分钟，不能让这条已经连上的连接干等\n'
+printf '     → 怎么办： 跑 bash scripts/push-all.sh——它先把全部语言仓验完，验完才连远端，逐个推验过的那个提交。\n'
+exit 1

@@ -40,7 +40,6 @@
   77 这一次没有新加或改动门禁与钩子，或不在 git 仓里（无对象可判，不算通过）。
 """
 import importlib.util
-import json
 import os
 import re
 import shlex
@@ -101,17 +100,20 @@ class CannotJudge(Exception):
         self.next_step = next_step
 
 
-def load_hook_registrations():
+def load_package_module(module_name, file_name):
     # 不写 __pycache__：它会是仓里一个未跟踪的新目录，门禁跑到一半冒出来，「工作区跑的过程中没变」那一项就对不上
     sys.dont_write_bytecode = True
     specification = importlib.util.spec_from_file_location(
-        'hook_registrations', os.path.join(PACKAGE_SCRIPTS_DIRECTORY, 'hook-registrations.py'))
+        module_name, os.path.join(PACKAGE_SCRIPTS_DIRECTORY, file_name))
     module = importlib.util.module_from_spec(specification)
     specification.loader.exec_module(module)
     return module
 
 
-HOOK_REGISTRATIONS = load_hook_registrations()
+HOOK_REGISTRATIONS = load_package_module('hook_registrations', 'hook-registrations.py')
+# 读会话记录只在 session-transcript.py 一处，收工钩子 handback-scratch-check.sh 调的 handback-scratch.py 也用它
+SESSION_TRANSCRIPT = load_package_module('session_transcript', 'session-transcript.py')
+tool_uses_in_transcript = SESSION_TRANSCRIPT.tool_uses_in_transcript
 
 
 def read_lines(path):
@@ -263,15 +265,16 @@ class Inventory:
         已有的钩子只按注册算——没注册的本来就不生效，谈不上和谁挂在一起。"""
         registered = self.registered_triggers(hook_path)
         registered_events = {event_name for event_name, _matcher in registered}
-        declared = [(event_name, '') for event_name in declared_hook_events(hook_path) if event_name not in registered_events]
+        declared = [(event_name, matcher) for event_name, matcher in declared_hook_events(hook_path) if event_name not in registered_events]
         return registered + declared
 
 
 def declared_hook_events(path):
+    """文件头 # hook-events: 里的（事件, matcher）；写成 <事件>:<工具名> 的 matcher 就是那个工具名，只写事件的是空（全匹配）。"""
     for line in read_lines(path)[:60]:
         match = HOOK_EVENTS_RE.match(line)
         if match:
-            return match.group(1).split()
+            return [tuple(token.partition(':')[::2]) for token in match.group(1).split()]
     return []
 
 
@@ -392,14 +395,10 @@ def resolve_diff_base(project_root):
 def session_start_base(project_root, transcript_path):
     """收工钩子的窗口起点：会话开始之前的最后一个提交。会话记录按时间顺序写，第一条带时间戳的就是开始的时刻；
     一条都没有就退回门禁阶段那套算法。"""
-    first_timestamp = None
-    for entry in transcript_entries(transcript_path, '"timestamp"'):
-        if isinstance(entry.get('timestamp'), str):
-            first_timestamp = entry['timestamp']
-            break
-    if first_timestamp is None:
+    session_started_at = SESSION_TRANSCRIPT.first_timestamp(transcript_path)
+    if session_started_at is None:
         return resolve_diff_base(project_root)
-    completed = run_git(project_root, 'rev-list', '-1', '--before=' + first_timestamp, 'HEAD')
+    completed = run_git(project_root, 'rev-list', '-1', '--before=' + session_started_at, 'HEAD')
     commit = completed.stdout.strip()
     return commit if completed.returncode == 0 and commit else EMPTY_TREE
 
@@ -430,38 +429,6 @@ def changed_lines_by_path(project_root, base, pathspecs):
         line_count = len(read_lines(os.path.join(project_root, untracked_path)))
         added_lines[untracked_path] = set(range(1, line_count + 1))
     return added_lines, new_paths
-
-
-def transcript_entries(transcript_path, must_contain):
-    """逐行流式读会话记录（JSONL），只解析含 must_contain 的行：长会话的记录上百 MB，整份读进来再解析既慢又吃内存。"""
-    try:
-        with open(transcript_path, encoding='utf-8', errors='replace') as transcript_file:
-            for line in transcript_file:
-                if must_contain not in line:
-                    continue
-                try:
-                    entry = json.loads(line)
-                except ValueError:
-                    continue
-                if isinstance(entry, dict):
-                    yield entry
-    except OSError:
-        return
-
-
-def tool_uses_in_transcript(transcript_path):
-    """会话记录里每一次工具调用的（工具名, 输入）。一行解析不了就跳过那一行。"""
-    tool_uses = []
-    for entry in transcript_entries(transcript_path, '"tool_use"'):
-        # Claude Code 写的是 {"type":"assistant","message":{"content":[…]}}；顶层直接放 content 的也认
-        message = entry.get('message')
-        content = message.get('content') if isinstance(message, dict) else entry.get('content')
-        if not isinstance(content, list):
-            continue
-        for block in content:
-            if isinstance(block, dict) and block.get('type') == 'tool_use' and isinstance(block.get('input'), dict):
-                tool_uses.append((block.get('name') or '', block['input']))
-    return tool_uses
 
 
 def shell_words(line):

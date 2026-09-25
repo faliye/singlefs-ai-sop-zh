@@ -3,6 +3,7 @@
 # gate-similar: gate-overlap.py 判定全在它那里；这个钩子只负责在 agent 收工时拿这个会话写过的文件调它，有红就拦下收工
 # gate-similar: hooks-registered.sh 它判钩子注册着没有、自检过没有，不判这一轮新建的钩子该不该单独存在
 # gate-similar: pattern-process-guard.sh 它挂在 PreToolUse 的 Bash 上、在命令执行前拦；这里挂在 Stop 与 SubagentStop 上，触发点不同
+# gate-similar: handback-scratch-check.sh 同挂在 SubagentStop 上，但它判子 agent 交回时临时目录里还留着自己建的编译目录与仓副本，这里判这一轮新写的门禁与钩子该不该单独存在，对象与放行条件都不同；读钩子输入那一段两边共用 claude-hook-lib.sh
 # Claude Code 的 Stop / SubagentStop 钩子（收工的尾门禁）：agent 这一轮新建了门禁或钩子，收工前先自检它是不是非得单独加。
 #
 # 主 agent 收工触发 Stop，子 agent 收工触发 SubagentStop，两个都要注册。
@@ -13,10 +14,8 @@
 #   # gate-similar: <已有的文件名> <为什么不并进它>
 # 写完再收工就放行（rules/sop-first.md「加门禁或钩子之前，先找已有的」）。
 #
-# 不死循环：拦下时把判定输出的指纹记在状态目录里（按 session_id 与 agent_id 分开）。
-#   输入里 stop_hook_active 为真（这一段是被某个收工钩子拦回来之后在续跑）而判定结果与上一次拦下时一字不差，
-#   就放行——agent 已经看过这一份了，再拦只会原地打转；没改的由门禁阶段「门禁查重」在提交前判红。
-#   结果变了（改了一半、又新建了一份）照样再拦。Claude Code 自己也在连拦 8 次之后强制收工。
+# 不死循环：拦下时把判定输出的指纹记在状态目录里（按 session_id 与 agent_id 分开），续跑里同一份红不连拦两次；
+#   放行条件在 scripts/claude-hook-lib.sh 的 stop_hook_already_shown。没改的由门禁阶段「门禁查重」在提交前判红。
 # 会话记录取 agent_transcript_path（子 agent 自己的那份），没有就取 transcript_path；两个都没有就放行。
 # 项目根取 CLAUDE_PROJECT_DIR，没有就取输入里的 cwd。
 # 状态目录默认 ${TMPDIR:-/tmp}/gate-reuse-check，GATE_REUSE_CHECK_STATE_DIRECTORY 可改。
@@ -36,37 +35,20 @@ HOOK_DIRECTORY="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PACKAGE_ROOT="$(cd "$HOOK_DIRECTORY/../.." && pwd)"
 GATE_OVERLAP="$PACKAGE_ROOT/scripts/gate-overlap.py"
 STATE_DIRECTORY="${GATE_REUSE_CHECK_STATE_DIRECTORY:-${TMPDIR:-/tmp}/gate-reuse-check}"
-
-# 从钩子输入里取五样，一行一样：stop_hook_active（true / false）、会话记录路径、cwd、session_id、agent_id。
-# 输入不是 JSON 对象时退出码 3。
-IFS= read -r -d '' EXTRACT_STOP_FIELDS <<'PY' || true
-import json, re, sys
-try:
-    hook_input = json.load(sys.stdin)
-except ValueError:
-    sys.exit(3)
-if not isinstance(hook_input, dict):
-    sys.exit(3)
-def text(key):
-    value = hook_input.get(key)
-    return value.replace('\n', ' ') if isinstance(value, str) else ''
-print('true' if hook_input.get('stop_hook_active') is True else 'false')
-print(text('agent_transcript_path') or text('transcript_path'))
-print(text('cwd'))
-print(re.sub(r'[^A-Za-z0-9_-]', '_', text('session_id')) or 'no-session')
-print(re.sub(r'[^A-Za-z0-9_-]', '_', text('agent_id')) or 'main')
-PY
+source "$PACKAGE_ROOT/scripts/claude-hook-lib.sh"
 
 judge_stop() { # judge_stop < 钩子 JSON → 退出码 0 放行、2 拦下、1 没判
-  local fields stop_hook_active transcript session_directory session_id agent_id project_root
-  local judgement judgement_exit_code fingerprint state_file
-  if ! fields="$(python3 -c "$EXTRACT_STOP_FIELDS")"; then
+  local fields hook_event_name stop_hook_active agent_transcript main_transcript transcript session_directory session_id agent_id
+  local project_root judgement judgement_exit_code
+  if ! fields="$(claude_hook_fields)"; then
     printf '%s\n' "! gate-reuse-check：钩子输入不是 JSON 对象，这一次收工没判（放行）。" \
       "  看一眼 .claude/settings.json 里这个钩子是不是挂在 Stop / SubagentStop 上。" >&2
     return 1
   fi
-  { IFS= read -r stop_hook_active; IFS= read -r transcript; IFS= read -r session_directory
-    IFS= read -r session_id; IFS= read -r agent_id; } <<<"$fields"
+  { IFS= read -r hook_event_name; IFS= read -r stop_hook_active; IFS= read -r agent_transcript; IFS= read -r main_transcript
+    IFS= read -r session_directory; IFS= read -r session_id; IFS= read -r agent_id; } <<<"$fields"
+  # Stop 与 SubagentStop 同样判（hook_event_name 不分流）；子 agent 认它自己的那份会话记录
+  transcript="${agent_transcript:-$main_transcript}"
   [[ -n "$transcript" && -f "$transcript" ]] || return 0
   project_root="${CLAUDE_PROJECT_DIR:-$session_directory}"
   [[ -n "$project_root" && -d "$project_root" ]] || return 0
@@ -81,12 +63,9 @@ judge_stop() { # judge_stop < 钩子 JSON → 退出码 0 放行、2 拦下、1 
         "$judgement" >&2
       return 1 ;;
   esac
-  fingerprint="$(printf '%s' "$judgement" | sha256sum | cut -d' ' -f1)"
-  state_file="$STATE_DIRECTORY/$session_id-$agent_id"
-  if [[ "$stop_hook_active" == true && -f "$state_file" && "$(cat "$state_file" 2>/dev/null)" == "$fingerprint" ]]; then
+  if stop_hook_already_shown "$STATE_DIRECTORY/$session_id-$agent_id" "$stop_hook_active" "$judgement"; then
     return 0
   fi
-  mkdir -p "$STATE_DIRECTORY" 2>/dev/null && printf '%s\n' "$fingerprint" > "$state_file" 2>/dev/null
   {
     printf '%s\n' '✗ 收工前先自检：这一轮你新建或改动了门禁、钩子，下面几处还没说清它为什么非得单独存在（或者整段抄了已有的一份）。' \
       '→ 怎么办：逐条看下面的判定。能并进已有的门禁或钩子，就把判据并进去、不再单独留这一份；' \

@@ -116,6 +116,8 @@ ROOT="${1:-$(project_root)}"
 [[ -d "$ROOT" ]] || die "找不到项目根：$ROOT" \
   "在项目根跑，或把它作为第一个参数传进来： bash .claude/scripts/gate.sh <项目根>"
 cd "$ROOT"
+# 判红时留下的临时目录按它记：只清、只列同一个项目根留下的
+GATE_PROJECT_ROOT_PHYSICAL="$(pwd -P)"
 # 开跑时的 HEAD。gate-ok 记的是它，不是跑完时的 HEAD——见文末。
 START_HEAD="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || true)"
 # 开跑时的工作区指纹。汇总之前再算一次，对不上说明这一轮各阶段读到的不是同一版——见「门禁结果」前面那一段。
@@ -138,6 +140,9 @@ export GATE_DIFF_BASE
 GATE_SUMMARY_PRINTED=0
 gate_exit_guard() {
   local rc=$?
+  # 这一轮的临时目录不许比门禁活得久：正常收尾与中途退出（die、被打断、被杀）都在这里删，只删这一处。
+  # 例外只有一个：有阶段判红、它的现场留在里面（「跑完没留下临时文件」那一段决定留，打印路径）
+  if [[ -n "${GATE_RUN_TMPDIR:-}" && "${GATE_RUN_TMPDIR_KEPT:-0}" != 1 ]]; then rm -rf --one-file-system -- "${GATE_RUN_TMPDIR:?}"; fi
   (( GATE_SUMMARY_PRINTED )) && return
   printf '  ✗ 门禁没跑完就退出了（退出码 %s），一行汇总都没打印\n' "$rc" >&2
   printf '     → 怎么办：上面最后打印的那个阶段就是断点，从那里往下看。\n' >&2
@@ -145,6 +150,27 @@ gate_exit_guard() {
   exit "$(( rc == 0 ? 1 : rc ))"
 }
 trap gate_exit_guard EXIT
+
+# ── 这一轮自己的临时目录 ─────────────────────────────
+# 各阶段（连同它们起的测试与装置）拿到这一轮自己的 TMPDIR；收尾时里面还剩下的，就是谁建了没删
+# （rules/command-safety.md「测试镜像一律放临时目录」）。判在「跑完没留下临时文件」那一段。
+# 有意跨轮复用的缓存放 GATE_CROSS_RUN_TMPDIR（这一轮开跑前的那个临时目录），门禁不管那里；
+# 阶段里写成 ${GATE_CROSS_RUN_TMPDIR:-${TMPDIR:-/tmp}}，门禁之外单跑时落回平常的临时目录。
+# 嵌套跑（selftest 里的门禁）沿用外层的：它指的一直是所有门禁之外的那个临时目录。
+if [[ -z "${GATE_CROSS_RUN_TMPDIR:-}" ]]; then GATE_CROSS_RUN_TMPDIR="${TMPDIR:-/tmp}"; fi
+export GATE_CROSS_RUN_TMPDIR
+GATE_RUN_TMPDIR_KEPT=0
+# 判红时整个留着的那些，带这个标记（一行：留下的时刻、制表符、项目根）；同一个项目根留下的只留最近 KEPT_RUN_DIRECTORY_LIMIT 个，
+# 更早的在之后跑的那一轮删掉。没有标记的 gate-run.* 是别的会话正在跑的那一轮，别的项目根留下的归那个项目，都不碰。
+KEPT_RUN_DIRECTORY_MARKER=.kept-by-gate
+KEPT_RUN_DIRECTORY_LIMIT=3
+GATE_RUN_PARENT_DIRECTORY="${TMPDIR:-/tmp}"
+if ! GATE_RUN_TMPDIR="$(mktemp -d "${TMPDIR:-/tmp}/gate-run.XXXXXX")"; then
+  die "建不了这一轮的临时目录（在 ${TMPDIR:-/tmp} 下）" \
+    "看一眼那里的空间与权限（df -h ${TMPDIR:-/tmp}），或者把 TMPDIR 指到一个写得进去的目录再跑。"
+fi
+TMPDIR="$GATE_RUN_TMPDIR"
+export TMPDIR
 
 STAGES=(); RESULTS=(); NOT_RUN=()
 record() { STAGES+=("$1"); RESULTS+=("$2"); }
@@ -483,6 +509,67 @@ else
     record "工作区跑的过程中没变" FAIL
   fi
 fi
+
+# ── 这一轮建的临时文件，跑完删了没有 ─────────────────
+# 各阶段建的临时文件与盘镜像，由建它的一方在跑完时删（成功、失败、panic 都删）。
+# 别的阶段都绿：还剩下的判红，门禁退出时替它们删掉（gate_exit_guard）——留着只会一轮一轮攒下去。
+# 有阶段判红：它可能按设计把现场留在里面、出路里点了它的路径，这一项不判（记本次未判），
+#   这一轮的临时目录整个留着、打印路径，看完自己删。
+head1 "跑完没留下临时文件"
+leftover_entries=()
+while IFS= read -r -d '' leftover_entry; do leftover_entries+=("$leftover_entry"); done \
+  < <(find "$GATE_RUN_TMPDIR" -mindepth 1 -maxdepth 1 -print0 | sort -z)
+stages_failed_before_this_one=0
+for stage_result in "${RESULTS[@]}"; do [[ "$stage_result" == PASS ]] || stages_failed_before_this_one=$((stages_failed_before_this_one + 1)); done
+list_leftover_entries() { # 实占 / 标称大小（稀疏的盘镜像两个数差得远）与名字
+  for leftover_entry in "${leftover_entries[@]}"; do
+    say "        $(du -sh -- "$leftover_entry" | cut -f1) / $(du -sh --apparent-size -- "$leftover_entry" | cut -f1)  ${leftover_entry##*/}"
+  done
+}
+if [[ ${#leftover_entries[@]} -eq 0 ]]; then
+  ok "这一轮各阶段在 TMPDIR 里建的东西，跑完都删了（剩 ${#leftover_entries[@]} 项）"
+  record "跑完没留下临时文件" PASS
+elif [[ $stages_failed_before_this_one -gt 0 ]]; then
+  GATE_RUN_TMPDIR_KEPT=1
+  warn "这一轮有 $stages_failed_before_this_one 个阶段判红，这一项不判：TMPDIR 里剩的 ${#leftover_entries[@]} 项可能是它们留的现场（实占 / 标称大小）："
+  list_leftover_entries
+  warn "这一轮的临时目录整个留着，看完自己删： rm -rf $GATE_RUN_TMPDIR"
+  NOT_RUN+=("跑完没留下临时文件  本次未判：有阶段判红，剩下的 ${#leftover_entries[@]} 项可能是它留的现场；临时目录留在 $GATE_RUN_TMPDIR")
+else
+  bad "这一轮各阶段在 TMPDIR（$GATE_RUN_TMPDIR）里建了、跑完没删的有 ${#leftover_entries[@]} 项（实占 / 标称大小；门禁退出时替它们删掉）："
+  list_leftover_entries
+  howto "按名字找到建它的阶段或测试装置，让它在跑完时自己删：成功、失败、panic 都删（Rust 用 Drop 守卫，shell 用 trap … EXIT）。" \
+        "有意跨轮复用的缓存放 \${GATE_CROSS_RUN_TMPDIR:-\${TMPDIR:-/tmp}}（门禁里是这一轮开跑前的临时目录，门禁不管那里），别放 \$TMPDIR。" \
+        "规矩见 rules/command-safety.md「测试镜像一律放临时目录」。"
+  record "跑完没留下临时文件" FAIL
+fi
+# 判红时留下的：这一轮留的记上标记；连同这个项目根之前留着的按留下的时刻排，只留最近几个，更早的删掉，剩下的每一轮都列出来
+if [[ "$GATE_RUN_TMPDIR_KEPT" == 1 ]]; then
+  printf '%s\t%s\n' "$(date +%s.%N)" "$GATE_PROJECT_ROOT_PHYSICAL" > "$GATE_RUN_TMPDIR/$KEPT_RUN_DIRECTORY_MARKER"
+fi
+kept_run_directories=()
+while IFS= read -r kept_line; do kept_run_directories+=("${kept_line#* }"); done < <(
+  for kept_marker in "$GATE_RUN_PARENT_DIRECTORY"/gate-run.*/"$KEPT_RUN_DIRECTORY_MARKER"; do
+    [[ -f "$kept_marker" ]] || continue
+    kept_time=''; kept_root=''
+    IFS=$'\t' read -r kept_time kept_root < "$kept_marker" || true
+    if [[ "$kept_root" == "$GATE_PROJECT_ROOT_PHYSICAL" ]]; then printf '%s %s\n' "$kept_time" "${kept_marker%/*}"; fi
+  done | sort -rn)
+if [[ ${#kept_run_directories[@]} -gt $KEPT_RUN_DIRECTORY_LIMIT ]]; then
+  for older_kept_directory in "${kept_run_directories[@]:KEPT_RUN_DIRECTORY_LIMIT}"; do
+    warn "判红时留下的临时目录只留最近 $KEPT_RUN_DIRECTORY_LIMIT 个，删掉更早的：$(du -sh -- "$older_kept_directory" 2>/dev/null | cut -f1)  $older_kept_directory"
+    older_kept_marker_line="$(head -1 "$older_kept_directory/$KEPT_RUN_DIRECTORY_MARKER" 2>/dev/null || true)"
+    # 删不掉（权限、挂载点）只报，门禁接着往下走；标记原样写回，之后每一轮照样列出来、再试
+    if ! rm -rf --one-file-system -- "${older_kept_directory:?}" 2>/dev/null; then
+      printf '%s\n' "$older_kept_marker_line" > "$older_kept_directory/$KEPT_RUN_DIRECTORY_MARKER" 2>/dev/null || true
+      warn "删不掉（权限或挂载点），留着，自己看一眼再删： $older_kept_directory"
+    fi
+  done
+  kept_run_directories=("${kept_run_directories[@]:0:KEPT_RUN_DIRECTORY_LIMIT}")
+fi
+for kept_run_directory in "${kept_run_directories[@]}"; do
+  if [[ "$kept_run_directory" != "$GATE_RUN_TMPDIR" ]]; then warn "之前判红时留下的临时目录还在，看完删掉： rm -rf $kept_run_directory"; fi
+done
 
 # ── 汇总 ────────────────────────────────────────────────
 GATE_SUMMARY_PRINTED=1

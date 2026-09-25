@@ -20,11 +20,10 @@
 **改规则就得把所有已发布的语言版本一起改、一起合并**，一致性由改的人自己保证：
 门禁只看得出哈希对不上，看不出各版本说的是不是一回事。
 
-**推送走钩子，全部语言仓一起验、一起推。** 每个语言仓各跑一次 `git config core.hooksPath scripts/githooks`，
-之后在任何一个仓里 `git push` master，都先把全部语言仓验一遍（在 master、工作区干净、VERSION 相同、门禁全绿），
-全过了才一起推。做法见 `scripts/push-all.sh`。推别的 ref（特性分支、tag）不触发它，只推你指定的那一个。
-
-⚠️ **别拿 `git push --dry-run` 试这条路**：钩子里看不出 `--dry-run`，推 master 的那一次会把另外两个语言仓**真的**推上去。
+**推 master 只走 `bash scripts/push-all.sh`，全部语言仓一起验、一起推。** 它先把全部语言仓验一遍
+（在 master、工作区干净、VERSION 相同、门禁全绿），验完才连远端，逐个推验过的那个提交；验完之后哪个仓的 HEAD 变了，就一个都不推。
+每个语言仓各跑一次 `git config core.hooksPath scripts/githooks`：钩子当场拒绝直接 `git push` master，指回 push-all.sh。
+推别的 ref（特性分支、tag）钩子照常放行，只推你指定的那一个。
 
 **什么要翻译、什么原样复制**，判据是「里面有没有给人读的散文」。
 清单在 `scripts/manifest.sh`（`translated_paths` 和 `not_translated_re` 两张表）。

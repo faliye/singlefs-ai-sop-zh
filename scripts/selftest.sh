@@ -516,11 +516,13 @@ r="$tmpd/hooks-reg"; mkdir -p "$r/.claude/hooks"
 printf '#!/usr/bin/env bash\n[[ "${1:-}" == --selftest ]] && { echo "  自检：查了 2 种情形"; exit 0; }\nexit 0\n' > "$r/.claude/hooks/guard.sh"
 chmod +x "$r/.claude/hooks/guard.sh"
 # 包自带的钩子也要注册：pattern-process-guard 挂 PreToolUse（rules/command-safety.md），
-# gate-reuse-check 挂 Stop 与 SubagentStop（rules/sop-first.md「加门禁或钩子之前，先找已有的」）
-hooks_registered_settings() { # hooks_registered_settings <Stop 之外还挂不挂 SubagentStop：yes / no>
-  local subagent_stop=''
-  [[ "$1" == yes ]] && subagent_stop=',"SubagentStop":[{"hooks":[{"type":"command","command":"bash gate-reuse-check.sh"}]}]'
-  printf '{"hooks":{"PreToolUse":[{"matcher":"Write","hooks":[{"type":"command","command":"bash guard.sh"},{"type":"command","command":"bash pattern-process-guard.sh"}]}],"Stop":[{"hooks":[{"type":"command","command":"bash gate-reuse-check.sh"}]}]%s}}\n' "$subagent_stop" > "$r/.claude/settings.json"
+# gate-reuse-check 挂 Stop 与 SubagentStop（rules/sop-first.md「加门禁或钩子之前，先找已有的」），
+# handback-scratch-check 挂交回工具的 PreToolUse 与 SubagentStop（rules/session-wrapup.md「子 agent 交回之前，删掉自己建的编译目录与仓副本」）
+hooks_registered_settings() { # hooks_registered_settings <gate-reuse-check 在 Stop 之外还挂不挂 SubagentStop：yes / no>
+  local gate_reuse_on_subagent_stop=''
+  [[ "$1" == yes ]] && gate_reuse_on_subagent_stop='{"type":"command","command":"bash gate-reuse-check.sh"},'
+  printf '{"hooks":{"PreToolUse":[{"matcher":"Write","hooks":[{"type":"command","command":"bash guard.sh"},{"type":"command","command":"bash pattern-process-guard.sh"}]},{"matcher":"SubagentHandback","hooks":[{"type":"command","command":"bash handback-scratch-check.sh"}]}],"Stop":[{"hooks":[{"type":"command","command":"bash gate-reuse-check.sh"}]}],"SubagentStop":[{"hooks":[%s{"type":"command","command":"bash handback-scratch-check.sh"}]}]}}\n' \
+    "$gate_reuse_on_subagent_stop" > "$r/.claude/settings.json"
 }
 hooks_registered_settings yes
 run_scripted "hooks-registered/注册着且自检过就通过" 0 "个钩子都注册着" -- \
@@ -528,8 +530,22 @@ run_scripted "hooks-registered/注册着且自检过就通过" 0 "个钩子都�
 hooks_registered_settings no
 run_scripted "hooks-registered/声明的事件没挂全判红" 1 "gate-reuse-check.sh→SubagentStop" -- \
   bash "$SCRIPTS/hooks-registered.sh" "$r"
+# 声明了只在某个工具上触发（<事件>:<工具名>）的，注册在别的 matcher 上等于没挂：钩子一次都不会为那个工具触发
+hooks_registered_settings yes
+python3 - "$r/.claude/settings.json" <<'SETTINGS'
+import json, sys
+with open(sys.argv[1], encoding='utf-8') as settings_file:
+    settings = json.load(settings_file)
+for entry in settings['hooks']['PreToolUse']:
+    if entry.get('matcher') == 'SubagentHandback':
+        entry['matcher'] = 'Bash'
+with open(sys.argv[1], 'w', encoding='utf-8') as settings_file:
+    json.dump(settings, settings_file)
+SETTINGS
+run_scripted "hooks-registered/挂在别的 matcher 上判红" 1 "handback-scratch-check.sh→PreToolUse:SubagentHandback" -- \
+  bash "$SCRIPTS/hooks-registered.sh" "$r"
 # 按文件名的边界认：注册的是 old-guard.sh，不等于 guard.sh 注册着
-printf '{"hooks":{"PreToolUse":[{"matcher":"Write","hooks":[{"type":"command","command":"bash .claude/hooks/old-guard.sh"},{"type":"command","command":"bash pattern-process-guard.sh"}]}],"Stop":[{"hooks":[{"type":"command","command":"bash gate-reuse-check.sh"}]}],"SubagentStop":[{"hooks":[{"type":"command","command":"bash gate-reuse-check.sh"}]}]}}\n' > "$r/.claude/settings.json"
+printf '{"hooks":{"PreToolUse":[{"matcher":"Write","hooks":[{"type":"command","command":"bash .claude/hooks/old-guard.sh"},{"type":"command","command":"bash pattern-process-guard.sh"}]}],"Stop":[{"hooks":[{"type":"command","command":"bash gate-reuse-check.sh"}]}],"SubagentStop":[{"hooks":[{"type":"command","command":"bash gate-reuse-check.sh"},{"type":"command","command":"bash handback-scratch-check.sh"}]}]}}\n' > "$r/.claude/settings.json"
 run_scripted "hooks-registered/名字是别的钩子名的一截也不算注册" 1 "没在 settings.json 里注册" "guard.sh  要挂的事件" -- \
   bash "$SCRIPTS/hooks-registered.sh" "$r"
 printf '{ 坏掉的 JSON\n' > "$r/.claude/settings.json"
@@ -875,7 +891,7 @@ mk_gate_pkg() { # mk_gate_pkg <目录> [要让哪个桩失败]
 r="$tmpd/gate-green"; mk_gate_pkg "$r"
 run_scripted "gate/全绿则退出码 0" 0 \
   "已实现的门禁阶段全部通过" 门禁自检 门禁判别力 "shell 纪律" 门禁查重 文档铁律 规则纪律 命名纪律 "Show me test" \
-  规则清单 各语言同步 版本纪律 "CHANGELOG 连续" \
+  规则清单 各语言同步 版本纪律 "CHANGELOG 连续" 跑完没留下临时文件 \
   -- bash "$r/scripts/gate.sh" "$r"
 
 # 任一阶段红 ⇒ 整道门禁必须红。这是判决点，缺了它前面所有检查都白做。
@@ -1165,6 +1181,81 @@ r="$tmpd/fingerprint-index"; mkdir -p "$r"; git -C "$r" init -q
 printf '甲\n' > "$r/a.md"; git -C "$r" add a.md; git -C "$r" -c user.name=t -c user.email=t@t commit -qm a
 printf '改了没暂存\n' >> "$r/a.md"; printf '没跟踪\n' > "$r/b.md"
 run_scripted "lib/工作区指纹不碰真索引" 0 "调用前后 git status 相同" -- "${fingerprint_index_check[@]}" "$SCRIPTS" "$r"
+
+# ── gate.sh：这一轮各阶段在 TMPDIR 里建了、跑完没删的要判红（rules/command-safety.md「测试镜像一律放临时目录」）──
+# 外面给门禁一个空的 TMPDIR，跑完再看它：门禁要替阶段删掉留下的，自己这一轮的临时目录也不许留；
+# 放进 GATE_CROSS_RUN_TMPDIR 的跨轮缓存留在外面，门禁不管。
+tmp_leftover_check=(bash -c '
+  mkdir -p "$3"
+  env -u GATE_CROSS_RUN_TMPDIR TMPDIR="$3" bash "$1/scripts/gate.sh" "$2"; gate_exit_code=$?
+  echo "门禁跑完，外面的 TMPDIR 里剩：$(ls -A "$3" | tr "\n" " ")（共 $(ls -A "$3" | wc -l) 项）"
+  exit "$gate_exit_code"' tmp_leftover_check)
+r="$tmpd/gate-tmp-leftover"; mk_gate_pkg "$r/pkg"; mk_staged_project "$r/proj"
+cat > "$r/proj/.claude/gate.d/60-leave-image.sh" <<'STAGE'
+#!/usr/bin/env bash
+# gate-stage: 建了镜像不删
+truncate -s 64M "$TMPDIR/sample-pool.img"
+echo "  ✓ 建了 1 个镜像"
+STAGE
+git -C "$r/proj" add -A && git -C "$r/proj" -c user.name=t -c user.email=t@t commit -qm 加一个建了镜像不删的阶段
+run_scripted "gate/阶段在 TMPDIR 里留下镜像要判红" 1 "跑完没删的有 1 项" "sample-pool.img" 门禁未通过 \
+  "外面的 TMPDIR 里剩：（共 0 项）" -- "${tmp_leftover_check[@]}" "$r/pkg" "$r/proj" "$r/outer-tmp"
+r="$tmpd/gate-tmp-clean"; mk_gate_pkg "$r/pkg"; mk_staged_project "$r/proj"
+cat > "$r/proj/.claude/gate.d/60-clean-image.sh" <<'STAGE'
+#!/usr/bin/env bash
+# gate-stage: 镜像用完就删、缓存放跨轮的地方
+work="$(mktemp -d)"
+trap 'rm -rf "${work:?}"' EXIT
+truncate -s 64M "$work/pool.img"
+mkdir -p "${GATE_CROSS_RUN_TMPDIR:-${TMPDIR:-/tmp}}/sample-cache"
+echo "  ✓ 用完删了 1 个镜像"
+STAGE
+git -C "$r/proj" add -A && git -C "$r/proj" -c user.name=t -c user.email=t@t commit -qm 加一个用完就删的阶段
+run_scripted "gate/阶段用完就删、缓存放 GATE_CROSS_RUN_TMPDIR 不判红" 0 "跑完都删了（剩 0 项）" "已实现的门禁阶段全部通过" \
+  "外面的 TMPDIR 里剩：sample-cache （共 1 项）" -- "${tmp_leftover_check[@]}" "$r/pkg" "$r/proj" "$r/outer-tmp"
+# 嵌套跑（外层门禁里再起一道门禁）：GATE_CROSS_RUN_TMPDIR 沿用外层给的，缓存落到外层指的地方，不落进里层的 TMPDIR
+nested_cross_run_check=(bash -c '
+  mkdir -p "$3" "$4"
+  GATE_CROSS_RUN_TMPDIR="$4" TMPDIR="$3" bash "$1/scripts/gate.sh" "$2"; gate_exit_code=$?
+  echo "里层 TMPDIR 剩 $(ls -A "$3" | wc -l) 项；外层指的跨轮目录里有：$(ls -A "$4" | tr "\n" " ")"
+  exit "$gate_exit_code"' nested_cross_run_check)
+run_scripted "gate/嵌套跑时沿用外层的 GATE_CROSS_RUN_TMPDIR" 0 "里层 TMPDIR 剩 0 项；外层指的跨轮目录里有：sample-cache" -- \
+  "${nested_cross_run_check[@]}" "$r/pkg" "$r/proj" "$r/inner-tmp" "$r/outer-cross-run"
+# 有阶段判红、把现场留在 TMPDIR 里、出路里点了它的路径：这一项不判，这一轮的临时目录整个留着
+r="$tmpd/gate-tmp-scene"; mk_gate_pkg "$r/pkg"; mk_staged_project "$r/proj"
+cat > "$r/proj/.claude/gate.d/60-keep-scene.sh" <<'STAGE'
+#!/usr/bin/env bash
+# gate-stage: 判红时留现场
+mkdir -p "$TMPDIR/scene" && echo 对不上 > "$TMPDIR/scene/check.txt"
+echo "  ✗ 判红，现场没清：$TMPDIR/scene"
+echo "     → 看 $TMPDIR/scene/check.txt"
+exit 1
+STAGE
+git -C "$r/proj" add -A && git -C "$r/proj" -c user.name=t -c user.email=t@t commit -qm 加一个判红时留现场的阶段
+scene_kept_check=(bash -c '
+  mkdir -p "$3"
+  env -u GATE_CROSS_RUN_TMPDIR TMPDIR="$3" bash "$1/scripts/gate.sh" "$2"; gate_exit_code=$?
+  echo "门禁跑完，出路里点名的现场还在：$(find "$3" -path "*/scene/check.txt" | wc -l) 份"
+  exit "$gate_exit_code"' scene_kept_check)
+run_scripted "gate/有阶段判红时留着这一轮的临时目录" 1 "这一项不判" "跑完没留下临时文件  本次未判" \
+  "出路里点名的现场还在：1 份" -- "${scene_kept_check[@]}" "$r/pkg" "$r/proj" "$r/outer-tmp"
+# 判红时留下的：同一个项目根的只留最近 3 个，更早的由之后那一轮删掉，还在的每一轮都列出来。
+# 没标记的（别的会话正在跑的那一轮）与别的项目根留下的不碰、不列；删不掉的只报，门禁照样跑完、打汇总。
+repeated_scene_check=(bash -c '
+  project_root_physical="$(cd "$2" && pwd -P)"
+  mkdir -p "$3/gate-run.unmarked-in-progress" "$3/gate-run.other-project" "$3/gate-run.stuck/read-only"
+  printf "1\t/some/other/project\n" > "$3/gate-run.other-project/.kept-by-gate"
+  printf "2\t%s\n" "$project_root_physical" > "$3/gate-run.stuck/.kept-by-gate"
+  touch "$3/gate-run.stuck/read-only/file"; chmod 555 "$3/gate-run.stuck/read-only"
+  for run_number in 1 2 3 4; do env -u GATE_CROSS_RUN_TMPDIR TMPDIR="$3" bash "$1/scripts/gate.sh" "$2" > "$3.run-$run_number" 2>&1; done
+  chmod 755 "$3/gate-run.stuck/read-only"
+  cat "$3.run-4"
+  echo "没标记的还在 $(find "$3" -maxdepth 1 -name gate-run.unmarked-in-progress | wc -l) 个；别的项目留的还在 $(find "$3" -maxdepth 1 -name gate-run.other-project | wc -l) 个、列出来 $(grep -c other-project "$3.run-4") 次"
+  echo "删不掉的那个还带着标记：$(find "$3/gate-run.stuck" -maxdepth 1 -name .kept-by-gate | wc -l)"
+  echo "这个项目根留着能删的：$(grep -l "$project_root_physical" "$3"/gate-run.*/.kept-by-gate | grep -vc gate-run.stuck) 个"' repeated_scene_check)
+run_scripted "gate/判红时留下的临时目录只留最近 3 个" 0 "删掉更早的" "删不掉（权限或挂载点）" "之前判红时留下的临时目录还在" "门禁未通过" \
+  "没标记的还在 1 个；别的项目留的还在 1 个、列出来 0 次" "删不掉的那个还带着标记：1" "这个项目根留着能删的：3 个" -- \
+  "${repeated_scene_check[@]}" "$r/pkg" "$r/proj" "$r/outer-tmp-repeated"
 
 # Show me test 退 3 = 无对象可判，记「本次未跑」不记通过。
 r="$tmpd/gate-smt3"; mk_gate_pkg "$r"
@@ -1695,9 +1786,9 @@ run_scripted "manifest/显式豁免的不算漏" 0 没有漏归属 -- bash "$p/s
 # ════ push-all ═══════════════════════════════════════════
 head1 "门禁自检：push-all 的判别力"
 # 三个语言仓各带一个没推的提交，各配一个本地裸仓当远端；gate.sh 用桩，红绿由参数定。
-# 走的是真实路径：在 zh 里 git push → pre-push 钩子 → push-all.sh → 推 ja、en → 放行 zh。
-mk_push_family() { # mk_push_family <目录> [门禁判红的语言]
-  local root="$1" red_language="${2:-}" language clone
+# 推 master 只走 push-all.sh：先验完三个仓，才逐个连远端推验过的那个提交；直接 git push master 由钩子当场拒绝。
+mk_push_family() { # mk_push_family <目录> [门禁判红的语言] [门禁跑的时候又提交一次的语言]
+  local root="$1" red_language="${2:-}" moving_language="${3:-}" language clone
   mkdir -p "$root"
   for language in zh en ja; do
     clone="$root/fam-$language"
@@ -1708,6 +1799,9 @@ mk_push_family() { # mk_push_family <目录> [门禁判红的语言]
     cp "$SCRIPTS/githooks/pre-push" "$clone/scripts/githooks/"
     if [[ "$language" == "$red_language" ]]; then
       printf '#!/usr/bin/env bash\necho "  桩门禁判红"\nexit 1\n' > "$clone/scripts/gate.sh"
+    elif [[ "$language" == "$moving_language" ]]; then
+      # 验的这段时间里别的会话提交了：门禁跑到一半，仓里多出一个提交
+      printf '#!/usr/bin/env bash\ngit -c user.name=selftest -c user.email=selftest@invalid commit -q --allow-empty -m 验的过程中又提交了一个\nexit 0\n' > "$clone/scripts/gate.sh"
     else
       printf '#!/usr/bin/env bash\nexit 0\n' > "$clone/scripts/gate.sh"
     fi
@@ -1734,32 +1828,46 @@ remotes_state=(bash -c '
   if [[ "$want" == all ]]; then [[ $matched == 3 ]]; else [[ $matched == 0 ]]; fi' remotes_state)
 
 r="$tmpd/push-green"; mk_push_family "$r"
-run_scripted "push-all/三仓全绿：在 zh 里 git push 就三个一起推" 0 "放行 zh 这次推送" "ja：已推" "en：已推" -- \
-  git -C "$r/fam-zh" push origin master
+run_scripted "push-all/三仓全绿：跑 push-all.sh 就三个一起推" 0 "ja：已推" "en：已推" "zh：已推" "3 个语言仓都推上去了" -- \
+  bash "$r/fam-zh/scripts/push-all.sh"
 run_scripted "push-all/全绿之后三个远端都到了本地的提交" 0 "远端对上本地的仓：3 个" -- "${remotes_state[@]}" "$r" all
+
+# 直接 git push master：钩子当场拒绝、一个仓都不推，指回 push-all.sh（验证不许放在已经连上的连接里跑）
+r="$tmpd/push-direct"; mk_push_family "$r"
+run_scripted "push-all/直接 git push master 当场拒绝" 1 "直接 git push master 不放行" "bash scripts/push-all.sh" -- \
+  git -C "$r/fam-zh" push origin master
+run_scripted "push-all/直接 git push 被拒时三个远端都没动" 0 "远端对上本地的仓：0 个" -- "${remotes_state[@]}" "$r" none
+run_scripted "push-all/推别的分支钩子照常放行" 0 "推的不是 master" -- \
+  git -C "$r/fam-zh" push origin master:refs/heads/topic
 
 r="$tmpd/push-dirty"; mk_push_family "$r"; echo 没提交 > "$r/fam-en/stray"
 run_scripted "push-all/有一个仓工作区不干净就一个都不推" 1 "en：工作区不干净" "一个仓都没推" -- \
-  git -C "$r/fam-zh" push origin master
+  bash "$r/fam-zh/scripts/push-all.sh"
 run_scripted "push-all/工作区不干净时三个远端都没动" 0 "远端对上本地的仓：0 个" -- "${remotes_state[@]}" "$r" none
 
 r="$tmpd/push-version"; mk_push_family "$r"; echo 0.0.3 > "$r/fam-ja/VERSION"
 git -C "$r/fam-ja" -c user.name=selftest -c user.email=selftest@invalid commit -qam 版本漂了
 run_scripted "push-all/VERSION 不一致就拒" 1 "ja：VERSION 是 0.0.3，而 zh 是 0.0.2" -- \
-  git -C "$r/fam-zh" push origin master
+  bash "$r/fam-zh/scripts/push-all.sh"
 
 r="$tmpd/push-gate-red"; mk_push_family "$r" ja
 run_scripted "push-all/任一仓门禁红就拒" 1 "ja：门禁没过" "桩门禁判红" -- \
-  git -C "$r/fam-zh" push origin master
+  bash "$r/fam-zh/scripts/push-all.sh"
 run_scripted "push-all/门禁红时三个远端都没动" 0 "远端对上本地的仓：0 个" -- "${remotes_state[@]}" "$r" none
 
-# 在 git worktree 里推：git 给钩子的 GIT_DIR 是 zh 的绝对路径，它压过 `git -C`。
+# 验完到推之间有人提交：推的就不是验过的那一份，一个都不推
+r="$tmpd/push-moved"; mk_push_family "$r" "" en
+run_scripted "push-all/验完之后 HEAD 变了就一个都不推" 1 "en：验完之后 HEAD 变了" "一个仓都没推" -- \
+  bash "$r/fam-zh/scripts/push-all.sh"
+run_scripted "push-all/HEAD 变了时三个远端都没动" 0 "远端对上本地的仓：0 个" -- "${remotes_state[@]}" "$r" none
+
+# 带着 GIT_DIR 在 git worktree 里跑：GIT_DIR 指向 zh，它压过 `git -C`。
 # push-all.sh 开头不清掉它的话，对 ja、en 的查验和推送都会落在 zh 上，这两个远端就到不了。
 r="$tmpd/push-worktree"; mk_push_family "$r"
 git -C "$r/fam-zh" switch -q -c parking
 git -C "$r/fam-zh" worktree add -q "$r/worktree-zh" master
-run_scripted "push-all/在 git worktree 里推也三个一起推" 0 "放行 zh 这次推送" "ja：已推" "en：已推" -- \
-  git -C "$r/worktree-zh" push origin master
+run_scripted "push-all/带着 GIT_DIR 在 git worktree 里跑也三个一起推" 0 "ja：已推" "en：已推" "zh：已推" -- \
+  env GIT_DIR="$(git -C "$r/worktree-zh" rev-parse --absolute-git-dir)" bash "$r/worktree-zh/scripts/push-all.sh"
 run_scripted "push-all/worktree 里推完三个远端都到了本地的提交" 0 "远端对上本地的仓：3 个" -- "${remotes_state[@]}" "$r" all
 
 # 推到一半失败：en 的远端有一个本地没有的提交 ⇒ ja 已推、en 被拒、zh 不推，而且要报出已推的是哪些
@@ -1769,7 +1877,7 @@ echo 别处 > "$r/other-en/elsewhere"; git -C "$r/other-en" add elsewhere
 git -C "$r/other-en" -c user.name=selftest -c user.email=selftest@invalid commit -qm 别处的提交
 git -C "$r/other-en" push -q origin master
 run_scripted "push-all/推到一半被拒要报出已推的仓" 1 "en：推送失败" "已经推上去的：ja" -- \
-  git -C "$r/fam-zh" push origin master
+  bash "$r/fam-zh/scripts/push-all.sh"
 
 # ── 汇总 ────────────────────────────────────────────────
 say ""

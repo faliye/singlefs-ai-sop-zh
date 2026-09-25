@@ -3,6 +3,49 @@
 规则与门禁的版本历史。`CLAUDE.md` 与 `rules/*.md` 不留历史节（design-doc-discipline），
 历史一律记在这里；逐条改动细节见 `git log`，提交信息即变更说明。
 
+## 0.0.58 — 2026-09-26
+
+**子 agent 交回之前删掉自己建的编译目录与仓副本，由钩子拦；测试装置删掉自己建的镜像，由门禁阶段「跑完没留下临时文件」判；推 master 改成先验完、再连远端。**
+
+新规矩：
+- `rules/session-wrapup.md` 第 5 条「子 agent 交回之前，删掉自己建的编译目录与仓副本」：删这一次自己建的编译目录（`target`、`CARGO_TARGET_DIR`、带 `CACHEDIR.TAG` 的缓存）与仓副本（clone、拷出来的仓、git worktree）；
+  报告、要入库的产物、主 agent 要核的复跑材料、别人建的、项目根里的不删。删前 `du -sh`，报告里写一行删了哪些、各多大；没删的逐个写「没删 <全路径>：<为什么>」。
+- `rules/command-safety.md`「测试镜像一律放临时目录」：建镜像的装置在测试结束时自己删（Drop 守卫、`trap … EXIT`），要留现场由显式开关打开；
+  有意跨轮复用的缓存放 `${GATE_CROSS_RUN_TMPDIR:-${TMPDIR:-/tmp}}`，不放 `$TMPDIR`。
+- `rules/sop-first.md` 第 6 项：只该在某个工具上触发的钩子，`hook-events` 写成 `<事件>:<工具名>`，注册在认得这个工具的 matcher 上。
+
+新脚本：
+- `scripts/claude-hooks/handback-scratch-check.sh`（挂交回工具 `SubagentHandback` 的 PreToolUse 与 `SubagentStop`），判定在 `scripts/handback-scratch.py`：
+  按时间窗认归属——临时目录里、在这个子 agent 自己的某次工具调用还没结束时建的（看 statx 的创建时刻；后台命令延到它的完成通知）、它的调用里提到过的编译目录、工作树与仓副本，
+  交回时还在、报告里又没写那一行，就拦下交回，列出清单与删法（工作树用 `git worktree remove --force`）。
+  共用目录（临时目录的根、`claude-<uid>`、会话与 scratchpad 那几层）和项目根里的不判；会话记录读不了时说「判不了」，不当作干净放行。
+- `scripts/session-transcript.py`：读 Claude Code 会话记录只在这一处，`gate-overlap.py` 与新判定共用。
+- `scripts/claude-hook-lib.sh`：钩子从输入里取字段只在这一处，`gate-reuse-check.sh` 改成调它。
+
+`gate.sh`：
+- 每一轮给各阶段一个这一轮自己的 `TMPDIR`（`gate-run.XXXXXX`）；跨轮缓存用 `GATE_CROSS_RUN_TMPDIR`，嵌套跑时沿用外层的。
+- 新收尾阶段「跑完没留下临时文件」：别的阶段都绿而里面还剩东西，判红、列出名字与大小，退出时删掉；
+  有阶段判红时这一项记本次未判，整个目录留着看现场（写 `.kept-by-gate` 标记），同一个项目根只留最近 3 个，更早的删不掉只警告、不断门禁。
+
+`hooks-registered.sh`（「工具层的闸」）：认 `hook-events` 里的 `<事件>:<工具名>`，核注册挂在认得这个工具的 matcher 上；`gate-overlap.py` 比较触发点时同样带上 matcher。
+
+推送（并入另一个会话留在工作区里的改动）：
+- `scripts/push-all.sh` 是推 master 的唯一入口：先把全部语言仓验完（在 master、工作区干净、VERSION 相同、门禁全绿），验完才连远端，逐个推验过的那个提交；验完之后哪个仓的 HEAD 变了，一个都不推。
+- `scripts/githooks/pre-push` 只拦不验：直接 `git push` master 当场拒绝，指回 push-all.sh；推别的 ref 照常放行。
+  此前在钩子里验：`git push` 先连上远端再跑钩子，三仓门禁要十几分钟，那条 SSH 连接闲置被掐，0.0.57 推送时 zh 就没推上去。
+- 三语 `CLAUDE.md` 的推送段落跟着改。
+
+本仓自己也生效：三个语言仓的 `.claude/settings.json` 注册新钩子的两处。
+
+**升级要做的**：
+- `.claude/settings.json` 注册 `handback-scratch-check.sh` 两处：`PreToolUse`（matcher `SubagentHandback`）与 `SubagentStop`，写法在它的文件头；缺一处「工具层的闸」判红。
+- 有意跨轮复用的缓存（变异测试的编译目录、下载或转换的缓存这类）改放 `${GATE_CROSS_RUN_TMPDIR:-${TMPDIR:-/tmp}}`；留在 `$TMPDIR` 里的会被「跑完没留下临时文件」判红并删掉。
+- 阶段、自检与测试装置建的临时目录和镜像，跑完自己删。
+
+自检从 427 涨到 438 个用例；交回钩子自带 55 种情形的自检，gate-reuse-check 的 13 种照过。
+变异：`gate.sh` 与 `hooks-registered.sh` 打了 14 条，交回钩子的判定与会话记录库打了 47 条，全部被抓到。
+对抗复核跑了三轮，打中的都改了；拿 60 份真实的子 agent 会话记录空跑，拦下 4 份，逐个核过都该拦。
+
 ## 0.0.57 — 2026-09-25
 
 **新加门禁或钩子之前，先找已有的：agent 收工时由收工钩子拦下来自检，提交前由门禁阶段「门禁查重」再判一遍。**

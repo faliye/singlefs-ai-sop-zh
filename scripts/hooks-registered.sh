@@ -12,6 +12,8 @@
 #   ② 它带 `--selftest` 时，自检要通过（自检本身证明这道闸会拒绝）；
 #   ③ 它文件头写了 `# hook-events: <事件> …` 时，每个事件都有一条注册指向它——
 #      只挂了一部分（比如只挂 Stop、没挂 SubagentStop），没挂上的那一类 agent 那里这道闸不在。
+#      写成 `<事件>:<工具名>` 的（只该在某个工具上触发），那条注册的 matcher 还要认得这个工具名（空 matcher 与 * 认全部）：
+#      挂在别的 matcher 上，钩子一次都不会为那个工具触发，而注册看着是齐的。
 # 没有 settings.json 或一个钩子都没有时退 77（本次无对象可判），不报绿。
 #
 # 用法：
@@ -60,7 +62,11 @@ for hook in "${hooks[@]}"; do
     continue
   fi
   for declared_event in $(hook_events_of "$hook"); do
-    if ! awk -F'\t' -v event="$declared_event" '$1 == event { found = 1 } END { exit !found }' <<<"$hook_registrations"; then
+    event_name="${declared_event%%:*}"; tool_name=''
+    [[ "$declared_event" == *:* ]] && tool_name="${declared_event#*:}"
+    if ! awk -F'\t' -v event="$event_name" -v tool="$tool_name" '
+          $1 == event && (tool == "" || $2 == "" || $2 == "*" || tool ~ ("^(" $2 ")$")) { found = 1 }
+          END { exit !found }' <<<"$hook_registrations"; then
       unhooked_events+=("$name→$declared_event")
     fi
   done
@@ -86,7 +92,8 @@ if ((${#missing[@]})); then
 fi
 if ((${#unhooked_events[@]})); then
   bad "${#unhooked_events[@]} 处钩子没挂在它声明的事件上：${unhooked_events[*]}"   # gate-lint:summary
-  howto "按那个钩子文件头的 # hook-events: 一行，在 settings.json 的 hooks.<事件> 里每个事件各注册一次（写法见它文件头的「怎么注册」）。" \
+  howto "按那个钩子文件头的 # hook-events: 一行，在 settings.json 的 hooks.<事件> 里每个事件各注册一次（写法见它文件头的「怎么注册」）；" \
+        "写成 <事件>:<工具名> 的，那条注册的 matcher 要认得这个工具名。" \
         "只挂了一部分，没挂上的那一类 agent 那里这道闸不在。"
   exit 1
 fi

@@ -80,7 +80,7 @@ SOP 优先不等于 SOP 可以无限膨胀。**一条规则想进来，先问它
 4. 非单独加不可，在新文件里逐个写明比过哪些、为什么不并进去：`# gate-similar: <已有的文件名> <为什么不并进它>`；一个像的都没有，写 `# gate-similar: 无 <查过哪些>`。
    同一事件上、matcher 有交集的已有钩子，与字面上很像的已有门禁或钩子，每个都要点名，写「无」不算。
 5. 确实要留两份相同的一段，在其中一份里写 `# gate-overlap:copy-kept <另一份的文件名> <为什么不抽成共用>`。
-6. 新钩子在文件头写 `# hook-events: <事件> …`，列出它要挂的每个事件，并在 `.claude/settings.json` 里每个事件各注册一次。
+6. 新钩子在文件头写 `# hook-events: <事件> …`，列出它要挂的每个事件（只该在某个工具上触发的写成 `<事件>:<工具名>`），并在 `.claude/settings.json` 里每个事件各注册一次，写了工具名的注册在认得它的 matcher 上。
 
 ### 谁来查
 
@@ -89,6 +89,6 @@ SOP 优先不等于 SOP 可以无限膨胀。**一条规则想进来，先问它
   主 agent 与子 agent 都要管：项目在 `.claude/settings.json` 的 `Stop` 与 `SubagentStop` 上各注册一次，写法在那个钩子的文件头。
 - **提交前**：门禁阶段「门禁查重」（`scripts/gate-overlap.py`）判 diff 窗口里新加与改动的门禁与钩子：写没写 `gate-similar` 与 `hook-events`、点名的是不是已有的门禁或钩子、理由够不够长、该点名的点全没有、加进来的行有没有与已有的整段相同、`copy-kept` 写得对不对。
   「整段相同」的门槛以那个脚本的 `CLONE_MINIMUM_LINES` 为准。
-- 门禁阶段「工具层的闸」（`scripts/hooks-registered.sh`）判收工钩子注册着没有、`hook-events` 里的事件挂全没有。
+- 门禁阶段「工具层的闸」（`scripts/hooks-registered.sh`）判钩子注册着没有、`hook-events` 里的事件挂全没有、写了工具名的挂没挂在认得它的 matcher 上。
 
 点名的那一份是不是真的最像、不并进去的理由成不成立，门禁判不了，靠 review。
