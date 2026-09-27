@@ -38,7 +38,7 @@
 `always`、`none` 的理由与 `check` 的出路至少 8 个字。
 `none` 只写给确实没有环境要求的脚本；要工具、设备、权限的，写成 `command` 或 `check`，不留到脚本里自己判。
 `check` 的命令用 `bash -c` 在仓根跑（不在 git 仓里时在脚本所在目录），环境里有 `PREFLIGHT_SCRIPT` 与 `PREFLIGHT_SCRIPT_DIRECTORY`，读不到调用方的标准输入。
-不在 git 仓里时判不了输入变没变，照跑，也不记指纹。
+不在 git 仓里时不判输入变没变：照跑，也不记指纹。
 声明的解析与现判只在 `scripts/preflight.py` 一处，写法以它为准。
 
 ## 开头先判
@@ -50,7 +50,7 @@
 | Rust 与别的语言 | `main` 的第一句调名叫 `preflight` 的函数：它直接起 `python3 <规范副本>/scripts/preflight.py check <源文件的绝对路径> [--force] -- <参数…>`（不经 `sh -c`），退出码不是 0 就原样退出；stdout 那一行以 `met` 起头时记下它最后一段的指纹，以 `forced` 起头时把最后一段摘要当成 `PREFLIGHT_FORCED` |
 
 写了 `inputs-changed` 的，成功跑完、退出之前调 `preflight_record_success`（Rust 执行 `preflight.py record <源文件> --fingerprint <开跑时的指纹> -- <参数…>`）。
-记的是开跑时判的那份指纹；收尾时输入已经变了（跑的过程中有人改了）、这一次是强制跑的、跑失败了、这一次有一部分本次未跑（`lib.sh` 的 `report_not_run` 报过），都不记。
+记的是开跑时判的那份指纹；收尾时输入已经变了、这一次是强制跑的、跑失败了、这一次有一部分本次未跑（`lib.sh` 的 `report_not_run` 报过），都不记。
 
 ## 不满足时
 

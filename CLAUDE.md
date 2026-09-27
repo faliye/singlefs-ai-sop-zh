@@ -31,6 +31,8 @@
 
 ## 规则（始终生效）
 
+**解释和论证在 `rules/` 里是多余的。** 规则只写判据、步骤、射程与例外、默认做法、指向（`rules/rules-discipline.md` 第 1、2 条）。
+
 @rules/engineering-philosophy.md
 @rules/sop-first.md
 @rules/show-me-test.md

@@ -90,8 +90,8 @@ else
   printf '%s\n' "$code_changed" | sed 's/^/        /'
   howto "给这次改动补测试。不确定怎么测的话，按改动类型对号入座：" \
     "纯函数 / 数据结构   → 同文件里加 #[cfg(test)] mod tests，最省事" \
-    "涉及磁盘格式        → 先在 kb/invariants.md 加一条不变量，再让 checker 实现它" \
-    "涉及崩溃恢复        → 见 crash-test skill；这条还没有 harness，说明情况即可" \
+    "涉及磁盘格式        → 先在 kb/invariants.md 加一条不变量，再加一个检查实现它" \
+    "涉及崩溃恢复        → 用项目自己的验证手段（登记在 .claude/gate-not-implemented.tsv 的那几项）验，说明怎么验的" \
     "" \
     "写完把被测代码改坏一次，确认测试真的变红，再改回来——" \
     "并在 commit message 里写明你是怎么确认的。" \

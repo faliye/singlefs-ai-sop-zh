@@ -1348,9 +1348,10 @@ run_scripted "gate/--staged 跑到一半被打断也清掉临时 worktree" 0 "�
 # 未实现清单由项目阶段声明覆盖（# gate-covers:）。四个方向各一例：
 # 通过 ⇒ 那一项换成「由谁覆盖」、收尾那句跟着换；跑红 ⇒ 照旧列着；退 77 ⇒ 记本次未跑、照旧列着；键写错 ⇒ 判红。
 # 「列着 / 没列着」只看未实现那一段：收尾那句与 howto 里也会出现同一个词。
-mk_covers_project() { # mk_covers_project <目录> <本地阶段的退出码> <gate-covers 的键>
+mk_covers_project() { # mk_covers_project <目录> <本地阶段的退出码> <gate-covers 的键>；项目登记一项「样本手段」，带覆盖之后的提醒句
   mkdir -p "$1/.claude/gate.d"
   printf '0.0.0\n' > "$1/.singlefs-ai-sop-version"
+  printf '# 样本登记\n样本手段\t样本缺的东西\t样本提醒句\n' > "$1/.claude/gate-not-implemented.tsv"
   printf '#!/usr/bin/env bash\n# gate-stage: 样本重放\n# gate-covers: %s\necho "  样本阶段跑完"\nexit %s\n' "$3" "$2" \
     > "$1/.claude/gate.d/54-sample.sh"
 }
@@ -1361,23 +1362,31 @@ gate_with_not_impl_section=(bash -c '
   echo "未实现段：$listed"
   exit "$rc"' gate_with_not_impl_section)
 # 覆盖声明的阶段退 0，却报了本次未跑一部分：覆盖到哪说不清，那一项留在未实现清单里
-r="$tmpd/gate-covers-partial"; mk_gate_pkg "$r/pkg"; mk_covers_project "$r/proj" 0 崩溃点重放
+r="$tmpd/gate-covers-partial"; mk_gate_pkg "$r/pkg"; mk_covers_project "$r/proj" 0 样本手段
 sed -i '/^exit 0$/i if [[ -n "${GATE_NOT_RUN_FILE:-}" ]]; then echo "样本：缺 qemu，这一部分没跑" >> "$GATE_NOT_RUN_FILE"; fi' "$r/proj/.claude/gate.d/54-sample.sh"
 run_scripted "gate/只跑了一部分的本地阶段不算覆盖" 0 "样本重放        本次未跑一部分：样本：缺 qemu，这一部分没跑" \
-  "未实现段：模型对拍 崩溃点重放 最终判据 命名纪律（shell）" -- "${gate_with_not_impl_section[@]}" "$r/pkg" "$r/proj" "$r/out.txt"
-r="$tmpd/gate-covers-pass"; mk_gate_pkg "$r/pkg"; mk_covers_project "$r/proj" 0 崩溃点重放
-run_scripted "gate/覆盖声明的阶段通过，那一项换成由谁覆盖" 0 "崩溃点重放 ← 样本重放" \
-  "未实现段：模型对拍 最终判据 命名纪律（shell）" "崩溃点重放由「样本重放」覆盖" \
+  "未实现段：样本手段 最终判据 命名纪律（shell）" -- "${gate_with_not_impl_section[@]}" "$r/pkg" "$r/proj" "$r/out.txt"
+r="$tmpd/gate-covers-pass"; mk_gate_pkg "$r/pkg"; mk_covers_project "$r/proj" 0 样本手段
+run_scripted "gate/覆盖声明的阶段通过，那一项换成由谁覆盖" 0 "样本手段 ← 样本重放" "项目登记了 1 项自己的验证手段" \
+  "未实现段：最终判据 命名纪律（shell）" "样本手段由「样本重放」覆盖，样本提醒句" \
   -- "${gate_with_not_impl_section[@]}" "$r/pkg" "$r/proj" "$r/out.txt"
-r="$tmpd/gate-covers-fail"; mk_gate_pkg "$r/pkg"; mk_covers_project "$r/proj" 1 崩溃点重放
-run_scripted "gate/覆盖声明的阶段跑红，那一项照旧列着" 1 门禁未通过 "未实现段：模型对拍 崩溃点重放 最终判据 命名纪律（shell）" \
+r="$tmpd/gate-covers-fail"; mk_gate_pkg "$r/pkg"; mk_covers_project "$r/proj" 1 样本手段
+run_scripted "gate/覆盖声明的阶段跑红，那一项照旧列着" 1 门禁未通过 "未实现段：样本手段 最终判据 命名纪律（shell）" \
   -- "${gate_with_not_impl_section[@]}" "$r/pkg" "$r/proj" "$r/out.txt"
-r="$tmpd/gate-covers-77"; mk_gate_pkg "$r/pkg"; mk_covers_project "$r/proj" 77 崩溃点重放
+r="$tmpd/gate-covers-77"; mk_gate_pkg "$r/pkg"; mk_covers_project "$r/proj" 77 样本手段
 run_scripted "gate/本地阶段退 77 记本次未跑，不算覆盖" 0 "本次未跑：阶段报了这一轮无对象可判（退出码 77）" \
-  "未实现段：模型对拍 崩溃点重放 最终判据 命名纪律（shell）" "崩溃一致性尚未纳入门禁" \
+  "未实现段：样本手段 最终判据 命名纪律（shell）" "样本手段还没有项目阶段覆盖" \
   -- "${gate_with_not_impl_section[@]}" "$r/pkg" "$r/proj" "$r/out.txt"
-r="$tmpd/gate-covers-typo"; mk_gate_pkg "$r/pkg"; mk_covers_project "$r/proj" 0 崩溃重放
-run_scripted "gate/gate-covers 写了清单里没有的项要红" 1 "gate-covers 写了清单里没有的项：「崩溃重放」" \
+r="$tmpd/gate-covers-no-registry"; mk_gate_pkg "$r/pkg"; mk_covers_project "$r/proj" 0 最终判据; rm "$r/proj/.claude/gate-not-implemented.tsv"
+run_scripted "gate/项目没登记自己的手段，清单只剩共享键" 0 "最终判据 ← 样本重放" "未实现段：命名纪律（shell）" \
+  -- "${gate_with_not_impl_section[@]}" "$r/pkg" "$r/proj" "$r/out.txt"
+r="$tmpd/gate-covers-bad-registry"; mk_gate_pkg "$r/pkg"; mk_covers_project "$r/proj" 0 样本手段
+printf '只有键没有说明\n最终判据\t与共享键重名\n说明空着\t\t只写了提醒句\n' >> "$r/proj/.claude/gate-not-implemented.tsv"
+run_scripted "gate/登记表少列或与共享键重名要红" 1 "少了键或说明：只有键没有说明" "「最终判据」与共享键或前面的行重名" \
+  "少了键或说明：说明空着" "项目登记的未实现手段" \
+  -- "${gate_with_not_impl_section[@]}" "$r/pkg" "$r/proj" "$r/out.txt"
+r="$tmpd/gate-covers-typo"; mk_gate_pkg "$r/pkg"; mk_covers_project "$r/proj" 0 样本手
+run_scripted "gate/gate-covers 写了清单里没有的项要红" 1 "gate-covers 写了清单里没有的项：「样本手」" \
   -- "${gate_with_not_impl_section[@]}" "$r/pkg" "$r/proj" "$r/out.txt"
 
 # 本地阶段的条件不满足：不起它、记失败、不算覆盖；带 --force 起了也只记「强制跑过」，同样不算覆盖（rules/preflight-discipline.md）
@@ -1387,15 +1396,15 @@ gate_forcing_with_not_impl_section=(bash -c '
   listed="$(sed -n "/未实现的门禁阶段/,/^\$/p" "$3" | sed -n "s/^ *! \([^：]*\)：.*/\1/p" | tr -d " " | paste -sd " " -)"
   echo "未实现段：$listed"
   exit "$gate_exit_code"' gate_forcing_with_not_impl_section)
-mk_blocked_covers_project() { # mk_blocked_covers_project <目录>：覆盖崩溃点重放、而条件永远不满足的本地阶段
-  mk_covers_project "$1" 0 崩溃点重放
+mk_blocked_covers_project() { # mk_blocked_covers_project <目录>：覆盖样本手段、而条件永远不满足的本地阶段
+  mk_covers_project "$1" 0 样本手段
   sed -i '2a # admission: always 桩：每次调都有意义\n# run-condition: check false :: 桩：这条条件永远不满足' "$1/.claude/gate.d/54-sample.sh"
 }
 r="$tmpd/gate-covers-blocked"; mk_gate_pkg "$r/pkg"; mk_blocked_covers_project "$r/proj"
 run_scripted "gate/本地阶段条件不满足就不起、判红、不算覆盖" 1 "样本重放：条件不满足，没起它，按失败记" \
-  "未实现段：模型对拍 崩溃点重放 最终判据 命名纪律（shell）" -- "${gate_forcing_with_not_impl_section[@]}" "$r/pkg" "$r/proj" "$r/out.txt"
+  "未实现段：样本手段 最终判据 命名纪律（shell）" -- "${gate_forcing_with_not_impl_section[@]}" "$r/pkg" "$r/proj" "$r/out.txt"
 r="$tmpd/gate-covers-forced"; mk_gate_pkg "$r/pkg"; mk_blocked_covers_project "$r/proj"
-run_scripted "gate/本地阶段强制跑过也不算覆盖" 0 "样本重放（强制跑过" "未实现段：模型对拍 崩溃点重放 最终判据 命名纪律（shell）" \
+run_scripted "gate/本地阶段强制跑过也不算覆盖" 0 "样本重放（强制跑过" "未实现段：样本手段 最终判据 命名纪律（shell）" \
   -- "${gate_forcing_with_not_impl_section[@]}" "$r/pkg" "$r/proj" "$r/out.txt" --force
 
 # ── gate.sh 与各脚本之间的约定 ──────────────────────────
@@ -1626,13 +1635,13 @@ run_scripted "gate/doc-lint 报不出未实现项要判红" 1 "取不到 doc-lin
 r="$tmpd/gate-rules-notimpl"; mk_gate_pkg "$r"
 printf '#!/usr/bin/env bash\n%s\nif [[ "${1:-}" == --not-impl ]]; then echo "规则纪律（xx）：本语言没有词表，这一项未实现"; exit 0; fi\nexit 77\n' "$STUB_CONDITIONS" > "$r/scripts/rules-lint.sh"
 run_scripted "gate/rules-lint 整项未实现记本次未跑并进未实现清单" 0 "规则纪律        本次无对象可判" \
-  "未实现段：规则纪律（xx） 模型对拍 崩溃点重放 最终判据 命名纪律（shell）" -- \
+  "未实现段：规则纪律（xx） 最终判据 命名纪律（shell）" -- \
   "${gate_with_not_impl_section[@]}" "$r" "$r" "$tmpd/gate-rules-notimpl.out"
 # 只实现了一部分（英文、日文）：实现了的照判——判红就红，没实现的那几条照样进未实现清单
 r="$tmpd/gate-rules-partial-red"; mk_gate_pkg "$r"
 printf '#!/usr/bin/env bash\n%s\nif [[ "${1:-}" == --not-impl ]]; then echo "规则纪律（en）：有几条只有中文词表"; exit 0; fi\necho "  桩 rules-lint 判红"; exit 1\n' "$STUB_CONDITIONS" > "$r/scripts/rules-lint.sh"
 run_scripted "gate/rules-lint 部分实现时照判、判红就红" 1 "桩 rules-lint 判红" "门禁未通过" \
-  "未实现段：规则纪律（en） 模型对拍 崩溃点重放 最终判据 命名纪律（shell）" -- \
+  "未实现段：规则纪律（en） 最终判据 命名纪律（shell）" -- \
   "${gate_with_not_impl_section[@]}" "$r" "$r" "$tmpd/gate-rules-partial-red.out"
 r="$tmpd/gate-rules-notimpl-fails"; mk_gate_pkg "$r"
 printf '#!/usr/bin/env bash\n%s\nif [[ "${1:-}" == --not-impl ]]; then exit 78; fi\nexit 0\n' "$STUB_CONDITIONS" > "$r/scripts/rules-lint.sh"

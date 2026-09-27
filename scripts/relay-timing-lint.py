@@ -9,7 +9,7 @@
     relay-timing-lint.py --check [仓库根]   # 扫 research/ 与 crates/ 下的 .rs 与 .py，逐处报「文件:行」与循环头；不给仓库根就判当前目录所在的 git 仓
     relay-timing-lint.py --selftest         # 自证：内嵌红绿样本逐个判、钉死统计数；再另起一个子进程在弱判据下跑自证，它必须判红
 
-为什么要有它：E152（按里程碑对比六家文件系统的文件性能） 的来宾程序在 `for line in BufReader::new(child_output).lines()` 里
+为什么要有它：一个实验的来宾程序在 `for line in BufReader::new(child_output).lines()` 里
 先 `started.elapsed()` 给这一行打时间戳、再 `emitter.emit(...)` 把它转打出去，拿行到达时刻之差当分段挂钟。
 虚机里标准输出是串口，转打一次阻塞几毫秒，而子进程写管道不被挡，于是时间戳里混进了前面几行的打印积压：
 产物里连着打出、中间只有几微秒计算的几行，时间戳跨了 21.7–25.8 ms；两次跑 10 轮里 9 轮，外层算出的第二个事务挂钟
@@ -808,7 +808,7 @@ def read_process_io_counters_with_timestamps():
 '''
 
 SELFTEST_CASES = [
-    ("旧写法：读一行、打时间戳、转打，再读下一行（照 E152 的 run_singlefs）",
+    ("旧写法：读一行、打时间戳、转打，再读下一行（照那个实验的来宾程序）",
      {"research/sample/src/relay.rs": RUST_RELAY_WHILE_READING},
      "exit=1\nwant=research/sample/src/relay.rs:9\nwant=取时间 .elapsed(  输出 .emit(\n"
      "want=✗ 有 1 处读子进程输出的循环一边给行打时间戳一边转打（扫了 1 个文件、1 个读子进程输出的循环、豁免 0 处\n"
@@ -834,7 +834,7 @@ SELFTEST_CASES = [
      {"research/sample/src/helper.rs": RUST_HELPER_RELAYS_WHILE_READING},
      "exit=1\nwant=research/sample/src/helper.rs:6\nwant=（子进程输出由 run_child_through_helper 传入 relay_lines_as_they_arrive）\n"
      "want=✗ 有 1 处\nwant=扫了 1 个文件、1 个读子进程输出的循环、豁免 0 处"),
-    ("辅助函数读到 EOF 只记时间，调用方读完再打印（照 E152 改过之后的形态）",
+    ("辅助函数读到 EOF 只记时间，调用方读完再打印（照那个实验改过之后的形态）",
      {"research/sample/src/helper.rs": RUST_HELPER_READS_TO_END_THEN_CALLER_RELAYS},
      "exit=0\nwant=扫了 1 个文件、1 个读子进程输出的循环、豁免 0 处"),
     ("读线程只打时间戳经通道送出，收的一侧打印",

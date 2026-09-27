@@ -43,9 +43,7 @@
 | 变异清单 | mutation list | ミューテーションリスト | 入库的「改了哪里 → 哪条断言红」<br>a checked-in list of "what was changed → which assertion went red"<br>「どこを変えた → どの言明が赤くなった」の記録 |
 | 等价变异 | equivalent mutant | 等価ミュータント | 与原式同值，永远抓不到；不算盲区<br>same value on all inputs, never catchable; not a blind spot<br>全入力で同値。捕まらないが盲点ではない |
 | 对照组 | control case | 対照群 | 与被测的臂并排跑、用来判读结果的那一组：阳性对照（结果已知，证明这次测量分得出差别）或真实基线<br>the group run alongside the arm under test to read its result: a positive control (outcome known, showing the measurement can tell a difference) or a real baseline<br>被検のアームと並べて走らせ、結果を読むための組：陽性対照（結果が分かっており、今回の測定が差を見分けられることを示す）か実ベースライン |
-| 不变量 | invariant | 不変条件 | checker 是它的可执行形式<br>the checker is its executable form<br>checker がその実行可能な形 |
-| 崩溃点重放 | crash-point replay | クラッシュ点リプレイ | 在每个可能的断电点截断重放<br>truncate and replay at every possible power-cut point<br>あり得る断電点ごとに切り詰めて再生する |
-| 模型对拍 | model-based differential testing | モデル対照テスト | 与内存里的理想实现比对<br>compare against an ideal in-memory implementation<br>メモリ上の理想実装と突き合わせる |
+| 不变量 | invariant | 不変条件 | 项目的检查是它的可执行形式<br>the project's checks are its executable form<br>プロジェクトの検査がその実行可能な形 |
 | 确定性模型 | deterministic model | 決定的モデル | 无随机源、真实 I/O、并发、时钟；跑 N 遍必然一致<br>no randomness, real I/O, concurrency or clock; N runs are identical<br>乱数・実 I/O・並行・時計を持たない。N 回走らせても同一 |
 | 规范本体 | governed paths | 規範本体 | 改了必须抬 `VERSION` 的那些路径<br>the paths whose change requires a `VERSION` bump<br>変更したら `VERSION` を上げねばならないパス群 |
 | 译本 | translation | 訳本 | 生成物，不是平行版本<br>a product, not a parallel edition<br>生成物であって並行版ではない |

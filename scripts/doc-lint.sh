@@ -684,7 +684,7 @@ if [[ -n "$kb_files" ]]; then
         # 上游 printf 拿 SIGPIPE，pipefail 下整条管道退 141，这条检查就静默不判了（同 gate-lint G3 的坑）。
         if [[ "$(printf '%s\n' "$defined" | grep -cx "$id" || true)" == 0 ]]; then
           bad "$rel:$ln  引用了没有定义的不变量编号 $id"
-          howto "要么在 kb/invariants.md 里把 $id 真的写成一行（可判定的陈述 + checker 状态），" \
+          howto "要么在 kb/invariants.md 里把 $id 真的写成一行（可判定的陈述 + 检查状态），" \
                 "要么删掉这处引用。引用一个不存在的编号，检索出来看不出它不存在——" \
                 "而模型不会说找不到，它会补一个（rules/kb-discipline.md 第 3 条）。"
           reffails=$((reffails+1))

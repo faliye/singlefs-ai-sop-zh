@@ -173,7 +173,7 @@ if [[ ${#files[@]} -eq 0 ]]; then
   ok "没有要查的 .rs 文件（${#files[@]} 个），本阶段无对象可判"
   # 退 3 = 无对象可判，与 show-me-test 同一个约定，gate.sh 把它记成「本次未跑」。
   # 退 0 会在汇总里与「判过了」长得一模一样，而这一轮其实一个名字都没看
-  # （rules/show-me-test.md：exit 0 的跳过与判过了一模一样，门禁分不出这两种）。
+  # （rules/show-me-test.md「门禁不许假装通过」）。
   exit 3
 fi
 

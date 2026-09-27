@@ -52,13 +52,10 @@
 
 ## 使用者
 
-**只有一个。** 名单的权威登记在 `I18N` 的 `consumers=`，这张表是它的人类可读版。
+**只有一个。** 名单只登记在 `I18N` 的 `consumers=` 一处，这里不抄。
 这个仓不为「将来别的项目也许用得上」做设计：
 那种设想没有对照，只会让规矩越写越松。
-
-| 项目 | 位置 | 怎么接的 |
-|---|---|---|
-| **singlefs** —— 从零设计的 COW 文件系统，Rust 写的 | 这个仓的兄弟目录 `../singlefs` | `.claude/singlefs-ai-sop/` 是这个仓的副本；项目本地规则在 `.claude/rules/fs-design.md`，设计决策在 `.claude/kb/decisions.md` |
+使用者把这个仓的副本放在自己的 `.claude/singlefs-ai-sop/`，项目自己的规则、决策与验证手段都留在项目里。
 
 装完之后项目根会多一个 `.singlefs-ai-sop-version`，门禁拿它跟这个仓的 `VERSION` 比。
 对不上就红，提醒项目那边：规矩变过了，先读一遍再跑。
@@ -191,8 +188,7 @@ git clone https://<host>/singlefs-ai-sop-ja .claude/singlefs-ai-sop
 
 ## 许可
 
-双许可：[Apache-2.0](LICENSE-APACHE) 或 [MIT](LICENSE-MIT)，任选其一，
-与 [singlefs](https://github.com/faliye/singlefs) 保持一致。
+双许可：[Apache-2.0](LICENSE-APACHE) 或 [MIT](LICENSE-MIT)，任选其一。
 
 除非你另外声明，你有意提交并被本项目采纳的贡献，按 Apache-2.0 的定义，
 都按上面这个双许可授权，不附加额外条款。

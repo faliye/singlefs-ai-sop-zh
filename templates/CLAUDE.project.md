@@ -21,7 +21,7 @@
 @.claude/singlefs-ai-sop/rules/preflight-discipline.md
 @.claude/singlefs-ai-sop/rules/session-wrapup.md
 
-**文件系统设计特有的规则**（事务、崩溃一致性、盘上格式那一类）放 `.claude/rules/`，
+**被测对象特有的规则**（它自己的设计纪律、验证手段那一类）放 `.claude/rules/`，
 在这里一起 `@` 引用。别往共享 SOP 上放，那边只放协作规范。
 
 （上面那些 `@.claude/singlefs-ai-sop/...` 是 [singlefs-ai-sop](.claude/singlefs-ai-sop/README.md) 发下来的共享规则。
@@ -33,7 +33,7 @@
 |---|---|
 | `.claude/kb/decisions.md` | 设计决策：定了什么、为什么、还没定什么 |
 | `.claude/kb/experiments.md` | 实验记录：问题、先写死的判据、对照与变异、复跑命令 |
-| `.claude/kb/invariants.md` | 不变量清单，checker 是它的可执行形式 |
+| `.claude/kb/invariants.md` | 不变量清单，项目的检查是它的可执行形式 |
 | `.claude/kb/prior-art.md` | 他家方案调研，含来源与口径 |
 | `.claude/kb/pitfalls.md` | 避坑清单，每做设计决定回来对一遍 |
 | `.claude/kb/checks-owed.md` | 欠的检查：知道要拦什么但还拦不了的，含前置 |

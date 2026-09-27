@@ -9,7 +9,7 @@
 #   3. 退出码：0 = 没有阶段判红；非 0 = 有阶段失败。准入或运行条件不满足没起的阶段记失败（只因为「输入没变」没起的记本次未跑）；
 #      带 --force 强制跑过的阶段不让退出码变非 0，但汇总里逐个列出、末句不说「全部通过」、不前移 gate-ok（rules/preflight-discipline.md）
 #
-# 注意：共享阶段不覆盖崩溃一致性，要靠项目本地阶段接上并声明（# gate-covers:）。绿色不等于验证充分，见文末未实现清单。
+# 注意：共享阶段不知道被测对象是什么，项目自己的验证手段要靠项目本地阶段接上并声明（# gate-covers:）。绿色不等于验证充分，见文末未实现清单。
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 preflight "${BASH_SOURCE[0]}" "$@"; set -- ${PREFLIGHT_ARGUMENTS[@]+"${PREFLIGHT_ARGUMENTS[@]}"}
 # gate.sh --force：转给条件没满足的阶段，让它们照跑，汇总里记「强制跑过」（rules/preflight-discipline.md「gate.sh 怎么编排」）
@@ -291,7 +291,7 @@ run_stage() { # run_stage <名称> <解释器> <脚本> [参数…]
 }
 
 # 退出码 77 = 这一轮无对象可判，记「本次未跑」，既不算通过也不算失败
-# （rules/show-me-test.md：exit 0 的跳过在汇总里与「判过了」一模一样）。
+# （rules/show-me-test.md「门禁不许假装通过」：exit 0 的跳过在汇总里与「判过了」一模一样）。
 run_stage_may_skip() { # run_stage_may_skip <名称> <无对象时怎么说> <解释器> <脚本> [参数…]
   local name="$1" nothing="$2" interpreter="$3" script="$4"; shift 4
   head1 "$name"
@@ -563,15 +563,58 @@ fi
 # 键 → 缺的是什么。项目本地阶段在头部写 `# gate-covers: <键>`（一行一个，字面照抄键），
 # 它这一轮跑了而且通过，汇总里这一项才换成「由哪个阶段覆盖」；跑红了、退 77 了，都照旧列在未实现里。
 # 覆盖只说明「有一个阶段在做这件事，这一轮过了」，它做到多大范围，看那个阶段自己的名字与说明。
-# 清单写死的时候，使用者项目每次门禁都跑崩溃点重放与真设备阶段，汇总却照样打印「缺被测对象」。
-# 「最终判据」不点名任何装置：准入标准由项目定，项目没接上、或这一轮没跑过，它就一直列在这里。
-NOT_IMPL_KEYS=("模型对拍" "崩溃点重放" "最终判据" "命名纪律（shell）")
-declare -A NOT_IMPL_WHAT=(
-  ["模型对拍"]="同一串随机操作分别施加到理想模型与实现上，比结果（rules/test-discipline.md）"
-  ["崩溃点重放"]="记下块层的全部写请求，逐个崩溃点截断、重放、跑 checker（rules/test-discipline.md）"
+# 共享的键只有两个：「最终判据」不点名任何装置，准入标准由项目定，项目没接上、或这一轮没跑过，它就一直列在这里；
+# 「命名纪律（shell）」是本包自己还没做成检查的那一半。
+# 项目自己的验证手段（共享门禁不知道被测对象是什么，键由项目起名）登记在项目根 .claude/gate-not-implemented.tsv：
+# 一行一条，制表符分隔：键、缺的是什么、覆盖之后仍要提醒的话（第三列可空）；# 开头是注释。登记的键排在共享键前面；
+# 少一列、键或说明为空、与共享键或前面的行重名都判红——登记写坏了那一项就无声消失。没有这份文件就只有共享键。
+NOT_IMPL_SHARED_KEYS=("最终判据" "命名纪律（shell）")
+declare -A NOT_IMPL_SHARED_WHAT=(
   ["最终判据"]="准入标准：起什么环境、跑什么负载、注入什么故障由项目定，接在 .claude/gate.d/ 里（rules/show-me-test.md「最终判据由项目定」）"
   ["命名纪律（shell）"]="只查 .rs 里声明的名字；shell 脚本的名字还没做成检查（rules/code-discipline.md）"
 )
+NOT_IMPL_KEYS=()
+declare -A NOT_IMPL_WHAT=()
+declare -A NOT_IMPL_COVERED_REMINDER=()
+PROJECT_NOT_IMPL_FILE="$ROOT/.claude/gate-not-implemented.tsv"
+project_not_impl_problems=0
+project_not_impl_count=0
+if [[ -f "$PROJECT_NOT_IMPL_FILE" ]]; then
+  while IFS= read -r project_not_impl_line || [[ -n "$project_not_impl_line" ]]; do
+    [[ -z "${project_not_impl_line//[[:space:]]/}" || "$project_not_impl_line" == \#* ]] && continue
+    # 按制表符逐列切，不用 IFS=$'\t' read：制表符是空白分隔符，连着两个会并成一个，第二列空着时第三列会被读成说明、这一行不判红
+    project_not_impl_what=""; project_not_impl_reminder=""
+    project_not_impl_key="${project_not_impl_line%%$'\t'*}"
+    if [[ "$project_not_impl_line" == *$'\t'* ]]; then
+      project_not_impl_rest="${project_not_impl_line#*$'\t'}"
+      project_not_impl_what="${project_not_impl_rest%%$'\t'*}"
+      if [[ "$project_not_impl_rest" == *$'\t'* ]]; then project_not_impl_reminder="${project_not_impl_rest#*$'\t'}"; fi
+    fi
+    if [[ -z "${project_not_impl_key//[[:space:]]/}" || -z "${project_not_impl_what//[[:space:]]/}" ]]; then
+      bad "$PROJECT_NOT_IMPL_FILE 里有一行少了键或说明：$project_not_impl_line"
+      howto "一行写成 键<制表符>缺的是什么<制表符>覆盖之后仍要提醒的话（第三列可空），列之间用制表符，不用空格。"
+      project_not_impl_problems=$((project_not_impl_problems+1)); continue
+    fi
+    if [[ -n "${NOT_IMPL_SHARED_WHAT[$project_not_impl_key]+x}" || -n "${NOT_IMPL_WHAT[$project_not_impl_key]+x}" ]]; then
+      bad "$PROJECT_NOT_IMPL_FILE 里的键「$project_not_impl_key」与共享键或前面的行重名"
+      howto "一个键只登记一处；共享键（${NOT_IMPL_SHARED_KEYS[*]}）由本包带，项目不再登记。"
+      project_not_impl_problems=$((project_not_impl_problems+1)); continue
+    fi
+    NOT_IMPL_KEYS+=("$project_not_impl_key")
+    NOT_IMPL_WHAT["$project_not_impl_key"]="$project_not_impl_what"
+    NOT_IMPL_COVERED_REMINDER["$project_not_impl_key"]="${project_not_impl_reminder:-}"
+    project_not_impl_count=$((project_not_impl_count+1))
+  done < "$PROJECT_NOT_IMPL_FILE"
+fi
+for not_impl_shared_key in "${NOT_IMPL_SHARED_KEYS[@]}"; do
+  NOT_IMPL_KEYS+=("$not_impl_shared_key")
+  NOT_IMPL_WHAT["$not_impl_shared_key"]="${NOT_IMPL_SHARED_WHAT[$not_impl_shared_key]}"
+done
+if (( project_not_impl_problems > 0 )); then
+  record "项目登记的未实现手段" FAIL
+elif [[ -f "$PROJECT_NOT_IMPL_FILE" ]]; then
+  ok "项目登记了 $project_not_impl_count 项自己的验证手段（$PROJECT_NOT_IMPL_FILE），并进未实现清单"
+fi
 declare -A COVERED_BY=()
 
 # ── 阶段 3c：项目本地阶段（.claude/gate.d/*.sh）─────────
@@ -790,8 +833,13 @@ else
 fi
 warn "Gate proves evidence requirements, not semantic correctness."
 warn "门禁证明的是证据要求被满足，不是代码语义正确——绿灯之后仍要看「测的是不是对的东西」。"
-if [[ -n "${COVERED_BY[崩溃点重放]:-}" ]]; then
-  warn "另：崩溃点重放由「${COVERED_BY[崩溃点重放]}」覆盖，只说到它枚举过的那些写路径为止，别的写路径照样没验过。"
-else
-  warn "另：崩溃一致性尚未纳入门禁，此结果不足以证明写路径正确。"
-fi
+# 项目登记的手段里带第三列（覆盖之后仍要提醒的话）的，收尾照打：有阶段覆盖就提醒它只说到那个阶段验到的范围，没有就说这一轮的绿不包含它
+for not_impl_key in "${NOT_IMPL_KEYS[@]}"; do
+  not_impl_reminder="${NOT_IMPL_COVERED_REMINDER[$not_impl_key]:-}"
+  [[ -n "$not_impl_reminder" ]] || continue
+  if [[ -n "${COVERED_BY[$not_impl_key]:-}" ]]; then
+    warn "另：${not_impl_key}由「${COVERED_BY[$not_impl_key]}」覆盖，${not_impl_reminder}"
+  else
+    warn "另：${not_impl_key}还没有项目阶段覆盖，这一轮的绿不包含它。"
+  fi
+done

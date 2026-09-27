@@ -21,7 +21,7 @@
 #   stage-selftest.sh [阶段目录]      不给就找 <仓根>/.claude/gate.d
 #
 # 没有阶段目录、或者没有一个阶段配了样本时退 77（本次无对象可判），不报绿
-# （rules/show-me-test.md：exit 0 的跳过在汇总里与「判过了」一模一样）。
+# （rules/show-me-test.md「门禁不许假装通过」：exit 0 的跳过在汇总里与「判过了」一模一样）。
 # 没配样本的阶段逐个用 report_not_run 报出来：门禁下它们进汇总的「本次未跑」，不只在这一段里 warn 一句。
 set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"

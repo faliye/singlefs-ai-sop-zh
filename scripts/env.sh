@@ -32,7 +32,7 @@ req timeout  "门禁自检给每个用例设超时；没有它挂死的检查既
 req cargo    "Rust 工具链。装：curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh" hard
 req rustc    "同上" hard
 req git      "版本控制" hard
-req dmsetup  "块层写记录（崩溃点重放）" hard
+req dmsetup  "device-mapper 块层工具（录写请求、造故障设备）" hard
 req shellcheck "脚本静态检查" soft
 
 # 版本下限：selftest 用 git init -b（2.28 起），--staged 用 git worktree；
