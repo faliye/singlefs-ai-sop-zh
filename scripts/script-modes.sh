@@ -12,12 +12,15 @@
 # 判据（只看已跟踪的 .sh 与 .py，fixtures/ 下的不看——样本故意不可执行）：
 #   ① `.sh` 在暂存区里必须是 100755；
 #   ② 暂存区里的模式与工作区的执行位一致（100755 ⇔ 工作区可执行）。
+#   符号链接（120000）判它在暂存区里指向的那一份：那一份也要在暂存区里，.sh 的要是 100755。
 #
 # 用法：
 #   script-modes.sh [目录…]        不给目录就扫本包的 scripts/
 #
 # 扫到 0 个脚本判红：射程写窄了会让这一条什么也没验，而末尾照样报绿
 # （rules/show-me-test.md：扫到 0 项也不是通过）。
+# 射程里有的目录判不了（不存在、不在 git 仓里、里面一个已跟踪的 .sh / .py 都没有，比如被 .gitignore 挡着的规范副本），
+# 逐个用 report_not_run 报出来：只要别的目录查到了东西就不吭声的话，那几处从来没人查，而成功那句看不出来。
 set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 preflight "${BASH_SOURCE[0]}" "$@"; set -- ${PREFLIGHT_ARGUMENTS[@]+"${PREFLIGHT_ARGUMENTS[@]}"}
@@ -30,12 +33,13 @@ DIRS=("$@")
 # `gate.sh --staged` 把项目摊在临时 worktree 里，而装进来的 SOP 副本仍在真仓。
 # 拿第一个目录的仓根去 `ls-files` 另一个仓里的路径，git 直接 fatal、输出为空，
 # 于是这一条报「一个都没查到」——正好是它自己要防的那种失效（0.0.56 实测，下游会话报的）。
-checked=0; wrong=0; in_repo=0
+checked=0; wrong=0; in_repo=0; unjudged_directories=()
 for dir in "${DIRS[@]}"; do
-  [[ -d "$dir" ]] || continue
+  if [[ ! -d "$dir" ]]; then unjudged_directories+=("$dir（不存在）"); continue; fi
   dir_root="$(cd "$dir" && git rev-parse --show-toplevel 2>/dev/null || true)"
-  [[ -n "$dir_root" ]] || continue
+  if [[ -z "$dir_root" ]]; then unjudged_directories+=("$dir（不在 git 仓里）"); continue; fi
   in_repo=1
+  checked_before_this_directory=$checked
   # git ls-files 的输出先整份读进来再逐行判：管道里逐行读时，循环体里的计数留在子 shell
   # 里出不来（rules/command-safety.md：子 shell 里的赋值传不回父进程）。
   entries="$(git -C "$dir_root" ls-files -s -z -- "$dir" | tr '\0' '\n' || true)"
@@ -46,6 +50,20 @@ for dir in "${DIRS[@]}"; do
     case "$path" in *.sh|*.py) ;; *) continue ;; esac
     checked=$((checked + 1))
     full="$dir_root/$path"
+    # 符号链接（120000）本身没有执行位：判它在暂存区里指向的那一份（gate.sh 照样跑链接形式的本地阶段）
+    if [[ "$mode" == 120000 ]]; then
+      link_target="$(git -C "$dir_root" cat-file -p ":$path" 2>/dev/null || true)"
+      link_target_path="$(realpath -m --relative-to="$dir_root" "$dir_root/$(dirname "$path")/$link_target" 2>/dev/null || true)"
+      link_target_mode="$(git -C "$dir_root" ls-files -s -- "$link_target_path" 2>/dev/null | cut -d' ' -f1 || true)"
+      if [[ -z "$link_target" || -z "$link_target_mode" ]]; then
+        say "  ✗ $path 是符号链接，指向的 ${link_target_path:-（读不出）} 不在暂存区里，判不了它的执行位"   # gate-lint:detail
+        wrong=$((wrong + 1))
+      elif [[ "$path" == *.sh && "$link_target_mode" != 100755 ]]; then
+        say "  ✗ $path 是符号链接，指向的 $link_target_path 在暂存区里是 $link_target_mode，.sh 要可执行"   # gate-lint:detail
+        wrong=$((wrong + 1))
+      fi
+      continue
+    fi
     if [[ "$path" == *.sh && "$mode" != 100755 ]]; then
       say "  ✗ $path 在暂存区里是 $mode，.sh 要可执行"   # gate-lint:detail
       wrong=$((wrong + 1)); continue
@@ -56,8 +74,16 @@ for dir in "${DIRS[@]}"; do
       wrong=$((wrong + 1))
     fi
   done <<< "$entries"
+  if (( checked == checked_before_this_directory )); then
+    unjudged_directories+=("$dir（一个已跟踪的 .sh / .py 都没有：被 .gitignore 挡着，或还没 git add）")
+  fi
 done
 
+if (( checked > 0 )); then
+  for unjudged_directory in ${unjudged_directories[@]+"${unjudged_directories[@]}"}; do
+    report_not_run "脚本执行位：$unjudged_directory，那里的执行位没查"
+  done
+fi
 if (( in_repo == 0 )); then
   warn "射程里没有一个目录在 git 仓库里，这一条无对象可判（暂存区的模式只有 git 仓里才有）"
   exit 77
@@ -72,8 +98,8 @@ fi
 
 if (( wrong > 0 )); then
   bad "$wrong 个脚本的执行位在暂存区里不对（查了 $checked 个）"   # gate-lint:summary
-  howto "用 git update-index --chmod=+x <路径>（或 -x）改暂存区里的模式，让它与工作区一致。" \
-        "手工暂存时别写死 100644——那会把可执行位丢进历史。"
+  howto "用 git update-index --chmod=+x <路径>（或 -x）改暂存区里的模式，让它与工作区一致；是符号链接的，改它指向的那一份，" \
+        "指向的文件没进暂存区就先 git add 它。手工暂存时别写死 100644——那会把可执行位丢进历史。"
   exit 1
 fi
-ok "查了 $checked 个脚本：.sh 都可执行，暂存区里的模式与工作区一致"
+ok "查了 $checked 个脚本：.sh 都可执行，暂存区里的模式与工作区一致（射程 ${#DIRS[@]} 个目录，没查的 ${#unjudged_directories[@]} 个，见上）"

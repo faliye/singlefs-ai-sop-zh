@@ -32,6 +32,7 @@ for lang in $LANGS; do
     howto "所有声明的语言仓都要在场才能升版本，否则会升出互相不一致的几份。" \
           "先把缺的仓 clone 下来，或用 --root 指定它们所在的目录。"; exit 1; }
 done
+bumped=0
 for lang in $LANGS; do
   d="$ROOT/$FAMILY-$lang"
   printf '%s\n' "$NEW" > "$d/VERSION"
@@ -40,8 +41,9 @@ for lang in $LANGS; do
     "先看 df -h 与该目录的权限，修好后重跑 bump.sh——" \
     "此刻各仓版本已经不一致，不修完不要提交。"
   ok "$FAMILY-$lang  → $NEW"
+  bumped=$((bumped+1))
 done
 bash "$PKG/scripts/manifest.sh" --update >/dev/null
-ok "清单已重新生成"
+ok "清单已重新生成；$bumped 个语言仓的 VERSION 升到了 $NEW"
 say ""
 warn "记得：改了规则就要重译，只升版本不重译等于把过期译本标成最新。"

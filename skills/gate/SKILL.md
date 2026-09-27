@@ -66,18 +66,16 @@ bash .claude/scripts/gate.sh --staged # 只拿 HEAD + 暂存区跑：几个会�
 改了 `gate.sh` 或 `doc-lint.sh` 之后，**必须造一个应该被拦的输入验证它真的会红**：
 
 ```bash
-# 造一个该被拦的样本，喂给 doc-lint，确认它真的红
+# 造一个该被拦的样本，喂给 doc-lint，确认它真的红：kb 文档缺了收尾的历史节（结构检查，哪种语言的仓都判）
 d=$(mktemp -d); mkdir -p "$d/kb"
-printf '# 决策\n\n节点大小 16K（原为 4K）。\n\n## 历史版本\n\n### %s\n- 建档。\n' "$(date +%F)" \
-  > "$d/kb/decisions.md"
+printf '# 决策\n\n节点大小 16K。\n' > "$d/kb/decisions.md"
 bash .claude/singlefs-ai-sop/scripts/doc-lint.sh "$d"; echo "退出码 $? —— 应为 1"
 rm -rf "$d"
 ```
 
 ⚠️ **样本要另建一个目录，别往真的 kb 文件尾巴上 `>>`。**
 `>>` 追加的内容落在「## 历史版本」后面，而正文扫描在历史节那一行就停了。
-退出码是 0，看着像「检查没做事」，其实是样本造错了地方——
-这是在这份 skill 自己的例子上实测到的。
+退出码是 0，看着像「检查没做事」，其实是样本造错了地方。
 
 改完检查还要跑一遍 `bash .claude/singlefs-ai-sop/scripts/selftest.sh`。
 它拿 `scripts/fixtures/` 下的样本证明每条检查现在还红得起来。

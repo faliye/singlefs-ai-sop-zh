@@ -49,8 +49,8 @@ fails=0
 # ── 不扫的目录 ──────────────────────────────────────────
 # 排除一个目录，那里面的名字就没人管了，所以每条都要写明为什么，而且一律报出来：
 # 静悄悄少扫一批文件，和这道检查没实现长得一模一样。判法与 doc-lint 的排除表同一套。
-EXCL=(-not -path '*/target/*' -not -path "$ROOT/.git/*" -not -path "$ROOT/.claude/*"
-      -not -path "$ROOT/scripts/fixtures/*")
+# 默认那几处（target/、.git/、.claude/、scripts/fixtures/）在 lib.sh 的 rust_source_files 里，与「构建与单测」共用；这里只追加排除表里的
+EXCL=()
 EXFILE="$ROOT/.claude/naming-lint-exclude"
 expaths=(); exwhys=(); exns=()
 if [[ -f "$EXFILE" ]]; then
@@ -158,7 +158,7 @@ if [[ -f "$ABFILE" ]]; then
 fi
 
 files=()
-while IFS= read -r f; do files+=("$f"); done < <(find "$ROOT" -name '*.rs' -type f "${EXCL[@]}" | sort)
+while IFS= read -r f; do files+=("$f"); done < <(rust_source_files "$ROOT" ${EXCL[@]+"${EXCL[@]}"} | sort)
 
 if [[ ${#expaths[@]} -gt 0 ]]; then
   total_excluded=0; for i in "${!expaths[@]}"; do total_excluded=$((total_excluded+exns[i])); done

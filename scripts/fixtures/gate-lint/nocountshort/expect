@@ -1,0 +1,2 @@
+exit=1
+want=evil.sh:2  gate-lint:nocount 的理由不到 8 个字

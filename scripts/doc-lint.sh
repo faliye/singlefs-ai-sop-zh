@@ -121,6 +121,11 @@ esac
 # 与语言无关，所有语言照跑。
 WORDLIST=0
 [[ "$DOC_LANG" == zh ]] && WORDLIST=1
+# 位置指代与自称（D-1、D-2）另算一档：日文里指文档位置的是「上記」「前述」「本節」这几个专用的词，
+# 平常说话不这么用，照中文那套的收法（左边只认句首、标点与助词）换几个词就判得了，不用逐个补假红。
+# 英文的 above / below / this section 满篇都是正常用法，照翻就是假红，所以英文仍然没有这一档。
+REFERENCE_WORDLIST=0
+case "$DOC_LANG" in zh|ja) REFERENCE_WORDLIST=1 ;; esac
 
 # `--not-impl`：只报「本语言有哪几条检查没实现」，一行一条，退 0，别的什么都不做。
 # gate.sh 拿它去填末尾的未实现清单。判据（哪几条依赖词表）只有这一处——
@@ -128,7 +133,12 @@ WORDLIST=0
 # （rules/kb-discipline.md 第 4 条）。此前 en / ja 仓这三条报了「未实现」却仍记 PASS，
 # 汇总的未实现清单里也没有它们（审计实测）。
 if [[ $NOT_IMPL_ONLY -eq 1 ]]; then
-  [[ $WORDLIST -eq 1 ]] || printf '%s\n' "文档铁律的词表型检查（$DOC_LANG）：历史陈述、kb 的指代与自称、文风——本语言没有词表"
+  if [[ $WORDLIST -eq 1 ]]; then exit 0; fi
+  if [[ $REFERENCE_WORDLIST -eq 1 ]]; then
+    printf '%s\n' "文档铁律的词表型检查（$DOC_LANG）：历史陈述、kb 的时间指代、文风——本语言没有词表"
+  else
+    printf '%s\n' "文档铁律的词表型检查（$DOC_LANG）：历史陈述、kb 的指代与自称、文风——本语言没有词表"
+  fi
   exit 0
 fi
 
@@ -421,7 +431,7 @@ while IFS= read -r f; do
   # 射程含规范文本（CLAUDE.md、rules/、agents/、skills/*/SKILL.md）：规则同样被单条引用、
   # 被 grep 摘出来喂进上下文，「上一节说的是」摘出来就断（rules/rules-discipline.md 第 7 条）。
   # 规则定义文件扫的是 $scan——反引号与「」里的举例已挖掉，列举指代词的那几张表不判。
-  if [[ ( "$f" == */kb/*.md || "$f" == */rules/*.md || "$base" == "CLAUDE.md" || "$f" == */agents/*.md || "$f" == */skills/*/SKILL.md ) && $WORDLIST -eq 1 ]]; then
+  if [[ ( "$f" == */kb/*.md || "$f" == */rules/*.md || "$base" == "CLAUDE.md" || "$f" == */agents/*.md || "$f" == */skills/*/SKILL.md ) && $REFERENCE_WORDLIST -eq 1 ]]; then
     if [[ "$f" == */kb/*.md ]]; then dockind="kb 正文"; else dockind="规范正文"; fi
     # 方位指代（见下 / 见上表 / 上面那张表）与上下文指代同一个病：检索结果里没有上下。
     # 「上一条」「下一条」**不在其内**——实测假红压倒真红：一个已登记的简称就叫
@@ -452,6 +462,11 @@ while IFS= read -r f; do
     ctx="$ctx|${dlead}以[上下](是|几[条点项段]|各[条点项段])"
     ctx="$ctx|(${dlead}|[以把按取在是了成进含从为])(上面|下面)(的|是|[一二三四五六七八九十几两各每]|第|保留| ?[0-9①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳])"
     ctx="$ctx"'|(列|照录|附|放)在(上面|下面)'
+    # 日文：只认指文档位置的专用词。「この節」「この表」「この文書」不认：它们常指正在讲的那一类东西（「この文書が誰のためか」），
+    # 不是自指；「上表」「下表」排掉「上表面」这类构词。
+    if [[ "$DOC_LANG" == ja ]]; then
+      ctx='上記|下記|前述|後述|上述|前節|次節|前項|次項|同上|[上下]表([^面]|$)|[上下]の表|(以下|次)の(とおり|通り)'
+    fi
     # 判据先单独编一次：下面那条 grep 带着 `|| true`，grep 编不过（退出码 2）与「没命中」长得一样，
     # 整条检查对每份 kb 都静默判绿（2026-09-17 实测：区间 `①-⑳` 在 grep 里报 Invalid collation character）。
     ctxrc=0; printf '\n' | grep -E "$ctx" > /dev/null || ctxrc=$?
@@ -498,6 +513,14 @@ while IFS= read -r f; do
     fi
     # 指被测系统而不是文档位置的，一律排除
     selfskip='本(工程|仓|轮|机|文件系统|系统|盘|实现|包|次)'
+    # 日文：左边在中文那套之外再认助词（「は本節で」），右边排掉「本条件」「本節点」「本表面」这类构词；
+    # kb 里另认「本決定」「本実験」。「本プロジェクト」「本リポジトリ」指的是项目，不是文档位置。
+    if [[ "$DOC_LANG" == ja ]]; then
+      jlead='(^|[、。，．：；！？（）()「」『』【】〔〕〈〉《》“”"*|[:space:]]|[はがをにでとのもへや])'
+      self="${jlead}本(節([^点]|$)|項([^目]|$)|表([^面]|$)|章|文書|条([^件目]|$))"
+      if [[ "$dockind" == "kb 正文" ]]; then self="$self|${jlead}本(決定|実験|不変条件)"; fi
+      selfskip='本(プロジェクト|リポジトリ|機|ファイルシステム|システム|パッケージ)'
+    fi
     # 同上下文指代那一处：判据编不过时 `|| true` 会把它吞成「没命中」。
     selfrc=0; printf '\n' | grep -E -e "$self" -e "$selfskip" > /dev/null || selfrc=$?
     [[ $selfrc -le 1 ]] || die "自指称呼的判据 grep 编不过（退出码 $selfrc），这一条对哪份 kb 都没判过" \
@@ -523,7 +546,7 @@ while IFS= read -r f; do
     #   「下一轮」指还没发生的任何一轮，本来就是泛指，锚不到也锚不该；
     #   「本次 / 上次 / 这次」多数挂在技术对象上（本次 diff、上次 scrub 的水位），那是自足的；
     #   历史节里的每条都挂在 `### YYYY-MM-DD` 下，而 body_of 在历史节就停机了，够不着。
-    if [[ "$dockind" == "kb 正文" ]]; then
+    if [[ "$dockind" == "kb 正文" && $WORDLIST -eq 1 ]]; then
       if rounds="$(printf '%s\n' "$scan" | awk '
             { tab = index($0, "\t"); ln = substr($0, 1, tab - 1); line = substr($0, tab + 1) }
             line ~ /^#/ { head = line }
@@ -928,7 +951,7 @@ if [[ -n "$kb_files" ]]; then
     printf '%s\n' "$hits" | head -3 | awk -F'\t' '{printf "        :%s  %s %s —— %s\n", $1, $3, $2, $4}'
     howto "每处引用都写成「编号（简称）」，简称照登记位抄，例：「D1（数据可移动性）」。" \
           "编号在引用处只剩一个符号，含义能被悄悄改掉而没有一个字看起来别扭——" \
-          "实测代价见 rules/kb-discipline.md 第 5 条。全量清单：DOC_LINT_VERBOSE=1"
+          "规矩见 rules/kb-discipline.md「编号只能做索引，不能做称呼」。全量清单：DOC_LINT_VERBOSE=1"
     [[ -n "${DOC_LINT_VERBOSE:-}" ]] && printf '%s\n' "$hits" | awk -F'\t' '{printf "        :%s  %s %s —— %s\n", $1, $3, $2, $4}'
     numfails=$((numfails+1))
   done <<< "$kb_files"
@@ -1054,11 +1077,15 @@ say ""
 if [[ $WORDLIST -ne 1 ]]; then
   warn "本语言（$DOC_LANG）没有词表，以下检查**未实现**，不是通过："
   warn "  A 正文历史陈述（原为 / 曾经 / 已废弃 …）"
-  warn "  D kb 的上下文指代与自指称呼"
+  if [[ $REFERENCE_WORDLIST -eq 1 ]]; then
+    warn "  D kb 的时间指代（本轮 / 这一轮 …）；位置指代与自称按本语言的词表判了"
+  else
+    warn "  D kb 的上下文指代与自指称呼"
+  fi
   warn "  I 文风（翻译腔 / 古风腔 / 过度解释）"
   howto "要补就在 scripts/doc-lint.sh 的 PATTERNS 与 ctx/self 里加本语言的词表，" \
-        "并在 scripts/fixtures/doc-lint/ 下配该语言的红样本与踩边界的绿样本。" \
-        "在那之前这两类违规不会被拦——绿灯不代表这两条验过了。"
+        "并在 scripts/fixtures/ 下配该语言的红样本与踩边界的绿样本（日文的在 doc-lint-ja/）。" \
+        "在那之前这几类违规不会被拦——绿灯不代表这几条验过了。"
 fi
 if [[ $fails -gt 0 || $reffails -gt 0 || $numfails -gt 0 || $exfails -gt 0 || $metafails -gt 0 ]]; then
   bad "文档铁律检查失败：$fails 个文件违规、$reffails 处编号引用无定义、$numfails 处编号定义/引用不合规、$exfails 条排除项不合规、$metafails 处规则清单/警告记录不合规（检查 $checked，跳过 $skipped）"   # gate-lint:summary

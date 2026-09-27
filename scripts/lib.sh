@@ -220,17 +220,47 @@ diff_base() {
   printf 'HEAD'
 }
 
-# 列出相对基准变更的文件（含工作区未提交改动）
+# 列出相对基准变更的文件（含工作区未提交改动）。任一条 git 失败就返回 1、一行都不输出：
+# 少一截的清单与「没有改动」长得一样，调用方会把它判成无对象可判或不适用。调用方写成
+#   files="$(changed_files "$ROOT" "$BASE")" || die "取不到改动清单" "<出路>"
 changed_files() {
-  local root="$1" base="$2"
-  # 空仓（还没有任何 commit）时 HEAD 不存在，diff 会失败——只看未跟踪文件
+  local root="$1" base="$2" worktree_changes cached_changes untracked_files
+  # 空仓（还没有任何 commit）时 HEAD 不存在，对基准的 diff 会失败——看暂存区（没有 HEAD 时 --cached 对的是空树）与未跟踪文件
   if ! git -C "$root" rev-parse --verify -q "$base^{commit}" >/dev/null 2>&1; then
-    git -C "$root" ls-files --others --exclude-standard | sort -u | grep -v '^$' || true
+    cached_changes="$(git -C "$root" diff --name-only --cached --)" || return 1
+    untracked_files="$(git -C "$root" ls-files --others --exclude-standard)" || return 1
+    printf '%s\n%s\n' "$cached_changes" "$untracked_files" | sort -u | grep -v '^$' || true
     return 0
   fi
-  { git -C "$root" diff --name-only "$base" -- ;
-    git -C "$root" diff --name-only --cached -- ;
-    git -C "$root" ls-files --others --exclude-standard ; } | sort -u | grep -v '^$' || true
+  worktree_changes="$(git -C "$root" diff --name-only "$base" --)" || return 1
+  cached_changes="$(git -C "$root" diff --name-only --cached --)" || return 1
+  untracked_files="$(git -C "$root" ls-files --others --exclude-standard)" || return 1
+  printf '%s\n%s\n%s\n' "$worktree_changes" "$cached_changes" "$untracked_files" | sort -u | grep -v '^$' || true
+}
+
+# 项目给 cargo 挂的前缀登记，相对项目根（rules/command-safety.md）。check.sh 读它；gate.sh --staged 查临时树里有没有它。
+CARGO_COMMAND_PREFIX_FILE=.claude/cargo-command-prefix
+
+# 项目里的 Rust 源码：默认不看编译产物、git 自己、.claude/（工具、样本、装进来的 SOP 副本）与本包的样本目录。
+# naming-lint 与 gate.sh 的「构建与单测」共用这一份；各写一份时，「构建与单测」只找 crates/，放在别处的 .rs 没有 Cargo.toml 也判不出来。
+rust_source_files() { # rust_source_files <根> [额外的 find 条件…] → 一行一个 .rs 的路径
+  local root="$1"; shift
+  find "$root" -name '*.rs' -type f -not -path '*/target/*' -not -path "$root/.git/*" -not -path "$root/.claude/*" \
+    -not -path "$root/scripts/fixtures/*" "$@"
+}
+
+# ── 「本次未跑」的侧信道 ────────────────────────────────
+# 阶段只跑了一部分（缺工具跳过的用例、本语言没实现的样本、没有样本的本地阶段）时，跳过的那一部分要进门禁汇总的「本次未跑」，
+# 只在阶段输出里 warn 一句的话，汇总照报通过，而汇总才是人会看的那一处（rules/show-me-test.md「门禁不许假装通过」）。
+# gate.sh 导出 GATE_NOT_RUN_FILE，阶段用 report_not_run 往里追加一行，gate.sh 在记这个阶段的结果时收进汇总。
+# 读进本地变量就从环境里拿掉：它只是 gate.sh 与它直接起的阶段之间的握手，漏给阶段再起的子进程（selftest 嵌套跑的门禁与样本），
+# 它们跳过的东西就记到了外层门禁的账上（rules/command-safety.md「进程边界上的三种静默失效」）。
+GATE_NOT_RUN_SIDE_CHANNEL="${GATE_NOT_RUN_FILE:-}"; unset GATE_NOT_RUN_FILE
+report_not_run() { # report_not_run <哪一部分没跑：为什么、怎么补>
+  warn "本次未跑（这不是通过）：$1"
+  if [[ -n "$GATE_NOT_RUN_SIDE_CHANNEL" ]]; then printf '%s\n' "$1" >> "$GATE_NOT_RUN_SIDE_CHANNEL"; fi
+  # 跳过了一部分的那一次，preflight_record_success 不记成「上次成功」（preflight.sh）
+  PREFLIGHT_PARTS_NOT_RUN=$((PREFLIGHT_PARTS_NOT_RUN + 1))
 }
 
 # 工作区指纹：把工作区此刻的内容（跟踪的文件 + 没被忽略的未跟踪文件）写成一棵树，输出树的哈希；不是 git 仓时输出空。

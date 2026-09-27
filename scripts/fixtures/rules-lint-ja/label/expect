@@ -1,0 +1,4 @@
+exit=1
+want=处解释性半句
+want=sample.md:3（标签「実測」加冒号）
+want=sample.md:5（标签「根拠」加冒号）

@@ -1,0 +1,7 @@
+exit=1
+want=kb 正文不许用上下文指代
+want=> 上記参照
+want=> 前述の手順
+want=kb 正文不许用自指称呼
+want=> 本節では
+want=> 本決定は

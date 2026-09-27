@@ -16,7 +16,7 @@
 #      只挂了一部分（比如只挂 Stop、没挂 SubagentStop），没挂上的那一类 agent 那里这道闸不在。
 #      写成 `<事件>:<工具名>` 的（只该在某个工具上触发），那条注册的 matcher 还要认得这个工具名（空 matcher 与 * 认全部）：
 #      挂在别的 matcher 上，钩子一次都不会为那个工具触发，而注册看着是齐的。
-# 没有 settings.json 或一个钩子都没有时退 77（本次无对象可判），不报绿。
+# 一个钩子都没有时退 77（本次无对象可判），不报绿。有钩子却没有 settings.json 判红：那等于每一个都没注册。
 #
 # 用法：
 #   hooks-registered.sh [仓根]
@@ -34,8 +34,14 @@ for directory in "$ROOT/.claude/hooks" "$PKG_HOOKS"; do
   [[ -d "$directory" ]] || continue
   while IFS= read -r one; do [[ -n "$one" ]] && hooks+=("$one"); done < <(find "$directory" -maxdepth 1 -name '*.sh' -type f | sort)
 done
-((${#hooks[@]})) || exit 77
-[[ -f "$SETTINGS" ]] || exit 77
+((${#hooks[@]})) || { warn "项目的 .claude/hooks/ 与装进来的副本里一个钩子都没有，本阶段无对象可判（这不是通过）"; exit 77; }
+if [[ ! -f "$SETTINGS" ]]; then
+  bad "没有 $SETTINGS，而 .claude/hooks/ 与装进来的副本里共有 ${#hooks[@]} 个钩子：它们一个都没注册"
+  howto "建 .claude/settings.json，在 hooks.<事件> 里把它们注册上，写法见各钩子文件头的「怎么注册」：" \
+        '{"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/<名>.sh"}]}]}}' \
+        "装进来的副本里的钩子归上游管，不删，只注册。"
+  exit 1
+fi
 
 # 读 settings.json、认「一条注册命令指向哪个钩子」都只在 hook-registrations.py 一处，gate-overlap.py 也用它。
 # 按文件名的边界认：按子串认的话，`guard.sh` 会被认成 `old-guard.sh` 的注册。
@@ -55,11 +61,15 @@ if [[ -z "$all_registrations" ]]; then
 fi
 
 hook_events_of() { sed -n 's/^# hook-events:[[:space:]]*//p' "$1" | head -1; }
-missing=(); failed=(); unhooked_events=(); checked=0; selftested=0
+missing=(); failed=(); unhooked_events=(); unreadable=(); checked=0; selftested=0
 for hook in "${hooks[@]}"; do
   name="$(basename "$hook")"
   checked=$((checked + 1))
-  hook_registrations="$(python3 "$REGISTRATIONS_READER" --for "$name" "$SETTINGS" 2>/dev/null)"
+  # 读注册失败与「没注册」分开：吞掉的话，这一次读失败的钩子被报成「没在 settings.json 里注册」，出路指错了地方
+  if ! hook_registrations="$(python3 "$REGISTRATIONS_READER" --for "$name" "$SETTINGS" 2>/dev/null)"; then
+    unreadable+=("$name")
+    continue
+  fi
   if [[ -z "$hook_registrations" ]]; then
     missing+=("$hook")
     continue
@@ -82,6 +92,12 @@ for hook in "${hooks[@]}"; do
   fi
 done
 
+if ((${#unreadable[@]})); then
+  bad "${#unreadable[@]} 个钩子的注册读不出来（hook-registrations.py --for 失败）：${unreadable[*]}"   # gate-lint:summary
+  howto "单跑 python3 $REGISTRATIONS_READER --for <钩子文件名> $SETTINGS 看它为什么失败（settings.json 跑到一半被改了、或读它的脚本坏了），修好再跑。" \
+        "读不出来不等于没注册：这一条没判，所以不许当成通过。"
+  exit 1
+fi
 if ((${#missing[@]})); then
   bad "${#missing[@]} 个钩子没在 settings.json 里注册："   # gate-lint:summary
   for hook in "${missing[@]}"; do

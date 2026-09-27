@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # admission: always 装与升级副本之后都跑：它逐份比对铺下去的文件、刷版本戳，每次项目那边的状态都可能不一样
-# run-condition: none 只在给定的项目根里写文件，目标不对由它自己的参数检查拒绝；lib.sh 要的 gawk 在 source 时就查过
+# run-condition: command gawk
 # 把本 SOP 接进一个项目（任一语言版本，目录名统一为 .claude/singlefs-ai-sop）。
 #
 # 用法（在项目根跑）：

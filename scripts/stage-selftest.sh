@@ -10,7 +10,7 @@
 # （rules/sop-first.md：门禁脚本自己也要有测试）。
 # 原是使用者项目的一个本地阶段，判据通用，收归这里。
 #
-# 怎么加样本：`<阶段目录>/fixtures/<阶段文件名>/{red,green}/`，
+# 怎么加样本：`<阶段目录>/fixtures/<阶段文件名>/{red,green}/`，要第三种情形就再开一个别的名字的目录（先跑 red、green，其余按名字跑），
 # 里面按仓库结构摆好被判的文件，再写一个 `expect`：
 #   exit=1
 #   want=失败信息里必须出现的片段     # 红样本至少一条；防「因为别的原因红了」也算过
@@ -20,8 +20,9 @@
 # 用法：
 #   stage-selftest.sh [阶段目录]      不给就找 <仓根>/.claude/gate.d
 #
-# 没有阶段目录时退 77（本次无对象可判），不报绿
+# 没有阶段目录、或者没有一个阶段配了样本时退 77（本次无对象可判），不报绿
 # （rules/show-me-test.md：exit 0 的跳过在汇总里与「判过了」一模一样）。
+# 没配样本的阶段逐个用 report_not_run 报出来：门禁下它们进汇总的「本次未跑」，不只在这一段里 warn 一句。
 set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 preflight "${BASH_SOURCE[0]}" "$@"; set -- ${PREFLIGHT_ARGUMENTS[@]+"${PREFLIGHT_ARGUMENTS[@]}"}
@@ -54,9 +55,19 @@ for stage in "$GD"/*.sh; do
   # 强制跑的那一次不记成「上次成功」）。没写的不带：它还不认 --force，多一个参数可能被当成项目根（rules/preflight-discipline.md）。
   stage_force_option=()
   if python3 "$(dirname "${BASH_SOURCE[0]}")/preflight.py" declared "$stage"; then stage_force_option=(--force); fi
-  for kind in red green; do
+  # 先跑 red、green，再按名字跑别的样本目录（例如「登记表 0 行」这种第三种情形）：带 expect 的都跑，
+  # 只认 red / green 的话，第三种样本摆在那里看着像验过了，其实一次都没被跑到。
+  sample_kinds=(red green)
+  while IFS= read -r extra_kind; do
+    [[ "$extra_kind" == red || "$extra_kind" == green ]] || sample_kinds+=("$extra_kind")
+  done < <(find "$FX/$name" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort)
+  for kind in "${sample_kinds[@]}"; do
     d="$FX/$name/$kind"
     [[ -d "$d" ]] || continue
+    if [[ ! -f "$d/expect" ]]; then
+      say "  ✗ $(printf '%-28s %-5s' "$name" "$kind") 样本目录里没有 expect，判不了它该红还是该绿"   # gate-lint:detail
+      fail=$((fail+1)); continue
+    fi
     want_exit="$(sed -n 's/^exit=//p' "$d/expect")"
     # 样本先拷进临时目录再跑：有 setup.sh 的（例如要 git 仓的阶段）在那里建现场，
     # 免得把 .git 之类的东西塞进本仓。
@@ -92,15 +103,19 @@ for stage in "$GD"/*.sh; do
 done
 
 if ((${#nocase[@]})); then
-  warn "这些阶段还没有判别力样本，这一条**没有验过它们**："
-  printf '      %s\n' "${nocase[@]}"
-  howto "一条永远不红的检查与没有这条检查，在门禁输出里长得一模一样。" \
-        "给它配 fixtures/<阶段文件名>/{red,green}/，或者把这笔欠账记进项目的欠检查清单。"
+  for stage_without_samples in "${nocase[@]}"; do
+    report_not_run "$stage_without_samples 没有判别力样本，它会不会红没有验过（配 fixtures/$stage_without_samples/{red,green}/）"
+  done
+  say "     一条永远不红的检查与没有这条检查，在门禁输出里长得一模一样：给它们配样本，或者把这笔欠账记进项目的欠检查清单。"
 fi
 if ((fail)); then
   bad "$fail 个样本判错（判对 $pass 个，$((${#nocase[@]})) 个阶段没有样本）"   # gate-lint:summary
   howto "上面每一条写着它错在哪：退出码不对，或者输出里找不到 want。" \
         "样本该改就改 expect，检查坏了就改那个阶段——别两边一起改到自洽为止。"
   exit 1
+fi
+if ((pass == 0)); then
+  warn "没有一个阶段配了样本，一个样本都没判，本阶段无对象可判（这不是通过）"
+  exit 77
 fi
 ok "有样本的阶段判得都对（$pass 个样本），$((${#nocase[@]})) 个阶段仍未自检"

@@ -19,13 +19,14 @@
 #   - bash / sh / dash / zsh / ksh 的 -c 字符串参数（-lc、-ec 这类合并写法也算）与 <<< 字符串，当成额外几行代码；
 #   以 # 开头的注释行跳过。
 # 退出码：命中 2（Claude Code 拦下这条命令，把 stderr 交给模型）；没命中、或输入里没有命令 0；
-#   输入不是 JSON 对象 1（Claude Code 照常执行命令，stderr 只在详细模式里给人看）——「没判」不记成「判过」。
+#   输入不是 JSON 对象 1，准入与运行条件不满足（缺 python3、grep，preflight 报的原话在 stderr）78：
+#   这两种都是「没判」，Claude Code 照常执行命令（只有 2 才拦），stderr 只在详细模式里给人看——「没判」不记成「判过」。
 #
 # 怎么注册：在项目的 .claude/settings.json 里给 hooks.PreToolUse 加一项
 #   {"matcher": "Bash", "hooks": [{"type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR\"/.claude/singlefs-ai-sop/scripts/claude-hooks/pattern-process-guard.sh"}]}
 # 没注册的会话里，这一条仍然只靠 rules/command-safety.md 的文字。
 # 手喂一条看效果： printf '%s' '{"tool_name":"Bash","tool_input":{"command":"…"}}' | bash 本文件
-# 依赖：python3、GNU grep，以及 lib.sh 要的 gawk（lib.sh 找不到 gawk 就报错退出 1，命令照常执行）。
+# 依赖：python3、GNU grep（缺了按准入与运行条件不满足退 78，命令照常执行），以及 lib.sh 要的 gawk（lib.sh 找不到 gawk 就报错退出 1，命令照常执行）。
 #
 # 管不到的（实测；判别力样本在 scripts/fixtures/pattern-process-guard/）：
 #   漏判——前缀不在 CMD_POS 里的：timeout 5 …、nohup …、nice -n 19 …、watch '…'、ssh 主机 '…' 后面跟着的那条命令；

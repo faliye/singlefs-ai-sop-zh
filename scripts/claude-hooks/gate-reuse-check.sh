@@ -18,11 +18,11 @@
 #
 # 不死循环：拦下时把判定输出的指纹记在状态目录里（按 session_id 与 agent_id 分开），续跑里同一份红不连拦两次；
 #   放行条件在 scripts/claude-hook-lib.sh 的 stop_hook_already_shown。没改的由门禁阶段「门禁查重」在提交前判红。
-# 会话记录取 agent_transcript_path（子 agent 自己的那份），没有就取 transcript_path；两个都没有就放行。
-# 项目根取 CLAUDE_PROJECT_DIR，没有就取输入里的 cwd。
+# 会话记录取 agent_transcript_path（子 agent 自己的那份），没有就取 transcript_path；两个都没有、或那份文件不在，判不了（退 1，放行）。
+# 项目根取 CLAUDE_PROJECT_DIR，没有就取输入里的 cwd；都没有或不是目录，同样判不了（退 1，放行）。
 # 状态目录默认 ${TMPDIR:-/tmp}/gate-reuse-check，GATE_REUSE_CHECK_STATE_DIRECTORY 可改。
 # 退出码：拦下 2（Claude Code 不让收工，把 stderr 交给 agent）；放行 0；
-#   输入不是 JSON 对象、或判定脚本判不了 1（不拦，stderr 只给人看）——「没判」不记成「判过」。
+#   输入不是 JSON 对象、找不到会话记录或项目根、或判定脚本判不了 1（不拦，stderr 只给人看）——「没判」不记成「判过」。
 #
 # 怎么注册：项目 .claude/settings.json 的 hooks 里加两项（Stop 与 SubagentStop 不带 matcher）：
 #   "Stop":         [{"hooks": [{"type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR\"/.claude/singlefs-ai-sop/scripts/claude-hooks/gate-reuse-check.sh"}]}]
@@ -53,9 +53,15 @@ judge_stop() { # judge_stop < 钩子 JSON → 退出码 0 放行、2 拦下、1 
     IFS= read -r session_directory; IFS= read -r session_id; IFS= read -r agent_id; } <<<"$fields"
   # Stop 与 SubagentStop 同样判（hook_event_name 不分流）；子 agent 认它自己的那份会话记录
   transcript="${agent_transcript:-$main_transcript}"
-  [[ -n "$transcript" && -f "$transcript" ]] || return 0
+  if [[ -z "$transcript" || ! -f "$transcript" ]]; then
+    printf '%s\n' "! gate-reuse-check：找不到这个会话的会话记录（${transcript:-输入里没有 agent_transcript_path 与 transcript_path}），认不出这一轮写过什么，这一次收工没判（放行）。" >&2
+    return 1
+  fi
   project_root="${CLAUDE_PROJECT_DIR:-$session_directory}"
-  [[ -n "$project_root" && -d "$project_root" ]] || return 0
+  if [[ -z "$project_root" || ! -d "$project_root" ]]; then
+    printf '%s\n' "! gate-reuse-check：找不到项目根（CLAUDE_PROJECT_DIR 与输入里的 cwd：${project_root:-都没有}），这一次收工没判（放行）。" >&2
+    return 1
+  fi
   # 外层设的 diff 窗口不带进来：收工钩子按这个会话开始的时刻算
   judgement="$(env -u GATE_DIFF_BASE -u GATE_BASE python3 "$GATE_OVERLAP" --touched-by "$transcript" "$project_root" 2>&1)"
   judgement_exit_code=$?
@@ -139,6 +145,9 @@ run_selftest() {
   expect_stop "往开工前就有的钩子里追加不算新建" 0 "" "$(stop_input Stop false edits-existing.jsonl)"
   expect_stop "子 agent 认它自己的会话记录" 2 "new-guard.sh 是新加的" "$(stop_input SubagentStop false reads.jsonl writes.jsonl)"
   expect_stop "输入不是 JSON 不拦" 1 "不是 JSON 对象" "不是 JSON"
+  expect_stop "会话记录不在时判不了、不拦" 1 "找不到这个会话的会话记录" "$(stop_input Stop false no-such-transcript.jsonl)"
+  expect_stop "项目根不在时判不了、不拦" 1 "找不到项目根" \
+    "$(stop_input Stop false writes.jsonl | sed "s|\"cwd\":\"$project\"|\"cwd\":\"$scratch/no-such-project\"|")"
   cp "$project/.claude/settings.json" "$scratch/settings.json.good"
   printf '{ 坏掉的 JSON\n' > "$project/.claude/settings.json"
   expect_stop "判定脚本判不了时不拦" 1 "判不了" "$(stop_input Stop false writes.jsonl)"

@@ -22,7 +22,11 @@ set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/preflight.sh"
 preflight "${BASH_SOURCE[0]}" "$@"; set -- ${PREFLIGHT_ARGUMENTS[@]+"${PREFLIGHT_ARGUMENTS[@]}"}
 ROOT="${1:-.}"
-cd "$ROOT" 2>/dev/null || exit 2
+if ! cd "$ROOT" 2>/dev/null; then
+  echo "  ✗ 找不到仓根：$ROOT" >&2
+  echo "     → 怎么办：把仓根作为第一个参数传进来： bash scripts/number-name-sync.sh <仓根> [要扫的目录…]" >&2
+  exit 2
+fi
 shift 2>/dev/null || true
 [[ -d .claude/kb ]] || exit 77
 export NUMBER_NAME_DIRS="$*"

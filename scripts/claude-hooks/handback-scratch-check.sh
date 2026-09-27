@@ -23,7 +23,7 @@
 # 状态目录默认 ${TMPDIR:-/tmp}/handback-scratch-check（按 session_id 与 agent_id 各记一份 SubagentStop 拦下的时刻），HANDBACK_SCRATCH_CHECK_STATE_DIRECTORY 可改。
 #   记下的时刻认不出（写到一半）就当没拦过。
 # 退出码：拦下 2（Claude Code 不执行这次交回 / 不让收工，把 stderr 交给子 agent）；放行 0；
-#   输入不是 JSON 对象、认不出是哪个子 agent、或判定脚本判不了 1（不拦，stderr 只给人看）——「没判」不记成「判过」。
+#   输入不是 JSON 对象、认不出是哪个子 agent、找不到项目根、或判定脚本判不了 1（不拦，stderr 只给人看）——「没判」不记成「判过」。
 #
 # 怎么注册：项目 .claude/settings.json 的 hooks 里加两项；SubagentStop 上已经挂着 gate-reuse-check.sh 的，加进同一个 hooks 数组：
 #   "PreToolUse":   [{"matcher": "SubagentHandback", "hooks": [{"type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR\"/.claude/singlefs-ai-sop/scripts/claude-hooks/handback-scratch-check.sh"}]}]
@@ -77,7 +77,10 @@ judge_handback() { # judge_handback（钩子 JSON 在 stdin）→ 退出码 0 �
     return 1
   fi
   project_root="${CLAUDE_PROJECT_DIR:-$session_directory}"
-  [[ -n "$project_root" && -d "$project_root" ]] || return 0
+  if [[ -z "$project_root" || ! -d "$project_root" ]]; then
+    printf '%s\n' "! handback-scratch-check：找不到项目根（CLAUDE_PROJECT_DIR 与输入里的 cwd：${project_root:-都没有}），这一次没判（放行）。" >&2
+    return 1
+  fi
   state_file="$STATE_DIRECTORY/$session_id-$agent_id"
   if [[ "$hook_event_name" == SubagentStop && -f "$state_file" ]]; then judge_options=(--explained-after "$(cat "$state_file")"); fi
   judgement="$(printf '%s' "$hook_json" | python3 "$HANDBACK_SCRATCH" "$agent_transcript" "$project_root" ${judge_options[@]+"${judge_options[@]}"} 2>&1)"
@@ -426,6 +429,8 @@ EOF")"
   write_transcript raw "$scratch/odd/subagents/agent-odd.jsonl" \
     "{\"type\": \"assistant\", \"timestamp\": \"$window_start\", \"message\": {\"items\": [{\"type\": \"tool_use\", \"id\": \"o1\", \"name\": \"Bash\", \"input\": {\"command\": \"CARGO_TARGET_DIR=$own_area/unit-target cargo test\"}}]}}"
   expect_handback "会话记录里的工具调用一次都认不出时不拦" 1 "一次工具调用都没认出来" "" "$(stop_input SubagentStop "$scratch/odd/subagents/agent-odd.jsonl")"
+  expect_handback "项目根不在时判不了、不拦" 1 "找不到项目根" "" \
+    "$(stop_input SubagentStop "$transcript" | sed "s|\"cwd\":\"$project\"|\"cwd\":\"$scratch/no-such-project\"|")"
   write_transcript prompt "$scratch/odd/subagents/agent-bad-time.jsonl" "$prompt_at"
   write_transcript call "$scratch/odd/subagents/agent-bad-time.jsonl" b1 "昨天" "昨天" Bash "$(json_of command "CARGO_TARGET_DIR=$own_area/unit-target cargo test")"
   expect_handback "工具调用的时间戳认不出时不拦" 1 "认不出（时间戳认不出" "" "$(stop_input SubagentStop "$scratch/odd/subagents/agent-bad-time.jsonl")"

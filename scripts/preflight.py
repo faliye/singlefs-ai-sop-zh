@@ -7,13 +7,14 @@
 
 声明写在文件头的注释块里（第一行代码之前；shell 与 python 用 #，Rust 用 //），一行一条：
   admission: always <理由>                                      每次调都有意义
-  admission: inputs-changed <路径…> [env:<变量名>…] [arguments]  脚本自己与这些输入自上次成功跑完以来变过
+  admission: inputs-changed <路径…> [env:<变量名>…] [tool:<可执行文件名>…] [arguments]  脚本自己与这些输入自上次成功跑完以来变过
   admission: check <命令> :: <不满足时怎么办>                     命令退出码为 0
   run-condition: none <理由>                                     没有环境要求
   run-condition: command <可执行文件名…>                          都在 PATH 上
   run-condition: single-instance                                 没有别的进程在跑同一个脚本
   run-condition: check <命令> :: <不满足时怎么办>                  命令退出码为 0
 inputs-changed 的路径相对仓根；以 ./ 或 ../ 开头的相对脚本所在目录。env:<变量名> 把那个环境变量的值算进指纹，
+tool:<可执行文件名> 把它在 PATH 上解析到的真实路径与 `<它> --version` 的输出算进指纹（不在 PATH 上也是一种取值：装上它就算变了），
 arguments 把这一次的参数（摘掉 --force 之后）算进指纹。check 的命令用 bash -c 跑，工作目录是仓根（不在 git 仓里时是脚本所在目录），
 环境里有 PREFLIGHT_SCRIPT（脚本的绝对路径）与 PREFLIGHT_SCRIPT_DIRECTORY。
 
@@ -78,6 +79,7 @@ class Declaration:
         self.executable_names = []
         self.input_paths = []
         self.environment_variable_names = []
+        self.tool_names = []
         self.includes_arguments = False
 
     def label(self):
@@ -198,6 +200,8 @@ def fill_declaration(declaration):
             declaration.includes_arguments = True
         elif token.startswith('env:') and re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', token[4:]):
             declaration.environment_variable_names.append(token[4:])
+        elif token.startswith('tool:') and re.fullmatch(r'[A-Za-z0-9_.+-]+', token[5:]):
+            declaration.tool_names.append(token[5:])
         else:
             declaration.input_paths.append(token)
     if not declaration.input_paths:
@@ -277,8 +281,23 @@ def combined_inputs(declarations):
         combined.input_paths += [path for path in declaration.input_paths if path not in combined.input_paths]
         combined.environment_variable_names += [name for name in declaration.environment_variable_names
                                                 if name not in combined.environment_variable_names]
+        combined.tool_names += [name for name in declaration.tool_names if name not in combined.tool_names]
         combined.includes_arguments = combined.includes_arguments or declaration.includes_arguments
     return combined
+
+
+def tool_fingerprint(name):
+    """→ (这个工具此刻是谁的字节串, None) 或 (None, 判不了的原因)。取值是 PATH 上解析到的真实路径加 --version 的标准输出与退出码；
+    不在 PATH 上时是 <absent>。结果取决于工具链的脚本登记它：装上、换了版本、换了一份，下一次都算输入变了。"""
+    resolved = shutil.which(name)
+    if resolved is None:
+        return b'<absent>', None
+    try:
+        completed = subprocess.run([resolved, '--version'], stdin=subprocess.DEVNULL, capture_output=True, timeout=CHECK_TIMEOUT_SECONDS)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return None, f'登记的工具 {name}（{resolved}）取不到 --version：{error}'
+    # stderr 不算：包装程序（rustup 这类）往 stderr 打的提示随时会变，算进来就每次都「变了」
+    return os.path.realpath(resolved).encode() + b'\0' + str(completed.returncode).encode() + b'\0' + completed.stdout, None
 
 
 def input_fingerprint(script_path, declaration, arguments):
@@ -303,6 +322,11 @@ def input_fingerprint(script_path, declaration, arguments):
     for name in sorted(declaration.environment_variable_names):
         value = os.environ.get(name)
         digest.update(f'env:{name}='.encode() + (b'<unset>' if value is None else value.encode()) + b'\0')
+    for name in sorted(declaration.tool_names):
+        tool_identity, cannot_judge = tool_fingerprint(name)
+        if cannot_judge:
+            return None, cannot_judge
+        digest.update(f'tool:{name}='.encode() + tool_identity + b'\0')
     if declaration.includes_arguments:
         digest.update(b'arguments:' + '\0'.join(arguments).encode())
     return digest.hexdigest(), None

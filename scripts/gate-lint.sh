@@ -27,7 +27,10 @@
 # 三、扫一批对象的脚本，成功摘要要报出检查了多少项。
 #   「扫到 0 项」不是通过：判据写窄了、对象全被第一步跳过时，末尾照样报绿，
 #   而没有任何人看得出来（使用者项目实测：一个阶段的第 3 项就这样绿着）。
-#   只对**报了成功**的脚本判；确实不扫对象的写 `# gate-lint:nocount <理由>`。
+#   成功摘要是文件里**最后一句**成功句（`ok "…"` 或带 ✓ 的那一行），它要带一个计数：
+#   在文件里累加过的变量（`n=$((n+1))`、`((n++))`、`let n`、`n=$(… | wc -l)` 这类，python 里 `n += …`、`n = len(…)`），
+#   或数组长度 `${#数组[@]}`、算术展开、行内的 `wc -l` / `wc -w` / `grep -c`、python 的 `{len(…)}`。
+#   只对**报了成功**的脚本判；确实不扫对象的单独写一行注释 `# gate-lint:nocount <理由>`，理由至少 8 个字。
 #
 # 四、直接打印的拒绝（`echo "  ✗ …"` / 内嵌 python 的 `print('  ✗ …')`）同样要给出路。
 #   项目本地的阶段多半不 source lib.sh，前两条一条都够不着它们——实测使用者项目的
@@ -87,6 +90,27 @@ naked_die() {
   # 第二个参数是空串也一样：运行期 `$# -gt 0` 成立，兜底那句不打，
   # 提交者看到的是「→ 怎么办：」后面一片空白（对抗测试实测）。
   case "$body" in '""'*|"''"*) return 0 ;; esac
+  return 1
+}
+
+# G3：nocount 的理由至少几个字
+NOCOUNT_REASON_MINIMUM_CHARACTERS=8
+# 这一行成功句带没带计数（G3）。计数变量要在同一个文件里累加过，算「报了数」；随便一个变量（$ROOT、$lang）不算。
+# 认的累加形态：NAME=$(( … ))、(( NAME++ / ++NAME / NAME+= / NAME-= / NAME= … ))、let NAME、NAME=${#数组[@]}、NAME=… wc -l / wc -w / grep -c / ${#数组[@]}，
+# python 里 NAME += …（+= 前面有空白：shell 的 x+=… 是拼字符串、追加数组，不是计数）、NAME = len( / sum( …。
+# 认不出的写法多半让它判红。已知会放过没报数的：失败计数（fails 也是累加过的变量，而通过时它恒为 0）、
+# 同一行两个赋值时取错名字、heredoc 正文里的 ok 句被当成最后一句——这几样靠 review。
+summary_reports_count() { # summary_reports_count <成功句> ；读全局的 L（这个文件的全部行）
+  local summary="$1" counter_name
+  [[ "$summary" =~ \$\{#[A-Za-z_][A-Za-z0-9_]*\[[@*]\]\} ]] && return 0
+  [[ "$summary" == *'$(('* ]] && return 0
+  [[ "$summary" =~ wc[[:space:]]+-[lw]|grep[[:space:]]+-[A-Za-z]*c|\{len\( ]] && return 0
+  while IFS= read -r counter_name; do
+    [[ -n "$counter_name" ]] || continue
+    if [[ "$summary" =~ \$\{?$counter_name([^A-Za-z0-9_]|$) || "$summary" =~ \{$counter_name[}:!] ]]; then return 0; fi
+  done < <(printf '%s\n' "${L[@]}" | grep -oE \
+      '([A-Za-z_][A-Za-z0-9_]*)=\$\(\(|\(\([[:space:]]*(\+\+|--)?[A-Za-z_][A-Za-z0-9_]*[[:space:]]*(\+\+|--|[-+]=|=[^=])|(^|[^A-Za-z0-9_])let[[:space:]]+"?[A-Za-z_][A-Za-z0-9_]*|([A-Za-z_][A-Za-z0-9_]*)=("?\$\{#[A-Za-z_][A-Za-z0-9_]*\[[@*]\]|[^=].*(wc[[:space:]]+-[lw]|grep[[:space:]]+-[A-Za-z]*c|\$\{#[A-Za-z_][A-Za-z0-9_]*\[[@*]\]))|[A-Za-z_][A-Za-z0-9_]*[[:space:]]+\+=|[A-Za-z_][A-Za-z0-9_]*[[:space:]]*=[[:space:]]*(len|sum)\(' \
+    | sed -E 's/^\(\([[:space:]]*(\+\+|--)?//; s/^[^A-Za-z0-9_]?let[[:space:]]+"?//; s/[^A-Za-z0-9_].*$//' | sort -u || true)
   return 1
 }
 
@@ -236,19 +260,43 @@ if [[ $is_shell -eq 1 ]]; then
   # 在 set -o pipefail 下整个管道退 141，条件当假——文件大过管道缓冲（64 KiB）就静默不判了
   # （审计实测：同一份没报计数的脚本，4 行判红，撑到 338 KB 变绿）。grep -c 会读完全部输入。
   loop_hits="$(printf '%s\n' "${L[@]}" | grep -cE 'while[[:space:]]+.*read|for[[:space:]]+[A-Za-z_]+[[:space:]]+in|find[[:space:]]' || true)"
-  nocount_hits="$(printf '%s\n' "${L[@]}" | grep -c 'gate-lint:nocount' || true)"
-  if [[ "$loop_hits" -gt 0 && "$nocount_hits" -eq 0 ]]; then
-    succ="$(printf '%s\n' "${L[@]}" | grep -vE '^[[:space:]]*#' | grep -E '^[[:space:]]*ok[[:space:]]+"|✓' || true)"
+  # nocount 只认单独一行的注释：写在代码里、字符串里的不算豁免（按子串认的话，一句 echo 里提到它就免检了）。
+  nocount_exempt=0
+  for ((i=0; i<${#L[@]}; i++)); do
+    [[ "${L[$i]}" =~ ^[[:space:]]*#[[:space:]]*gate-lint:nocount([[:space:]]+(.*))?$ ]] || continue
+    nocount_reason="${BASH_REMATCH[2]}"
+    nocount_reason="${nocount_reason%"${nocount_reason##*[![:space:]]}"}"
+    if (( ${#nocount_reason} >= NOCOUNT_REASON_MINIMUM_CHARACTERS )); then nocount_exempt=1; continue; fi
+    checked=$((checked+1))
+    bad "$rel:$((i+1))  gate-lint:nocount 的理由不到 $NOCOUNT_REASON_MINIMUM_CHARACTERS 个字（「$nocount_reason」），不算豁免"
+    howto "写清为什么这个脚本不扫一批对象，至少 $NOCOUNT_REASON_MINIMUM_CHARACTERS 个字：# gate-lint:nocount <理由>；" \
+          "说不出理由，就在成功那句里报出检查了多少项。"
+    fails=$((fails+1))
+  done
+  if [[ "$loop_hits" -gt 0 && "$nocount_exempt" -eq 0 ]]; then
     # 判据只对**报了成功**的脚本生效。一个字都不说的脚本是另一类问题，这里不判——
     # 「认不出」与「通过」要分开（rules/show-me-test.md）。
-    # 计数认两种占位：shell 的 `$n` 与 python f-string 的 `{n}`。
-    # 只认 `$` 的话，用 python 实现的阶段全是假红——它们的成功摘要在 python 里格式化
-    # （使用者项目的两个本地阶段实测）。
-    if [[ -n "$succ" ]] && ! grep -qE '[$][A-Za-z_{(]|\{[A-Za-z_]' <<< "$succ"; then
-      bad "$rel  成功摘要没报出检查了多少项——扫到 0 项也会报绿"
-      howto "在成功那句里带上计数，例： ok \"检查通过（共 \$n 项）\"；" \
-            "并让计数真的在循环里累加。确实不扫对象的脚本，写一句" \
-            "# gate-lint:nocount <理由> 显式豁免（rules/show-me-test.md）。"
+    # 判的是最后一句成功句：任一句成功句带任一个变量就算报了数的话，前面一句「扫描 $ROOT」就能替没报数的总结句作保。
+    # 成功句以反斜杠续行的（printf 的格式串一行、参数下一行），连同续行一起算那一句。
+    summary_line_number=0; summary_line=""
+    for ((i=0; i<${#L[@]}; i++)); do
+      [[ "${L[$i]}" =~ ^[[:space:]]*# ]] && continue
+      # 成功句可以跟在 && / || / ; / then / else / do 后面：(( fails == 0 )) && ok "…" 也是成功句
+      if [[ "${L[$i]}" =~ (^|&&|\|\||;|then|else|do)[[:space:]]*ok[[:space:]]+\" || "${L[$i]}" == *✓* ]]; then
+        summary_line_number=$((i+1)); summary_line="${L[$i]}"
+        for ((j=i; j+1<${#L[@]}; j++)); do
+          [[ "${L[$j]}" == *\\ ]] || break
+          summary_line+=$'\n'"${L[$((j+1))]}"
+        done
+      fi
+    done
+    if [[ -n "$summary_line" ]] && ! summary_reports_count "$summary_line"; then
+      checked=$((checked+1))
+      bad "$rel:$summary_line_number  成功摘要没报出检查了多少项（判的是文件里最后一句成功句）——扫到 0 项也会报绿"
+      say "        $summary_line"
+      howto "在成功那句里带上计数，例： ok \"检查通过（共 \$checked 项）\"，并让它真的在循环里累加（checked=\$((checked+1))）；" \
+            "认得出的计数：在这个文件里累加过的变量、\${#数组[@]}、算术展开、行内的 wc -l / wc -w / grep -c、python 的 {len(…)} 或累加过的名字。" \
+            "确实不扫对象的脚本，单独写一行注释 # gate-lint:nocount <理由>（至少 $NOCOUNT_REASON_MINIMUM_CHARACTERS 个字）显式豁免（rules/show-me-test.md）。"
       fails=$((fails+1))
     fi
   fi

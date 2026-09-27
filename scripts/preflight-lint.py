@@ -109,7 +109,8 @@ class Finding:
 
 
 def is_script(path):
-    if not os.path.isfile(path) or os.path.islink(path):
+    # 符号链接跟着走：gate.sh 照样跑链接形式的本地阶段，它的条件就得判；判的是链接指向的那一份的内容
+    if not os.path.isfile(path):
         return False
     if path.endswith(SCRIPT_SUFFIXES):
         return True

@@ -9,13 +9,17 @@
 #       留下：PREFLIGHT_SCRIPT（脚本的绝对路径）、PREFLIGHT_ARGUMENTS（摘掉 --force 的参数）、PREFLIGHT_FORCE_GIVEN（带没带 --force）、
 #       PREFLIGHT_INPUT_FINGERPRINT（开跑时判的输入指纹；没声明 inputs-changed 时是 -）。
 #   preflight_record_success
-#       声明了 inputs-changed 的脚本成功跑完、退出之前调：记下开跑时判的那份指纹。强制跑的、跑的过程中输入变了的，不记。
+#       声明了 inputs-changed 的脚本成功跑完、退出之前调：记下开跑时判的那份指纹。强制跑的、跑的过程中输入变了的、
+#       这一次有一部分本次未跑的（lib.sh 的 report_not_run 报过，PREFLIGHT_PARTS_NOT_RUN 大于 0），不记。
 
 # preflight.py 的绝对路径在 source 的这一刻算好：脚本之后 cd 到别处，相对路径就指不到了
 PREFLIGHT_LIBRARY_DIRECTORY="${BASH_SOURCE[0]%/*}"
 if [[ "$PREFLIGHT_LIBRARY_DIRECTORY" == "${BASH_SOURCE[0]}" ]]; then PREFLIGHT_LIBRARY_DIRECTORY=.; fi
 PREFLIGHT_PROGRAM="$(cd "$PREFLIGHT_LIBRARY_DIRECTORY" && pwd -P)/preflight.py"
 unset PREFLIGHT_LIBRARY_DIRECTORY
+# 这一次跳过了几部分（lib.sh 的 report_not_run 累加）。跳过了一部分还记成「上次成功」的话，下一次按「输入没变」不起，
+# 那一部分就一直没人跑，而汇总里连「本次未跑」都不再出现
+PREFLIGHT_PARTS_NOT_RUN=0
 
 preflight() { # preflight <脚本路径> <脚本收到的参数…>
   local preflight_script_directory preflight_argument preflight_status preflight_exit_code=0 preflight_force_option=()
@@ -57,6 +61,10 @@ preflight() { # preflight <脚本路径> <脚本收到的参数…>
 preflight_record_success() {
   if [[ -n "${PREFLIGHT_FORCED:-}" ]]; then
     printf '  ! 这一次是强制跑的，不记成「上次成功」：下一次照判输入变没变\n' >&2
+    return 0
+  fi
+  if (( ${PREFLIGHT_PARTS_NOT_RUN:-0} > 0 )); then
+    printf '  ! 这一次有 %s 部分本次未跑（见上），不记成「上次成功」：下一次照跑\n' "$PREFLIGHT_PARTS_NOT_RUN" >&2
     return 0
   fi
   if [[ "${PREFLIGHT_INPUT_FINGERPRINT:--}" == - ]]; then return 0; fi

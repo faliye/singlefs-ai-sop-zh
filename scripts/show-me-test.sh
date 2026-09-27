@@ -7,7 +7,8 @@
 #
 #   show-me-test.sh <项目根>
 #
-# 退出码：0 = 通过；1 = 拒收；3 = 无对象可判（gate.sh 记 NOT_RUN，不算通过）。
+# 退出码：0 = 通过；1 = 拒收，或判不了（改动清单取不全）；3 = 无对象可判（工作区与基准无差异，或差异里没有 crates 代码），
+#   gate.sh 记 NOT_RUN，不算通过。
 #
 # 判据里的三个「不算数」，都是对抗测试实测过的绕法：
 #   1. 注释行里的 #[test] 不算测试标注（一行 `// #[test]` 曾经就能过）
@@ -22,7 +23,9 @@ ROOT="${1:-$(project_root)}"
 
 BASE="$(diff_base "$ROOT")"
 say "  diff 基准：$BASE"
-files="$(changed_files "$ROOT" "$BASE")"
+files="$(changed_files "$ROOT" "$BASE")" || die "取不到相对基准 $BASE 的改动清单（git diff / ls-files 失败，原话在上面）" \
+  "先在 $ROOT 跑 git status 与 git diff --name-only $BASE 看 git 报什么，修好再跑。" \
+  "清单少一截时，这一条会把改了代码判成「无对象可判」，所以取不全就不判。"
 
 if [[ -z "$files" ]]; then
   # 无变更既不是通过也不是失败——没有可判的对象。判成失败会让「刚装完就有一格红」
@@ -72,8 +75,9 @@ while IFS= read -r tf; do
 done <<< "$test_files"
 
 if [[ -z "$code_changed" ]]; then
-  ok "无 crates 代码改动（仅文档/脚本），本阶段不适用"
-  exit 0
+  # 与「无差异」同一个口径：有差异但一行 crates 代码都没改，同样没有要判的对象，记本次未跑、不记通过
+  warn "改动里没有 crates 代码（查了 $(printf '%s\n' "$files" | grep -c .) 个改动的文件，只有文档 / 脚本）—— 本阶段无对象可判（这不是通过）"
+  exit 3
 elif [[ -n "$tests_content_ok" || -n "$test_lines" ]]; then
   ok "代码改动伴随测试改动（改了 $(printf '%s\n' "$code_changed" | grep -c .) 个代码文件）"
   [[ -n "$test_files" ]] && printf '%s\n' "$test_files" | sed 's/^/        测试文件: /'

@@ -37,8 +37,11 @@ req shellcheck "脚本静态检查" soft
 
 # 版本下限：selftest 用 git init -b（2.28 起），--staged 用 git worktree；
 # 脚本里用了 mapfile 与 declare -A（bash 4），以及空数组展开（4.3 起不再当成未定义）。
-git_version="$(git --version 2>/dev/null | sed -n 's/^git version \([0-9]*\)\.\([0-9]*\).*/\1\2/p' | head -1)"
-if [[ -n "$git_version" ]] && (( 10#${git_version:0:1}0 + 10#${git_version:1} < 28 )) && (( 10#${git_version:0:1} < 3 )); then
+# 主、次版本号分开取、分开比：拼成一个串再按位切（2.27 → "227"）的话，2.8–2.27 都会被算成够新
+git_major_version=""; git_minor_version=""
+read -r git_major_version git_minor_version < <(git --version 2>/dev/null | sed -n 's/^git version \([0-9][0-9]*\)\.\([0-9][0-9]*\).*/\1 \2/p' | head -1) || true
+if [[ -n "$git_major_version" && -n "$git_minor_version" ]] \
+   && (( 10#$git_major_version < 2 || (10#$git_major_version == 2 && 10#$git_minor_version < 28) )); then
   bad "git 版本过低（$(git --version)）：门禁自检要 git init -b，2.28 起才有"
   howto "升级 git 到 2.28 或更新；旧版上样本仓建不起来，自检会整体判错而不是判红。"
   missing=$((missing+1))

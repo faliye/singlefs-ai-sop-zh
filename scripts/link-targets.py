@@ -92,21 +92,25 @@ def mask_code(s):
 
 
 def heads(path):
+    """→ 这份文档的 ## 节标题；读不了（不存在、没权限、不是 UTF-8）返回 None，别让「读不出」装成「没有这一节」。"""
     try:
         return re.findall(r'^## (.+)$', open(path, encoding='utf-8').read(), re.M)
-    except OSError:
-        return []
+    except (OSError, UnicodeDecodeError):
+        return None
 
 bad = []
-n_link = n_sec = 0
+n_link = n_sec = n_file = 0
 for p in sorted(md_files()):
     if p.startswith(SKIP_PATH):
         continue
     base = os.path.dirname(p) or '.'
+    # 读不了的文档（坏掉的符号链接、没有读权限、不是 UTF-8）判红：跳过的话它里面的链接一条都没查，而成功那句照报「都到得了」
     try:
         s = open(p, encoding='utf-8').read()
-    except OSError:
+    except (OSError, UnicodeDecodeError) as error:
+        bad.append(f"{p} 读不了，里面的链接一条都没查：{error}")
         continue
+    n_file += 1
     s = mask_code(s)
     for m in re.finditer(r'\[([^\]]*)\]\(([^)\s]+)\)', s):
         tgt = m.group(2)
@@ -127,7 +131,10 @@ for p in sorted(md_files()):
         n = int(n) if n.isdigit() else CN.get(n, 0)
         full = os.path.normpath(os.path.join(base, m.group(1).partition('#')[0]))
         hs = heads(full)
-        if not (0 < n <= len(hs)):
+        if hs is None:
+            ln = s[:m.start()].count('\n') + 1
+            bad.append(f"{p}:{ln} 指「{m.group(1)} 第{m.group(2)}节」，而那个文档读不出来（不存在、读不了或不是 UTF-8），数不了它有几节")
+        elif not (0 < n <= len(hs)):
             ln = s[:m.start()].count('\n') + 1
             bad.append(f"{p}:{ln} 指「{m.group(1)} 第{m.group(2)}节」，而那个文档只有 {len(hs)} 个 ## 节")
 
@@ -135,6 +142,7 @@ if bad:
     print(f"  ✗ 文档指向失效 {len(bad)} 处")
     for b in bad[:40]:
         print("    ", b)
-    print("     → 相对路径按**该文件所在目录**算，不是按仓库根算；「第 N 节」改成指小节标题。")
+    print("     → 相对路径按**该文件所在目录**算，不是按仓库根算；「第 N 节」改成指小节标题。"
+          "读不了的那几份：修好权限或编码（要 UTF-8），坏掉的符号链接删掉或指回去。")
     sys.exit(1)
-print(f"  ✓ 文档指向都到得了（{n_link} 条相对链接、{n_sec} 处「第 N 节」指向）")
+print(f"  ✓ 文档指向都到得了（{n_file} 份文档、{n_link} 条相对链接、{n_sec} 处「第 N 节」指向）")

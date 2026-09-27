@@ -116,7 +116,14 @@ SHARED=(install.sh scripts GLOSSARY.md)
 # gate.sh 当阶段跑时它已打过同名标题，别打两遍（GATE_IN_STAGE 由 run_stage 设）
 [[ -n "${GATE_IN_STAGE:-}" ]] || head1 "各语言同步"
 
-[[ -f "$CF" ]] || { ok "未声明语言族，本阶段不适用"; exit 0; }
+# 无对象可判（没声明语言族、本仓不是参照仓、languages= 里除了本仓没有别的语言）退 77：gate.sh 记「本次未跑」，不记通过。
+# --update / --stamp 是动作，不是判定：在这几种仓里跑是跑错了地方，照 manifest.sh --update 的办法说清楚，不退 77。
+[[ -f "$CF" ]] || {
+  if [[ $UPDATE -eq 1 || -n "$STAMP_LANG" ]]; then
+    die "没有 I18N，不知道本仓是哪种语言、要同步到哪几个仓，--update / --stamp 什么也没做" \
+      "到参照仓（zh）里跑： bash scripts/i18n-sync.sh --update 或 --stamp <语言> <篇>…"
+  fi
+  warn "未声明语言族（没有 I18N），本阶段无对象可判（这不是通过）"; exit 77; }
 FAMILY="$(sed -n 's/^family=//p' "$CF")"
 THIS="$(sed -n 's/^this=//p' "$CF")"
 REF="$(sed -n 's/^reference=//p' "$CF")"
@@ -126,8 +133,13 @@ LANGS="$(sed -n 's/^languages=//p' "$CF")"
   howto "五行都要有：family=<族名>  this=<本仓语言>  reference=<参照仓语言>" \
         "default=<默认版本语言>  languages=<空格分隔>"; exit 1; }
 if [[ "$THIS" != "$REF" ]]; then
-  ok "本仓是 $THIS 版，同步以 $REF 仓为准，本阶段不适用"
-  exit 0
+  if [[ $UPDATE -eq 1 ]]; then ok "本仓是 $THIS 版，共享部分从 $REF 仓复制过来，--update 什么也没做"; exit 0; fi
+  if [[ -n "$STAMP_LANG" ]]; then
+    die "本仓是 $THIS 版，溯源标记要在参照仓（$REF）里盖" \
+      "到 $FAMILY-$REF 仓里跑： bash scripts/i18n-sync.sh --stamp <语言> <篇>…"
+  fi
+  warn "本仓是 $THIS 版，同步以 $REF 仓为准，本阶段无对象可判（这不是通过）"
+  exit 77
 fi
 [[ -f "$MF" ]] || { bad "缺 MANIFEST.sha256"; howto "跑： bash scripts/manifest.sh --update"; exit 1; }
 
@@ -179,9 +191,10 @@ if [[ -n "$STAMP_LANG" ]]; then
   exit 0
 fi
 
-fails=0
+fails=0; compared=0
 for lang in $LANGS; do
   [[ "$lang" == "$THIS" ]] && continue   # 本仓就是这一种语言，不用跟自己对账
+  compared=$((compared+1))
   repo="$ROOT/$FAMILY-$lang"
   if [[ ! -d "$repo" ]]; then
     bad "$lang  找不到译本仓 $repo"
@@ -319,4 +332,8 @@ done
 
 say ""
 [[ $fails -eq 0 ]] || { bad "各语言同步失败：$fails 种语言未跟上"; exit 1; }   # gate-lint:summary
-ok "声明的所有语言都与清单一致"
+if [[ $compared -eq 0 ]]; then
+  warn "languages=（$LANGS）里除了本仓的 $THIS 没有别的语言，没有译本仓可比，本阶段无对象可判（这不是通过）"
+  exit 77
+fi
+ok "除本仓外声明的 $compared 种语言都与清单一致"

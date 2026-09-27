@@ -6,7 +6,7 @@
 """读子进程输出的循环里，不许一边给行打时间戳、一边把行转打出去。
 
 用法：
-    relay-timing-lint.py --check [仓库根]   # 扫 research/ 与 crates/ 下的 .rs 与 .py，逐处报「文件:行」与循环头
+    relay-timing-lint.py --check [仓库根]   # 扫 research/ 与 crates/ 下的 .rs 与 .py，逐处报「文件:行」与循环头；不给仓库根就判当前目录所在的 git 仓
     relay-timing-lint.py --selftest         # 自证：内嵌红绿样本逐个判、钉死统计数；再另起一个子进程在弱判据下跑自证，它必须判红
 
 为什么要有它：E152（按里程碑对比六家文件系统的文件性能） 的来宾程序在 `for line in BufReader::new(child_output).lines()` 里
@@ -924,11 +924,20 @@ def selftest() -> int:
         print(f"  ✗ 自证分不出「看不看输出调用」：{WEAK_MODE_ENVIRONMENT_VARIABLE}=1 下自证退出码 {weak_run.returncode}，"
               "或者没有点名「只取时间不打印的循环」那个样本")
         print("     → 怎么办：样本里要有一个只取时间、不打印的读子进程输出循环，判绿；弱判据只看取时间，它必须把那个样本判红。"
-              f"单独跑 {WEAK_MODE_ENVIRONMENT_VARIABLE}=1 python3 research/scripts/relay-timing-lint.py --selftest 看输出。")
+              f"单独跑 {WEAK_MODE_ENVIRONMENT_VARIABLE}=1 python3 {pathlib.Path(__file__).resolve()} --selftest 看输出。")
         return 1
     print(f"  ✓ relay-timing-lint 自证：{len(SELFTEST_CASES)} 个红绿样本判得对，统计数对得上；"
           f"{WEAK_MODE_ENVIRONMENT_VARIABLE}=1（不看输出调用）下自证判红")
     return 0
+
+
+def default_root() -> pathlib.Path:
+    """不给仓库根时判当前目录所在的 git 仓（不在 git 仓里就是当前目录）。不按本文件的位置往上数：
+    它装在上游包的 scripts/ 下、也装在项目的 .claude/<包名>/scripts/ 下，往上数几层都数不到被判的那个仓。"""
+    completed = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True, check=False,
+                               stdin=subprocess.DEVNULL)
+    toplevel = completed.stdout.strip()
+    return pathlib.Path(toplevel) if completed.returncode == 0 and toplevel else pathlib.Path.cwd()
 
 
 def main(arguments: list) -> int:
@@ -938,7 +947,7 @@ def main(arguments: list) -> int:
         print("  ✗ 用法：relay-timing-lint.py --check [仓库根]，或 relay-timing-lint.py --selftest")
         print("     → 怎么办：门禁里跑 --check，改了这份脚本先跑 --selftest。")
         return 2
-    root = pathlib.Path(arguments[1]) if len(arguments) == 2 else pathlib.Path(__file__).resolve().parents[2]
+    root = pathlib.Path(arguments[1]) if len(arguments) == 2 else default_root()
     return run(root.resolve())
 
 

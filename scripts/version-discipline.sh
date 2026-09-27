@@ -16,6 +16,8 @@
 #
 # 只对 SOP 仓本身有意义（gate.sh 在 ROOT 是 SOP 仓时才调它）；
 # 消费项目改的是自己的代码，不受这条管。
+# 退出码：0 = 抬了；1 = 该抬没抬、降级了，或者判不了（改动清单、基准里的 VERSION 读不到）；
+#   77 = 这一次没改规范本体，无对象可判（gate.sh 记「本次未跑」，不记通过）。
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 preflight "${BASH_SOURCE[0]}" "$@"; set -- ${PREFLIGHT_ARGUMENTS[@]+"${PREFLIGHT_ARGUMENTS[@]}"}
 
@@ -25,7 +27,9 @@ ROOT="${1:-$(project_root)}"
 
 BASE="$(diff_base "$ROOT")"
 say "  diff 基准：$BASE"
-files="$(changed_files "$ROOT" "$BASE")"
+files="$(changed_files "$ROOT" "$BASE")" || die "取不到相对基准 $BASE 的改动清单（git diff / ls-files 失败，原话在上面）" \
+  "先在 $ROOT 跑 git status 与 git diff --name-only $BASE 看 git 报什么，修好再跑。" \
+  "清单少一截时，这一条会把改了规范本体判成「没改」，所以取不全就不判。"
 
 # GOVERNED —— 规范本体的唯一定义。改这一行就是改规矩，文档里不许再抄一份。
 # README.md 在内：它载着安装步骤与变更门槛，改了而项目侧不知道，
@@ -35,14 +39,24 @@ GOVERNED='^(rules/|scripts/|skills/|agents/|templates/|CLAUDE\.md$|README\.md$|i
 governed="$(printf '%s\n' "$files" | grep -E "$GOVERNED" || true)"
 
 if [[ -z "$governed" ]]; then
-  ok "本次没改规范本体，版本纪律不适用"
-  exit 0
+  warn "这一次的改动没碰规范本体（查了 $(printf '%s\n' "$files" | grep -c .) 个改动的文件），版本纪律无对象可判（这不是通过）"
+  exit 77
 fi
 # 判据是「抬了」，不是「动过」。
 # 只问 VERSION 在不在变更集里的话，往它末尾加个空行就能过闸——而消费项目读的是
 # `cat VERSION` 的内容，一个字都没变（对抗测试实测，全门禁绿）。
 # 顺带拦住降级：版本只许往上走。
-old_ver="$(git -C "$ROOT" show "$BASE:VERSION" 2>/dev/null | tr -d '[:space:]' || true)"
+# 「基准里本来没有 VERSION」（空仓、第一次加它）与「读不到」要分开：两者都得到空值的话，读取失败也按「原 无」放行，
+# 什么版本都算抬过。先看基准的文件树里有没有它，有才读，读不到就判不了。
+old_ver=""
+if git -C "$ROOT" rev-parse --verify -q "$BASE^{commit}" >/dev/null; then
+  base_version_entry="$(git -C "$ROOT" ls-tree "$BASE" -- VERSION)" || die "读不了基准 $BASE 的文件树（git ls-tree 失败，原话在上面）" \
+    "先在 $ROOT 跑 git ls-tree $BASE -- VERSION 看 git 报什么，修好再跑。"
+  if [[ -n "$base_version_entry" ]]; then
+    old_ver="$(git -C "$ROOT" show "$BASE:VERSION" | tr -d '[:space:]')" || die "基准 $BASE 里有 VERSION，却读不出它的内容（git show 失败，原话在上面）" \
+      "对象库可能坏了：git -C $ROOT fsck 看一眼，修好再跑。读不出旧版本就判不了抬没抬。"
+  fi
+fi
 new_ver="$(tr -d '[:space:]' < "$ROOT/VERSION" 2>/dev/null || true)"
 if [[ -n "$new_ver" && "$old_ver" != "$new_ver" ]]; then
   if [[ -z "$old_ver" ]] || [[ "$(printf '%s\n%s\n' "$old_ver" "$new_ver" | sort -V | tail -1)" == "$new_ver" ]]; then

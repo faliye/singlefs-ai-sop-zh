@@ -4,10 +4,10 @@
 # 准入门禁。rules/show-me-test.md的可执行形式。
 #
 # 设计原则：
-#   1. 未实现的阶段**显式报告为未实现**，绝不静默跳过（第一节第 5 条）
+#   1. 未实现的阶段**显式报告为未实现**，绝不静默跳过（rules/show-me-test.md「门禁不许假装通过」）
 #   2. 任何阶段都能失败——不存在只会成功的检查
-#   3. 退出码：0 = 没有阶段判红；非 0 = 有阶段失败。条件不满足没起的阶段、带 --force 强制跑过的阶段不让退出码变非 0，
-#      但汇总里逐个列出、末句不说「全部通过」、不前移 gate-ok（rules/preflight-discipline.md）
+#   3. 退出码：0 = 没有阶段判红；非 0 = 有阶段失败。准入或运行条件不满足没起的阶段记失败（只因为「输入没变」没起的记本次未跑）；
+#      带 --force 强制跑过的阶段不让退出码变非 0，但汇总里逐个列出、末句不说「全部通过」、不前移 gate-ok（rules/preflight-discipline.md）
 #
 # 注意：共享阶段不覆盖崩溃一致性，要靠项目本地阶段接上并声明（# gate-covers:）。绿色不等于验证充分，见文末未实现清单。
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -71,12 +71,26 @@ if [[ $WANT_STAGED -eq 1 ]]; then
   fi
   # 跑到一半被打断（Ctrl-C）或被杀时也要删掉临时 worktree：留下的会一直登记在仓里，下一次还得手工 git worktree prune。
   # 两次跑不会出错：worktree 已经删掉时 git 那句被吞掉，rm -rf 一个不存在的目录也不报错。
-  staged_cleanup() { git -C "$src_root" worktree remove --force "$staged_tree" >/dev/null 2>&1; rm -rf "${staged_base:?}"; }
+  # git 那句要带 || true：被 INT / TERM 打断时这里先清一次、exit 又触发 EXIT 再清一次，第二次 worktree 已经不在，
+  # git 退非 0，set -e 在 trap 里当场把脚本带走，下面那句「没跑完」打不出来、退出码也变了。
+  staged_cleanup() { git -C "$src_root" worktree remove --force "$staged_tree" >/dev/null 2>&1 || true; rm -rf "${staged_base:?}"; }
+  # 中途退出（die、set -e 打断的 cp / mkdir 这类）也要说出来：只剩那条命令自己的一句 stderr 时，
+  # 外面看不出里层门禁根本没起——与非 --staged 那一支的 gate_exit_guard 同一条规矩（rules/show-me-test.md「门禁不许假装通过」）。
+  STAGED_INNER_FINISHED=0
+  staged_exit_guard() {
+    local staged_exit_code=$?
+    staged_cleanup
+    (( STAGED_INNER_FINISHED )) && return
+    printf '  ✗ --staged 没跑完就退出了（退出码 %s）：里层门禁没起或没跑完，临时 worktree 已删\n' "$staged_exit_code" >&2
+    printf '     → 怎么办：看上面最后一句是哪一步出的错（建临时树、套暂存区、拷副本、查前缀登记），修好再跑。\n' >&2
+    printf '               中途退出时「没跑」和「跑过了」在输出里长得一样，所以这一条必须自己说出来。\n' >&2
+    exit "$(( staged_exit_code == 0 ? 1 : staged_exit_code ))"
+  }
   # EXIT 兜底：worktree 建起来之后，中间任何一处退出（die、set -e 打断的、下面那两处 die）
   # 都靠这一个 trap 把临时 worktree 带走。**别在 die 之前再手工清一次**——
   # 手工清那一份会让「删掉 EXIT 兜底」这个变异检测不到：每条 die 路径都自己清干净了，
   # 兜底有没有都一样，于是盯着它的用例一声不吭（第一版实测）。清理只留这一处。
-  trap 'staged_cleanup' EXIT
+  trap 'staged_exit_guard' EXIT
   trap 'staged_cleanup; exit 130' INT
   trap 'staged_cleanup; exit 143' TERM
   if [[ -s "$staged_base/staged.patch" ]] && ! git -C "$staged_tree" apply --index "$staged_base/staged.patch"; then
@@ -85,6 +99,12 @@ if [[ $WANT_STAGED -eq 1 ]]; then
   staged_family="$(sed -n 's/^family=//p' "$SCRIPTS/../I18N" 2>/dev/null || true)"; staged_family="${staged_family:-singlefs-ai-sop}"
   if [[ -d "$src_root/.claude/$staged_family" && ! -d "$staged_tree/.claude/$staged_family" ]]; then
     mkdir -p "$staged_tree/.claude"; cp -r "$src_root/.claude/$staged_family" "$staged_tree/.claude/"
+  fi
+  # 项目给 cargo 挂的前缀登记（scripts/check.sh 读它）没进 HEAD + 暂存区时，临时树里没有它，
+  # 里层的「构建与单测」就退回无包装的 cargo 去跑，与「前缀起不来就不跑 cargo」相反（rules/command-safety.md）。不替它拷：拷的是工作区那一份，不是这一次要提交的。
+  if [[ -f "$src_root/$CARGO_COMMAND_PREFIX_FILE" && ! -f "$staged_tree/$CARGO_COMMAND_PREFIX_FILE" ]]; then
+    die "源仓有 $CARGO_COMMAND_PREFIX_FILE，而 HEAD + 暂存区里没有它：--staged 这一轮的 cargo 会不经前缀跑" \
+      "把它提交或暂存（git -C $src_root add $CARGO_COMMAND_PREFIX_FILE）再跑；不要这个前缀了，就从源仓删掉它。"
   fi
   # diff 基准在源仓上算好再传进去。临时树是 detached HEAD，@{upstream} 解析不到，里层自己算会落到 HEAD~1，
   # 比直接跑窄一档：「分两次提交就绕过去」那条口子在 --staged 这边开着（实测：直接跑基准是 origin/master，--staged 是 HEAD~1）。
@@ -102,6 +122,7 @@ if [[ $WANT_STAGED -eq 1 ]]; then
   # 退出码要在 if 里取：lib.sh 开着 set -e，写成「里层; staged_rc=$?」的话，里层一判红外层就在这一行退出，
   # 下面的清理走不到，每次判红都在仓里留下一个临时 worktree——而判红正是最要看结果的时候（0.0.48 收尾时实测）。
   if GATE_BASE="$staged_diff_base" GATE_STAGED_FROM="$src_root" bash "$staged_gate" "$staged_tree" ${GATE_FORCE_OPTION[@]+"${GATE_FORCE_OPTION[@]}"}; then staged_rc=0; else staged_rc=$?; fi
+  STAGED_INNER_FINISHED=1
   trap - INT TERM EXIT
   staged_cleanup
   # --staged 这一轮不会给 gate-ok 前移：外层必定给里层设 GATE_BASE，而写 gate-ok 的守卫要求它为空
@@ -178,18 +199,36 @@ if ! GATE_RUN_TMPDIR="$(mktemp -d "${TMPDIR:-/tmp}/gate-run.XXXXXX")"; then
 fi
 TMPDIR="$GATE_RUN_TMPDIR"
 export TMPDIR
+# 「本次未跑」的侧信道：阶段只跑了一部分时，用 lib.sh 的 report_not_run 往这里追加一行（不 source lib.sh 的项目阶段直接追加一行也行，
+# 要写成带守卫的 ${GATE_NOT_RUN_FILE:+…}：单跑、stage-selftest 喂样本时这个变量不在），记这个阶段的结果时收进汇总的「本次未跑」。
+# 放在这一轮的临时目录里，「跑完没留下临时文件」不把它算成阶段留下的。
+GATE_NOT_RUN_FILE_NAME=.gate-not-run
+GATE_NOT_RUN_FILE="$GATE_RUN_TMPDIR/$GATE_NOT_RUN_FILE_NAME"
+: > "$GATE_NOT_RUN_FILE"
+export GATE_NOT_RUN_FILE
 
 STAGES=(); RESULTS=(); NOT_RUN=()
 record() { STAGES+=("$1"); RESULTS+=("$2"); }
+# 报过的那个阶段在 STAGE_REPORTED_NOT_RUN 里留 1：只跑了一部分的本地阶段不算覆盖了 gate-covers 那一项
+STAGE_REPORTED_NOT_RUN=0
+drain_not_run_side_channel() { # drain_not_run_side_channel <阶段名>：把这个阶段报的「本次未跑」收进汇总，清空侧信道
+  local stage_name="$1" not_run_line
+  STAGE_REPORTED_NOT_RUN=0
+  [[ -s "$GATE_NOT_RUN_FILE" ]] || return 0
+  while IFS= read -r not_run_line || [[ -n "$not_run_line" ]]; do
+    if [[ -n "$not_run_line" ]]; then NOT_RUN+=("$stage_name        本次未跑一部分：$not_run_line"); STAGE_REPORTED_NOT_RUN=1; fi
+  done < "$GATE_NOT_RUN_FILE"
+  : > "$GATE_NOT_RUN_FILE"
+}
 
 # ── 起一个阶段之前，先判它的准入与运行条件（rules/preflight-discipline.md）──
-# 条件不满足、又没带 --force：不起它，记「本次未跑」并列出没满足的条件。带了 --force：把 --force 转给它，
-# 通过了也只记「强制跑过」（FORCED），不记 PASS。这两种之一出现（只因为「输入没变」没起的除外），这一轮就不前移 gate-ok。
+# 只因为「输入没变」不满足：不起它，记「本次未跑」。别的条件不满足、又没带 --force：不起它，记失败，门禁判红。
+# 带了 --force：把 --force 转给它，通过了也只记「强制跑过」（FORCED），不记 PASS，这一轮不前移 gate-ok。
 # 判据只在 preflight.py 一处，「起不起」只信这里的预判：阶段起了之后退 78，分不出是它自己的条件变了、
 # 还是它调的别的脚本拒绝了（传出来的 78），跑了一半的检查也可能被吞掉，所以一律按失败记。
 EXIT_REFUSED_BY_PREFLIGHT=78
 STAGE_FORCE_OPTION=(); STAGE_FORCED_SUMMARY=""
-GATE_OK_HELD_BY=(); STAGES_REFUSED_BY_CONDITION=0
+GATE_OK_HELD_BY=()
 stage_admitted() { # stage_admitted <阶段名> <脚本> [脚本的参数…] → 0 起它；1 不起（已记好）
   local name="$1" script="$2"; shift 2
   local preflight_status preflight_exit_code=0 refused_category
@@ -204,9 +243,12 @@ stage_admitted() { # stage_admitted <阶段名> <脚本> [脚本的参数…] �
       return 0 ;;
     "$EXIT_REFUSED_BY_PREFLIGHT")
       refused_category="${preflight_status#refused$'\t'}"; refused_category="${refused_category%%$'\t'*}"
-      NOT_RUN+=("$name        本次未跑：条件不满足，没起它——${preflight_status##*$'\t'}。确认要照跑就 gate.sh --force")
-      if [[ "$refused_category" != inputs-unchanged ]]; then
-        GATE_OK_HELD_BY+=("$name（条件不满足，没起）"); STAGES_REFUSED_BY_CONDITION=$((STAGES_REFUSED_BY_CONDITION + 1))
+      if [[ "$refused_category" == inputs-unchanged ]]; then
+        NOT_RUN+=("$name        本次未跑：输入自上次成功跑完以来没变，重跑得不到新信息——${preflight_status##*$'\t'}。确认要照跑就 gate.sh --force")
+      else
+        bad "$name：条件不满足，没起它，按失败记——${preflight_status##*$'\t'}"
+        howto "按上面每一条的出路补齐条件再跑；确认要在条件不满足时照跑就 gate.sh --force（记「强制跑过」，不记通过）。"
+        record "$name" FAIL
       fi
       return 1 ;;
     *)
@@ -220,6 +262,7 @@ stage_admitted() { # stage_admitted <阶段名> <脚本> [脚本的参数…] �
 # 78 与其余的都是失败。强制跑过的，不管退出码是几，这一轮都不前移 gate-ok。
 record_stage() { # record_stage <阶段名> <退出码> [无对象时的退出码] [无对象时怎么说]
   local name="$1" stage_exit_code="$2" nothing_exit_code="${3:-}" nothing="${4:-}"
+  drain_not_run_side_channel "$name"
   if [[ -n "$STAGE_FORCED_SUMMARY" ]]; then GATE_OK_HELD_BY+=("$name（强制跑过）"); fi
   if [[ "$stage_exit_code" -eq 0 && -n "$STAGE_FORCED_SUMMARY" ]]; then
     record "$name" FORCED
@@ -263,8 +306,9 @@ head1 "规范版本"
 # 版本戳是给消费项目用的；SOP 仓自身没有也不该有。判据同「各语言同步」：
 # 被门禁的 ROOT 是不是 SOP 仓本身。
 if is_pkg_itself "$ROOT"; then
-  ok "本仓即 SOP 本身，无需版本戳"
-  record "规范版本" PASS
+  # 没有版本戳可判就是无对象可判，记「本次未跑」，不记通过（rules/show-me-test.md「门禁不许假装通过」）
+  warn "本仓即 SOP 本身，没有版本戳可判（本次无对象可判，这不是通过）"
+  NOT_RUN+=("规范版本            本次无对象可判：本仓即 SOP 本身，版本戳是给消费项目的")
 else
 pkg_ver="$(cat "$SCRIPTS/../VERSION" 2>/dev/null || echo "?")"
 proj_ver="$(cat "$ROOT/.singlefs-ai-sop-version" 2>/dev/null || echo "")"
@@ -357,7 +401,7 @@ run_stage_may_skip "脚本执行位" "本次无对象可判：不在 git 仓库�
   bash "$SCRIPTS/script-modes.sh" "${MODE_DIRS[@]}"
 # 项目本地阶段自己会不会红：上面那个「门禁判别力」只覆盖共享脚本，
 # 项目在 .claude/gate.d/ 里接的那一批没人验，而恒绿的检查与真在跑的检查长得一模一样。
-run_stage_may_skip "本地阶段判别力" "本次无对象可判：$ROOT/.claude/gate.d 下没有本地阶段" \
+run_stage_may_skip "本地阶段判别力" "本次无对象可判：$ROOT/.claude/gate.d 下没有本地阶段，或没有一个阶段配了样本（哪一种见上方它的输出）" \
   bash "$SCRIPTS/stage-selftest.sh" "$ROOT/.claude/gate.d"
 # 文档里的相对链接与「第 N 节」指向：两类失效都是静默的，点开是空的那种还算好，
 # 恰好指到另一个同名文件时连「打不开」这个信号都没有。
@@ -368,14 +412,14 @@ run_stage "链接指向" python3 "$SCRIPTS/link-targets.py"
 run_stage_may_skip "历史条目编号" "本次无对象可判：$ROOT/.claude/kb 下没有变更史文件" \
   bash "$SCRIPTS/history-ordinal.sh" "$ROOT"
 # 工具层的闸：规则里的提醒拦不住手敲的命令，钩子能；而钩子被删掉或改坏时那道闸静默消失。
-run_stage_may_skip "工具层的闸" "本次无对象可判：没有 .claude/settings.json 或一个钩子都没有" \
+run_stage_may_skip "工具层的闸" "本次无对象可判：项目与装进来的副本里一个钩子都没有" \
   bash "$SCRIPTS/hooks-registered.sh" "$ROOT"
 # 新加的门禁与钩子先对过已有的：能追加就追加、能合并就合并，不另起一份，更不整段抄一份（rules/sop-first.md）。
 run_stage_may_skip "门禁查重" "本次无对象可判：这一次没有新加或改动门禁与钩子，或不在 git 仓里" \
   python3 "$SCRIPTS/gate-overlap.py" "$ROOT"
 # 分段计时不许在转发输出的循环里打时间戳（rules/command-safety.md）：转打会阻塞，
 # 子进程写管道不被挡，行到达的时间戳里就混进前面几行的打印积压，看着像调度抖动。
-run_stage_may_skip "转发计时" "本次无对象可判：仓里没有 .rs / .py" \
+run_stage_may_skip "转发计时" "本次无对象可判：它扫的那几处目录里没有 .rs / .py（扫哪几处见上方它的输出）" \
   python3 "$SCRIPTS/relay-timing-lint.py" --check "$ROOT"
 # 编号引用散在源码注释与记录里，doc-lint 只管 markdown，够不着那些地方。
 run_stage_may_skip "编号与简称" "本次无对象可判：$ROOT/.claude/kb 不在，或一个 .rs / .md 都没扫到" \
@@ -386,23 +430,45 @@ run_stage "文档铁律" bash "$SCRIPTS/doc-lint.sh" "$ROOT"
 # 本语言没有词表时，doc-lint 里那几条检查是**没实现**，不是通过。它自己报得出是哪几条，
 # 这里只负责把它们搬进末尾的未实现清单——此前它只在阶段里 warn 一句，汇总照样记 PASS，
 # 而汇总才是人会看的那一处（审计实测于 en / ja 仓）。
+# 取不到那份清单（它的准入与运行条件不满足、或者崩了）要判红：吞掉的话，未实现清单静默变短，汇总照样报全部通过。
 EXTRA_NOT_IMPL=()
-while IFS= read -r not_impl_line; do
-  [[ -n "$not_impl_line" ]] && EXTRA_NOT_IMPL+=("$not_impl_line")
-done < <(bash "$SCRIPTS/doc-lint.sh" --not-impl 2>/dev/null || true)
+if doc_lint_not_implemented="$(bash "$SCRIPTS/doc-lint.sh" --not-impl)"; then
+  while IFS= read -r not_impl_line; do
+    if [[ -n "$not_impl_line" ]]; then EXTRA_NOT_IMPL+=("$not_impl_line"); fi
+  done <<< "$doc_lint_not_implemented"
+else
+  doc_lint_not_implemented_exit_code=$?
+  bad "取不到 doc-lint 报的未实现项（doc-lint.sh --not-impl 退出码 $doc_lint_not_implemented_exit_code）：汇总末尾的未实现清单会少掉它那几条"
+  howto "单跑 bash $SCRIPTS/doc-lint.sh --not-impl 看它为什么失败（退出码 78 是它的准入与运行条件不满足），修好再跑。"
+  record "文档铁律的未实现清单" FAIL
+fi
 
 # ── 阶段 1a2：规则纪律 ──────────────────────────────────
 # 规则只写怎么做，历史与原因搬进案卷（rules/rules-discipline.md）。
 # 上游包自己的 rules/ 只在上游判；项目的 .claude/rules/ 在哪边跑都判。
 # 装进项目的副本不判：它由上游自己的门禁管，跟 doc-lint 同规矩。
-# 退出码 77 = 那个目录下一个 .md 都没有，记「本次未跑」，不记通过。
+# 退出码 77 = 那个目录下一个 .md 都没有，或者本包的语言整个没有词表，记「本次未跑」，不记通过。
+# 本包的语言上有几条没实现（英文、日文只有结构型的那几条）时，它自己报得出来（--not-impl）：
+# 那一行进末尾的未实现清单，实现了的那几条照判——与 doc-lint 的未实现项同一个办法。
 run_rules_lint() { # run_rules_lint <阶段名> <规则目录> <额外要扫的文件…>
   head1 "$1"
-  local rules_rc=0 stage_name="$1" rules_dir="$2"; shift 2
+  local rules_rc=0 stage_name="$1" rules_dir="$2" rules_not_implemented listed_not_implemented already_listed=0; shift 2
   stage_admitted "$stage_name" "$SCRIPTS/rules-lint.sh" "$ROOT" || return 0
+  if ! rules_not_implemented="$(bash "$SCRIPTS/rules-lint.sh" --not-impl)"; then
+    bad "$stage_name：取不到 rules-lint 报的未实现项（rules-lint.sh --not-impl 失败），这一项没判"
+    howto "单跑 bash $SCRIPTS/rules-lint.sh --not-impl 看它为什么失败，修好再跑。"
+    record "$stage_name" FAIL
+    return 0
+  fi
+  if [[ -n "$rules_not_implemented" ]]; then
+    for listed_not_implemented in ${EXTRA_NOT_IMPL[@]+"${EXTRA_NOT_IMPL[@]}"}; do
+      if [[ "$listed_not_implemented" == "$rules_not_implemented" ]]; then already_listed=1; fi
+    done
+    if [[ $already_listed -eq 0 ]]; then EXTRA_NOT_IMPL+=("$rules_not_implemented"); fi
+  fi
   GATE_IN_STAGE=1 RULES_LINT_DIR="$rules_dir" RULES_LINT_FILES="$*" bash "$SCRIPTS/rules-lint.sh" "$ROOT" \
     ${STAGE_FORCE_OPTION[@]+"${STAGE_FORCE_OPTION[@]}"} || rules_rc=$?
-  record_stage "$stage_name" "$rules_rc" 77 "本次无对象可判：$rules_dir 下面一个 .md 都没有"
+  record_stage "$stage_name" "$rules_rc" 77 "本次无对象可判：$rules_dir 下面一个 .md 都没有，或本包的语言没有词表（哪一种见上方它的输出）"
 }
 # CLAUDE.md、agent 定义与 skill 正文一起扫：它们和规则一样是照着执行的，
 # 射程漏掉谁，历史与原因就会全挤到那一份里。
@@ -433,19 +499,35 @@ fi
 head1 "Show me test"
 if stage_admitted "Show me test" "$SCRIPTS/show-me-test.sh" "$ROOT"; then
   smt_rc=0; GATE_IN_STAGE=1 bash "$SCRIPTS/show-me-test.sh" "$ROOT" ${STAGE_FORCE_OPTION[@]+"${STAGE_FORCE_OPTION[@]}"} || smt_rc=$?
-  record_stage "Show me test" "$smt_rc" 3 "本次无对象可判：工作区与基准无差异。改动之后再跑，或指定基准： GATE_BASE=<ref> bash .claude/scripts/gate.sh"
+  record_stage "Show me test" "$smt_rc" 3 "本次无对象可判：工作区与基准无差异，或差异里没有 crates 代码（哪一种见上方它的输出）。改动之后再跑，或指定基准： GATE_BASE=<ref> bash .claude/scripts/gate.sh"
 fi
 
 # ── 阶段 3：构建与单测 ──────────────────────────────────
 if [[ ! -f "$ROOT/Cargo.toml" ]]; then
   head1 "构建与单测"
-  if [[ -n "$(find "$ROOT/crates" -name '*.rs' 2>/dev/null | head -1)" ]]; then
-    bad "有 .rs 文件却没有 Cargo.toml —— 这些代码根本没被构建过"
-    howto "在仓库根建 Cargo.toml（workspace），把 crates/* 列进 members。"
+  # 哪些 .rs 算项目的，与命名纪律同一份口径（lib.sh 的 rust_source_files），不只看 crates/。
+  # 往上到项目根都没有 Cargo.toml 的才是没人构建过的；放在自带 Cargo.toml 的子目录里的（研究用的小 crate）有它自己的构建
+  first_rust_source=""; first_orphan_rust_source=""
+  while IFS= read -r rust_source; do
+    [[ -n "$rust_source" ]] || continue
+    if [[ -z "$first_rust_source" ]]; then first_rust_source="$rust_source"; fi
+    rust_source_directory="${rust_source%/*}"
+    while [[ "$rust_source_directory" == "$ROOT"/* && ! -f "$rust_source_directory/Cargo.toml" ]]; do
+      rust_source_directory="${rust_source_directory%/*}"
+    done
+    if [[ ! -f "$rust_source_directory/Cargo.toml" ]]; then first_orphan_rust_source="$rust_source"; break; fi
+  done < <(rust_source_files "$ROOT" 2>/dev/null || true)
+  if [[ -n "$first_orphan_rust_source" ]]; then
+    bad "有 .rs 文件往上到项目根都没有 Cargo.toml —— 这些代码根本没被构建过（例：${first_orphan_rust_source#"$ROOT"/}）"
+    howto "在仓库根建 Cargo.toml（workspace），把含这些 .rs 的 crate 列进 members；或者给它所在的 crate 建自己的 Cargo.toml。" \
+          "算不算项目的代码按 lib.sh 的 rust_source_files：target/、.git/、.claude/ 与本包的样本目录之外的 .rs 都算。"
     record "构建与单测" FAIL
+  elif [[ -n "$first_rust_source" ]]; then
+    warn "项目根没有 Cargo.toml，.rs 都在自带 Cargo.toml 的子目录里（例：${first_rust_source#"$ROOT"/}）：共享的构建与单测不跑它们（这不是通过）"
+    NOT_RUN+=("构建与单测          本次无对象可判：项目根没有 Cargo.toml，.rs 都在自带 Cargo.toml 的子目录里，由它们自己的阶段构建")
   else
-    ok "项目尚无 Rust 代码，本阶段不适用"
-    record "构建与单测" PASS
+    warn "项目里没有 .rs，也没有 Cargo.toml：这一项无对象可判（这不是通过）"
+    NOT_RUN+=("构建与单测          本次无对象可判：项目里没有 .rs，也没有 Cargo.toml")
   fi
 elif ! command -v cargo >/dev/null 2>&1; then
   head1 "构建与单测"
@@ -459,17 +541,19 @@ fi
 
 # ── 阶段 3b：规则清单（译文仓的对账依据）─────────────────
 if [[ -d "$SCRIPTS/../rules" && -f "$SCRIPTS/manifest.sh" ]]; then
-  run_stage "规则清单" bash "$SCRIPTS/manifest.sh"
+  run_stage_may_skip "规则清单" "本次无对象可判：本仓不是参照仓，清单以参照仓为准" bash "$SCRIPTS/manifest.sh"
   # 译文同步是 SOP 仓自己的事，消费项目那边没有兄弟语言仓，不该判它。
   # 判据：被门禁的这个 ROOT 是不是 SOP 仓本身。
   if [[ -f "$SCRIPTS/../I18N" ]] && is_pkg_itself "$ROOT"; then
     # --staged 时本包是临时树，兄弟语言仓要从源仓的父目录找；不带 --staged 时不传参数，i18n-sync 按默认找兄弟目录。
-    run_stage "各语言同步" bash "$SCRIPTS/i18n-sync.sh" ${STAGED_FROM:+"$(dirname "$STAGED_FROM")"}
+    run_stage_may_skip "各语言同步" "本次无对象可判：本仓不是参照仓，或 languages= 里除了本仓没有别的语言（哪一种见上方它的输出）" \
+      bash "$SCRIPTS/i18n-sync.sh" ${STAGED_FROM:+"$(dirname "$STAGED_FROM")"}
   fi
   # 版本纪律同理只判 SOP 仓自身：改了规范本体就必须抬 VERSION——
   # 以前这条只是 CLAUDE.md 里的提醒句，拦不住（对抗测试实测）。
   if is_pkg_itself "$ROOT"; then
-    run_stage "版本纪律" bash "$SCRIPTS/version-discipline.sh" "$ROOT"
+    run_stage_may_skip "版本纪律" "本次无对象可判：这一次的改动没碰规范本体（GOVERNED 的路径）" \
+      bash "$SCRIPTS/version-discipline.sh" "$ROOT"
     # 抬了 VERSION 不等于记了账：0.0.39 那次三个语言仓的 CHANGELOG 一起跳过了 0.0.36，全部门禁照绿。
     run_stage "CHANGELOG 连续" bash "$SCRIPTS/changelog-lint.sh" "$ROOT"
   fi
@@ -506,7 +590,7 @@ GATE_D="$ROOT/.claude/gate.d"
 LOCAL_FILES=()
 if [[ -d "$GATE_D" ]]; then
   while IFS= read -r f; do [[ -n "$f" ]] && LOCAL_FILES+=("$f"); done \
-    < <(find "$GATE_D" -maxdepth 1 -name '*.sh' -type f | sort)
+    < <(find "$GATE_D" -maxdepth 1 -name '*.sh' \( -type f -o -type l \) | sort)
 fi
 if [[ ${#LOCAL_FILES[@]} -eq 0 ]]; then
   ok "项目没有本地阶段（$GATE_D 不存在或没有 *.sh）"
@@ -531,13 +615,14 @@ else
       if [[ -n "$covered_key" ]]; then covered_keys+=("$covered_key"); fi
     done < <(sed -n 's/^# gate-covers:[[:space:]]*//p' "$f" 2>/dev/null | sed 's/[[:space:]]*$//' || true)
     head1 "$sname"
-    # 条件不满足就不起它；强制跑过的不算覆盖了清单里的哪一项（rules/preflight-discipline.md）
+    # 条件不满足就不起它（记失败，只因为「输入没变」的记本次未跑）；强制跑过的不算覆盖了清单里的哪一项（rules/preflight-discipline.md）
     stage_rc=0; stage_counts_as_coverage=0
     if stage_admitted "$sname" "$f" "$ROOT"; then
       if [[ -z "$STAGE_FORCED_SUMMARY" ]]; then stage_counts_as_coverage=1; fi
       GATE_IN_STAGE=1 bash "$f" "$ROOT" ${STAGE_FORCE_OPTION[@]+"${STAGE_FORCE_OPTION[@]}"} || stage_rc=$?
       record_stage "$sname" "$stage_rc" 77 "本次未跑：阶段报了这一轮无对象可判（退出码 77），原因见上方它的输出"
-      if [[ $stage_rc -ne 0 ]]; then stage_counts_as_coverage=0; fi
+      # 只跑了一部分（报过本次未跑）的，覆盖到哪说不清，不算覆盖
+      if [[ $stage_rc -ne 0 || $STAGE_REPORTED_NOT_RUN -eq 1 ]]; then stage_counts_as_coverage=0; fi
     fi
     unknown_keys=()
     for covered_key in "${covered_keys[@]}"; do
@@ -584,7 +669,7 @@ fi
 head1 "跑完没留下临时文件"
 leftover_entries=()
 while IFS= read -r -d '' leftover_entry; do leftover_entries+=("$leftover_entry"); done \
-  < <(find "$GATE_RUN_TMPDIR" -mindepth 1 -maxdepth 1 -print0 | sort -z)
+  < <(find "$GATE_RUN_TMPDIR" -mindepth 1 -maxdepth 1 ! -name "$GATE_NOT_RUN_FILE_NAME" -print0 | sort -z)
 stages_failed_before_this_one=0
 for stage_result in "${RESULTS[@]}"; do [[ "$stage_result" == PASS || "$stage_result" == FORCED ]] || stages_failed_before_this_one=$((stages_failed_before_this_one + 1)); done
 list_leftover_entries() { # 实占 / 标称大小（稀疏的盘镜像两个数差得远）与名字
@@ -682,20 +767,24 @@ fi
 # 那个从没验过的提交会被一并盖章，此后永远落在 diff 窗口外（审计实测：跑的中途提交，gate-ok 指向了新提交）。
 # GATE_BASE 被显式指定时不记：那一轮的窗口是人为收窄的（--staged 的里层也走这一支），
 # 拿它当「此后都验过」的起点会把中间的提交漏掉。不记只会让下一轮的窗口更宽，不会更窄。
-# 有阶段强制跑过、或者因为「输入没变」之外的原因没起，也不记：那些阶段该判的窗口还要留给下一轮（rules/preflight-discipline.md）。
+# 有阶段强制跑过也不记：那些阶段该判的窗口还要留给下一轮（rules/preflight-discipline.md）。
 if [[ ${#GATE_OK_HELD_BY[@]} -gt 0 ]]; then
   warn "这一轮不前移 gate-ok：$(IFS='、'; printf '%s' "${GATE_OK_HELD_BY[*]}")"
-  howto "这些阶段没按条件跑完，它们的 diff 窗口留给下一轮；条件补齐之后不带 --force 再跑一遍。"
+  howto "这些阶段是在条件不满足时强制跑的，它们的 diff 窗口留给下一轮；条件补齐之后不带 --force 再跑一遍。"
 elif [[ -n "$START_HEAD" && -z "${GATE_BASE:-}" ]]; then
   now_head="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || true)"
   if [[ -n "$now_head" && "$now_head" != "$START_HEAD" ]]; then
     warn "跑的过程中 HEAD 变了（${START_HEAD:0:7} → ${now_head:0:7}）：gate-ok 只记到开跑时那个提交"
     howto "那之后的提交没在这一轮验过，要它们过闸就再跑一遍门禁。"
   fi
-  git -C "$ROOT" update-ref refs/sop/gate-ok "$START_HEAD" 2>/dev/null || true
+  # 写不进去不判红（后果只是下一轮的窗口更宽，不会漏判），但要说出来：吞掉的话，人以为窗口已经前移了
+  if ! git -C "$ROOT" update-ref refs/sop/gate-ok "$START_HEAD" 2>/dev/null; then
+    warn "gate-ok 没写进去（git update-ref 失败）：下一轮的 diff 窗口照旧从上一次写成的那一点起算，只会更宽、不会漏判"
+    warn "  看一眼 $ROOT 的 git 目录能不能写（权限、磁盘、refs/sop 是不是被一个同名文件占了），修好之后跑绿一次它就前移"
+  fi
 fi
-if [[ $forced -gt 0 || $STAGES_REFUSED_BY_CONDITION -gt 0 ]]; then
-  warn "没有阶段判红，但 $forced 个阶段是强制跑的、$STAGES_REFUSED_BY_CONDITION 个阶段因为条件不满足没起（跑了 ${#STAGES[@]} 个）：这一轮不算「全部通过」"
+if [[ $forced -gt 0 ]]; then
+  warn "没有阶段判红，但 $forced 个阶段是强制跑的（跑了 ${#STAGES[@]} 个）：这一轮不算「全部通过」"
 else
   ok "已实现的门禁阶段全部通过（共 ${#STAGES[@]} 个）"
 fi

@@ -24,10 +24,15 @@ CF="$PKG/I18N"
 # `|| true`：I18N 不在时 sed 退 2，set -e 会当场把脚本带走、一个字都不打（审核实测）。
 THIS="$(sed -n 's/^this=//p' "$CF" 2>/dev/null || true)"
 REF="$(sed -n 's/^reference=//p' "$CF" 2>/dev/null || true)"
+# 校验：本仓没有清单可判，退 77（gate.sh 记「本次未跑」，不记通过）。--update 是动作不是判定：什么也不做，退 0，bump.sh 照常往下走。
 if [[ -n "$THIS" && -n "$REF" && "$THIS" != "$REF" ]]; then
   head1 "规则清单"
-  ok "本仓是 $THIS 版，清单以 $REF 仓为准，本阶段不适用"
-  exit 0
+  if [[ "${1:-}" == "--update" ]]; then
+    ok "本仓是 $THIS 版，清单只在 $REF 仓生成，--update 什么也没做"
+    exit 0
+  fi
+  warn "本仓是 $THIS 版，清单以 $REF 仓为准，本阶段无对象可判（这不是通过）"
+  exit 77
 fi
 
 # ── 什么进清单，什么不进 ────────────────────────────────
