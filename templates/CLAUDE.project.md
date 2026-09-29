@@ -4,22 +4,21 @@
 
 ## 规则（始终生效）
 
-@.claude/singlefs-ai-sop/rules/engineering-philosophy.md
 @.claude/singlefs-ai-sop/rules/sop-first.md
 @.claude/singlefs-ai-sop/rules/show-me-test.md
-@.claude/singlefs-ai-sop/rules/machine-first.md
 @.claude/singlefs-ai-sop/rules/code-discipline.md
 @.claude/singlefs-ai-sop/rules/writing-discipline.md
-@.claude/singlefs-ai-sop/rules/design-doc-discipline.md
 @.claude/singlefs-ai-sop/rules/kb-discipline.md
 @.claude/singlefs-ai-sop/rules/rules-discipline.md
 @.claude/singlefs-ai-sop/rules/test-discipline.md
 @.claude/singlefs-ai-sop/rules/evidence-discipline.md
 @.claude/singlefs-ai-sop/rules/verify-before-claiming.md
-@.claude/singlefs-ai-sop/rules/pushback-discipline.md
 @.claude/singlefs-ai-sop/rules/command-safety.md
 @.claude/singlefs-ai-sop/rules/preflight-discipline.md
 @.claude/singlefs-ai-sop/rules/session-wrapup.md
+
+四篇理念类规则不 `@` 常驻，开会话先整份读一次、之后按名字回查：`.claude/singlefs-ai-sop/rules/engineering-philosophy.md`、`.claude/singlefs-ai-sop/rules/machine-first.md`、`.claude/singlefs-ai-sop/rules/design-doc-discipline.md`、`.claude/singlefs-ai-sop/rules/pushback-discipline.md`。
+<!-- doc-lint:read-once engineering-philosophy.md machine-first.md design-doc-discipline.md pushback-discipline.md -->
 
 **被测对象特有的规则**（它自己的设计纪律、验证手段那一类）放 `.claude/rules/`，
 在这里一起 `@` 引用。别往共享 SOP 上放，那边只放协作规范。

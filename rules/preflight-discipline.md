@@ -3,9 +3,9 @@
 
 **每个脚本在开头写明什么时候该调它、什么时候不能调它，开跑之前先判：条件不满足就拒绝执行，带 `--force` 才照跑。**
 
-管全部脚本：本包的 `install.sh` 与 `scripts/`（含 `scripts/claude-hooks/`、`scripts/githooks/`），
-项目的 `.claude/gate.d/`、`.claude/scripts/`、`.claude/hooks/`，以及项目在 `.claude/preflight-dirs` 里登记的目录——
-实验脚本、实验二进制的源文件放在哪，就登记哪。每个目录只算它自己那一层，子目录另登记一行。
+管这几处：本包的 `install.sh` 与 `scripts/`（含 `scripts/claude-hooks/`、`scripts/githooks/`），
+项目的 `.claude/gate.d/`，以及项目在 `.claude/preflight-dirs` 里登记的目录——登记的是重型的、要按输入判要不要重跑的那几处：
+实验脚本、实验二进制的源文件放在哪，就登记哪。项目的 `.claude/scripts/`、`.claude/hooks/` 与别的轻脚本不写准入与运行条件。每个目录只算它自己那一层，子目录另登记一行。
 `.claude/preflight-dirs` 一行一条 `<目录>  # 放的是什么`；没有实验的项目也建这个文件，写一行注释说明。
 
 不判的三类：被 source 或 import 的库、样本、只 exec 共享脚本的包装（install.sh 铺的那几行，夹了别的逻辑就照普通脚本判）。

@@ -1,1 +1,2 @@
 experiments  # 样本实验
+.claude/hooks  # 样本：登记的钩子目录

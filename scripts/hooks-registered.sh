@@ -16,6 +16,8 @@
 #      只挂了一部分（比如只挂 Stop、没挂 SubagentStop），没挂上的那一类 agent 那里这道闸不在。
 #      写成 `<事件>:<工具名>` 的（只该在某个工具上触发），那条注册的 matcher 还要认得这个工具名（空 matcher 与 * 认全部）：
 #      挂在别的 matcher 上，钩子一次都不会为那个工具触发，而注册看着是齐的。
+# 例外：副本里的钩子文件头写了 `# hook-registration: optional <理由>`，项目可以不注册它，
+#   成功那句逐个列出没注册的可选钩子；注册了就照 ②③ 判。项目自己的钩子写这一行不算数：不用就连文件删掉。
 # 一个钩子都没有时退 77（本次无对象可判），不报绿。有钩子却没有 settings.json 判红：那等于每一个都没注册。
 #
 # 用法：
@@ -61,7 +63,13 @@ if [[ -z "$all_registrations" ]]; then
 fi
 
 hook_events_of() { sed -n 's/^# hook-events:[[:space:]]*//p' "$1" | head -1; }
-missing=(); failed=(); unhooked_events=(); unreadable=(); checked=0; selftested=0
+# 副本里的钩子声明可以不注册时，echo 出它的理由；没声明、或是项目自己的钩子，什么都不出
+optional_registration_reason_of() {
+  [[ "$(dirname "$1")" == "$PKG_HOOKS" ]] || return 0
+  sed -n 's/^# hook-registration:[[:space:]]*optional[[:space:]]\{1,\}//p' "$1" | head -1
+}
+OPTIONAL_REASON_MINIMUM_CHARACTERS=8
+missing=(); failed=(); unhooked_events=(); unreadable=(); optional_unregistered=(); malformed_optional=(); checked=0; selftested=0
 for hook in "${hooks[@]}"; do
   name="$(basename "$hook")"
   checked=$((checked + 1))
@@ -71,7 +79,14 @@ for hook in "${hooks[@]}"; do
     continue
   fi
   if [[ -z "$hook_registrations" ]]; then
-    missing+=("$hook")
+    optional_reason="$(optional_registration_reason_of "$hook")"
+    if [[ -z "$optional_reason" ]]; then
+      missing+=("$hook")
+    elif (( ${#optional_reason} < OPTIONAL_REASON_MINIMUM_CHARACTERS )); then
+      malformed_optional+=("$name")
+    else
+      optional_unregistered+=("$name")
+    fi
     continue
   fi
   for declared_event in $(hook_events_of "$hook"); do
@@ -98,6 +113,12 @@ if ((${#unreadable[@]})); then
         "读不出来不等于没注册：这一条没判，所以不许当成通过。"
   exit 1
 fi
+if ((${#malformed_optional[@]})); then
+  bad "${#malformed_optional[@]} 个钩子写了 # hook-registration: optional，理由不到 $OPTIONAL_REASON_MINIMUM_CHARACTERS 个字：${malformed_optional[*]}"   # gate-lint:summary
+  howto "在那个钩子文件头写全：# hook-registration: optional <为什么项目可以不注册它>，理由至少 $OPTIONAL_REASON_MINIMUM_CHARACTERS 个字；" \
+        "或者在 settings.json 里照它的 # hook-events: 把它注册上。"
+  exit 1
+fi
 if ((${#missing[@]})); then
   bad "${#missing[@]} 个钩子没在 settings.json 里注册："   # gate-lint:summary
   for hook in "${missing[@]}"; do
@@ -122,4 +143,8 @@ if ((${#failed[@]})); then
         "自检就是这道闸「会拒绝」的证据，自检不过等于闸开着。"
   exit 1
 fi
-ok "$checked 个钩子都注册着，其中 $selftested 个的自检通过"
+if ((${#optional_unregistered[@]})); then
+  ok "$checked 个钩子里 $((checked - ${#optional_unregistered[@]})) 个注册着，其中 $selftested 个的自检通过；${#optional_unregistered[@]} 个可选钩子没注册：${optional_unregistered[*]}"
+else
+  ok "$checked 个钩子都注册着，其中 $selftested 个的自检通过"
+fi

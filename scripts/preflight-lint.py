@@ -8,7 +8,7 @@
 
 判哪些脚本（.sh、.py、.rs，以及没有后缀、首行是 #! 的）：
   - 本包自己（仓根就是本包时）：install.sh、scripts/、scripts/claude-hooks/、scripts/githooks/ 下的；
-  - 项目：.claude/gate.d/、.claude/scripts/、.claude/hooks/ 下的，以及 .claude/preflight-dirs 登记的目录下的。
+  - 项目：.claude/gate.d/ 下的，以及 .claude/preflight-dirs 登记的目录下的（.claude/scripts/、.claude/hooks/ 这类轻脚本不判）。
   每个目录只看它自己这一层；子目录要判就另登记一行。装进项目的规范副本不判：它由上游自己的门禁管。
   只 exec 共享脚本的包装（install.sh 铺的那种）不另判，由被转发的那个共享脚本判。
 不判哪些：本包的排除写在 PACKAGE_EXCLUDED；项目的写在 .claude/preflight-exclude（一行一条，`<路径>  # 理由`，理由不许省）。
@@ -56,7 +56,7 @@ PACKAGE_EXCLUDED = {
     'scripts/preflight.py': '它就是判条件的那一个：自己再判一遍自己，会把要转给被判脚本的 --force 吃掉',
     'scripts/preflight.sh': '被 lib.sh 与钩子 source 的函数库（preflight、preflight_record_success），不单独调',
 }
-PROJECT_DIRECTORIES = ('.claude/gate.d', '.claude/scripts', '.claude/hooks')
+PROJECT_DIRECTORIES = ('.claude/gate.d',)   # 项目的 .claude/scripts/、.claude/hooks/ 不判：轻脚本不写准入（rules/preflight-discipline.md）；要判的目录项目自己登记
 PROJECT_REGISTERED_DIRECTORIES_FILE = '.claude/preflight-dirs'
 PROJECT_EXCLUDE_FILE = '.claude/preflight-exclude'
 SCRIPT_SUFFIXES = ('.sh', '.py', '.rs')
@@ -475,7 +475,7 @@ def main():
     counted = {}
     for path in sorted(targets):
         shown = os.path.relpath(path, root)
-        if targets[path] == '脚本' and wrapper_target(path, family):
+        if targets[path] in ('脚本', '登记目录') and wrapper_target(path, family):   # 登记目录里 install.sh 铺的包装同样不另判
             wrappers += 1
             continue
         counted[targets[path]] = counted.get(targets[path], 0) + 1

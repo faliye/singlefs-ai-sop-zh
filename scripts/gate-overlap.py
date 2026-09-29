@@ -86,7 +86,7 @@ GATE_STAGE_REFERENCE_RE = re.compile(r'\$\{?SCRIPTS\}?/([A-Za-z0-9._-]+\.(?:sh|p
 IDENTIFIER_RE = re.compile(r'[A-Za-z_][A-Za-z0-9_.-]{3,}')
 EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904'
 # 文件头里给机器读的那几种标记行，不当说明取。
-MACHINE_DIRECTIVE_RE = re.compile(r'^(gate-similar|gate-overlap|gate-covers|gate-lint|shell-lint|hook-events|shellcheck)\b')
+MACHINE_DIRECTIVE_RE = re.compile(r'^(gate-similar|gate-overlap|gate-covers|gate-lint|shell-lint|hook-events|hook-registration|shellcheck)\b')
 
 WRITING_TOOL_NAMES = {'Write', 'Edit', 'MultiEdit', 'NotebookEdit'}
 SHELL_SEPARATORS = {';', '&&', '||', '|', '|&', '&', '(', ')', ';;'}

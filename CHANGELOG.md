@@ -3,6 +3,36 @@
 规则与门禁的版本历史。`CLAUDE.md` 与 `rules/*.md` 不留历史节（design-doc-discipline），
 历史一律记在这里；逐条改动细节见 `git log`，提交信息即变更说明。
 
+## 0.0.62 — 2026-09-29
+
+**新踩的坑照样做成会红的检查，立的时机改成按批；报进度不为门禁重跑整轮；回扫按批做；收工钩子 gate-reuse-check 可以不注册；项目的轻脚本不再写准入与运行条件；四篇理念类规则在项目里不 @ 常驻；新增补简称的 `doc-lint-fix-names.py`；`history-ordinal` 认嵌套的历史节；发版按周合批。**
+
+规则：
+- `sop-first.md`「边界」：能变成检查的，形态照旧（会红的检查，不做成提醒），立的时机按批：坑先记进项目的欠账表，一周合一批评估，判同一件事、同一批对象的并成一格；正在反复发生、会毁数据的当场立。每道门禁、每个钩子写退役判据。同文件的「先补门禁」「踩到新坑」、`show-me-test.md` 那一节、`session-wrapup.md` 第 1 条都指向这一节。
+- `session-wrapup.md` 第 0 条与 `verify-before-claiming.md`「门禁现在过不过」：引最近一次 `gate.sh --staged` 的汇总（日期与那棵树的哈希）；那之后有改动就说「上次绿、之后改了哪些没跑」，不为报进度重跑整轮。
+- `evidence-discipline.md`：新立的判据与撤回的数，回扫按批做：各记一行进项目的回扫清单，随下一次阶段同步一批扫；两个标题随之改名。
+- `preflight-discipline.md`：项目侧只管 `.claude/gate.d/` 与 `.claude/preflight-dirs` 登记的目录；`.claude/scripts/`、`.claude/hooks/` 这类轻脚本不写准入与运行条件。
+- `sop-first.md`「谁来查」：收工钩子 `gate-reuse-check.sh` 改为可选，查重以提交前的「门禁查重」为准。
+- `kb-discipline.md` 第 5 条：缺简称的引用先跑 `doc-lint-fix-names.py` 补上，再跑 `doc-lint.sh`。
+- `writing-discipline.md`：「说人话」一节改名「文风要简单自然」。
+- 三语 `CLAUDE.md`：发版按周合批。`README`：副本不带本仓的 `CLAUDE.md`。
+- 模板 `CLAUDE.project.md`：engineering-philosophy、machine-first、design-doc-discipline、pushback-discipline 四篇不 `@` 常驻，开会话整份读一次，登记在 `<!-- doc-lint:read-once … -->`。
+
+脚本：
+- `hooks-registered.sh`（「工具层的闸」）：本包的钩子文件头写了 `# hook-registration: optional <理由>` 的，项目可以不注册，成功那句逐个列出没注册的；理由不到 8 个字判红；项目自己的钩子写这一行不算数。`gate-reuse-check.sh` 带上这一行；`gate-overlap.py` 把它当机器声明，不拿它当描述。
+- `doc-lint.sh`：规则清单检查（K）认 `<!-- doc-lint:read-once … -->` 登记的规则；时间指代（D-3）看每一层祖先标题里的日期，`### 日期` 下再分 `#### ` 的写法认得出；kb 里全篇是历史登记的文件加 `<!-- doc-lint:history-registry -->`，从第一个 `## ` 起不比对指代、历史陈述与文风词表（只许用在 kb 里，别处判红）；一份文件里没带简称的编号引用多到输出超过管道缓冲时，只列前 3 条的那一段让整个脚本退 141、后面的检查全没跑，改成读完全部输入。
+- 新脚本 `doc-lint-fix-names.py`：按 doc-lint 认的两种登记位，给孤零零的编号补「（简称）」，别的编号的简称括注里的不补，只补不判；带 `--selftest`，弄坏开关 `DOC_LINT_FIX_NAMES_BREAK=touch-registry` 时自检判红。
+- `history-ordinal.sh`：扫 `.claude/kb` 下全部 `.md`；位置钥匙改成「`## ` 节 + `### 日期` + 点名词」，同一把钥匙下「其 N」撞了才算撞号；旧写法 `### 日期（其 N）` 照认。取键抽到新脚本 `history-ordinal-keys.py`（在 `cd` 到仓根之前取它的绝对路径，相对路径起也找得到），基准侧按整个 kb 树汇总。
+- `preflight-lint.py`：项目目录只剩 `.claude/gate.d/`；登记目录里 install.sh 铺的包装同样不另判。
+
+**升级要做的**：
+- 项目 `CLAUDE.md` 跟着模板不 `@` 那四篇的，在同一份文件里写 `<!-- doc-lint:read-once engineering-philosophy.md machine-first.md design-doc-discipline.md pushback-discipline.md -->`，否则 doc-lint 判漏引。
+- 不用收工钩子的，从 `.claude/settings.json` 删掉 `gate-reuse-check.sh` 在 `Stop`、`SubagentStop` 上的注册；留着的照旧两处都挂。
+- `.claude/preflight-exclude` 里指向 `.claude/scripts/`、`.claude/hooks/` 的行删掉：那两处不再判，留着会判「一个要判的脚本都没排到」。
+- 欠账表、回扫清单按项目自己的形态建。
+
+自检从 600 涨到 608 个用例；可选注册的三处判断各打一条变异（不认可选声明、放开项目自己的钩子、去掉理由长度），全部被抓到。
+
 ## 0.0.61 — 2026-09-27
 
 **上游不再绑使用者项目的验证手段：未实现清单里项目自己的手段改由项目登记，共享规则、模板、skill 里不再点名它们；规则一律只写判据、步骤、射程、默认做法与指向，解释和论证全部删掉。**

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # hook-events: Stop SubagentStop
+# hook-registration: optional 判的与提交前的门禁阶段「门禁查重」是同一件事，只是早一步拦；项目可以只靠提交前那一道
 # gate-similar: gate-overlap.py 判定全在它那里；这个钩子只负责在 agent 收工时拿这个会话写过的文件调它，有红就拦下收工
 # gate-similar: hooks-registered.sh 它判钩子注册着没有、自检过没有，不判这一轮新建的钩子该不该单独存在
 # gate-similar: pattern-process-guard.sh 它挂在 PreToolUse 的 Bash 上、在命令执行前拦；这里挂在 Stop 与 SubagentStop 上，触发点不同
@@ -24,7 +25,7 @@
 # 退出码：拦下 2（Claude Code 不让收工，把 stderr 交给 agent）；放行 0；
 #   输入不是 JSON 对象、找不到会话记录或项目根、或判定脚本判不了 1（不拦，stderr 只给人看）——「没判」不记成「判过」。
 #
-# 怎么注册：项目 .claude/settings.json 的 hooks 里加两项（Stop 与 SubagentStop 不带 matcher）：
+# 怎么注册（可选，不注册就只剩提交前的「门禁查重」）：项目 .claude/settings.json 的 hooks 里加两项（Stop 与 SubagentStop 不带 matcher）；注册了就两项都要挂：
 #   "Stop":         [{"hooks": [{"type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR\"/.claude/singlefs-ai-sop/scripts/claude-hooks/gate-reuse-check.sh"}]}]
 #   "SubagentStop": [{"hooks": [{"type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR\"/.claude/singlefs-ai-sop/scripts/claude-hooks/gate-reuse-check.sh"}]}]
 #

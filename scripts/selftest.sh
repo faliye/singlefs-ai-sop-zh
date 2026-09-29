@@ -213,6 +213,20 @@ collect_fixtures
 run_scripted "doc-lint/语言被覆盖时要自报" 0 "语言由 DOC_LINT_LANG 指定为" -- \
   env DOC_LINT_LANG=zh bash "$SCRIPTS/doc-lint.sh" "$FX/doc-lint/good"
 
+# 编号引用没带简称的命中很多时，只列前 3 条的那一段不许让整个脚本中途退出（输出超过管道缓冲，截断的一端会让前段吃 SIGPIPE）
+r="$tmpd/doc-lint-many-bare"; mkdir -p "$r/kb"
+{ printf '# 决策\n\n## D1 数据可移动性 —— 已定\n\n'
+  for bare_citation_line in $(seq 1 3000); do printf '第 %s 行裸提 D1，再提一次 D1，句子写长一点让这一行的命中记录占满管道缓冲。\n' "$bare_citation_line"; done
+  printf '\n## 历史版本\n\n### 2026-08-29\n- 建档。\n'; } > "$r/kb/decisions.md"
+run_scripted "doc-lint/没带简称的命中很多时照样跑完" 1 "处编号引用没带简称" "文档铁律检查失败" -- \
+  env DOC_LINT_LANG=zh bash "$SCRIPTS/doc-lint.sh" "$r"
+
+# 补简称的工具：自检过得了，弄坏开关打开时自检必须红（证明它分得出登记位那一行动没动过）
+run_scripted "doc-lint-fix-names/自检通过" 0 "自检通过（查了" -- \
+  python3 "$SCRIPTS/doc-lint-fix-names.py" --selftest
+run_scripted "doc-lint-fix-names/改动登记位那一行时自检判红" 1 "登记标题那一行不动" -- \
+  env DOC_LINT_FIX_NAMES_BREAK=touch-registry python3 "$SCRIPTS/doc-lint-fix-names.py" --selftest
+
 # 扫描范围不许随包所在的路径变。副本排除项此前写成 */singlefs-ai-sop/* 加「ROOT 在包里就不排除」：
 # 同一个样本 projok 在 zh 仓里「检查 1」、在项目副本（路径里有 /singlefs-ai-sop/）里「检查 2」——
 # 0.0.50 同步到使用者项目时那边的 selftest 因此红了一例。这里把脚本拷到一个路径里带 /singlefs-ai-sop/ 的地方再跑同一个样本。
@@ -664,13 +678,14 @@ r="$tmpd/hooks-reg"; mkdir -p "$r/.claude/hooks"
 printf '#!/usr/bin/env bash\n[[ "${1:-}" == --selftest ]] && { echo "  自检：查了 2 种情形"; exit 0; }\nexit 0\n' > "$r/.claude/hooks/guard.sh"
 chmod +x "$r/.claude/hooks/guard.sh"
 # 包自带的钩子也要注册：pattern-process-guard 挂 PreToolUse（rules/command-safety.md），
-# gate-reuse-check 挂 Stop 与 SubagentStop（rules/sop-first.md「加门禁或钩子之前，先找已有的」），
+# gate-reuse-check 可选，注册了就挂 Stop 与 SubagentStop（rules/sop-first.md「谁来查」），
 # handback-scratch-check 挂交回工具的 PreToolUse 与 SubagentStop（rules/session-wrapup.md「子 agent 交回之前，删掉自己建的编译目录与仓副本」）
-hooks_registered_settings() { # hooks_registered_settings <gate-reuse-check 在 Stop 之外还挂不挂 SubagentStop：yes / no>
-  local gate_reuse_on_subagent_stop=''
+hooks_registered_settings() { # hooks_registered_settings <gate-reuse-check 挂在哪：yes 两个都挂 / no 只挂 Stop / none 不注册>
+  local gate_reuse_on_subagent_stop='' gate_reuse_on_stop='{"type":"command","command":"bash gate-reuse-check.sh"}'
   [[ "$1" == yes ]] && gate_reuse_on_subagent_stop='{"type":"command","command":"bash gate-reuse-check.sh"},'
-  printf '{"hooks":{"PreToolUse":[{"matcher":"Write","hooks":[{"type":"command","command":"bash guard.sh"},{"type":"command","command":"bash pattern-process-guard.sh"}]},{"matcher":"SubagentHandback","hooks":[{"type":"command","command":"bash handback-scratch-check.sh"}]}],"Stop":[{"hooks":[{"type":"command","command":"bash gate-reuse-check.sh"}]}],"SubagentStop":[{"hooks":[%s{"type":"command","command":"bash handback-scratch-check.sh"}]}]}}\n' \
-    "$gate_reuse_on_subagent_stop" > "$r/.claude/settings.json"
+  [[ "$1" == none ]] && gate_reuse_on_stop=''
+  printf '{"hooks":{"PreToolUse":[{"matcher":"Write","hooks":[{"type":"command","command":"bash guard.sh"},{"type":"command","command":"bash pattern-process-guard.sh"}]},{"matcher":"SubagentHandback","hooks":[{"type":"command","command":"bash handback-scratch-check.sh"}]}],"Stop":[{"hooks":[%s]}],"SubagentStop":[{"hooks":[%s{"type":"command","command":"bash handback-scratch-check.sh"}]}]}}\n' \
+    "$gate_reuse_on_stop" "$gate_reuse_on_subagent_stop" > "$r/.claude/settings.json"
 }
 hooks_registered_settings yes
 run_scripted "hooks-registered/注册着且自检过就通过" 0 "个钩子都注册着" -- \
@@ -678,6 +693,15 @@ run_scripted "hooks-registered/注册着且自检过就通过" 0 "个钩子都�
 hooks_registered_settings no
 run_scripted "hooks-registered/声明的事件没挂全判红" 1 "gate-reuse-check.sh→SubagentStop" -- \
   bash "$SCRIPTS/hooks-registered.sh" "$r"
+# 副本里声明了 # hook-registration: optional 的钩子，项目可以不注册；成功那句要逐个列出没注册的
+hooks_registered_settings none
+run_scripted "hooks-registered/可选钩子不注册放行并列出" 0 "1 个可选钩子没注册：gate-reuse-check.sh" -- \
+  bash "$SCRIPTS/hooks-registered.sh" "$r"
+# 项目自己的钩子写 optional 不算数：不用就连文件删掉
+printf '#!/usr/bin/env bash\n# hook-registration: optional 项目自己的钩子也想不注册\nexit 0\n' > "$r/.claude/hooks/unused-guard.sh"
+run_scripted "hooks-registered/项目自己的钩子写可选也要注册" 1 "unused-guard.sh  要挂的事件" -- \
+  bash "$SCRIPTS/hooks-registered.sh" "$r"
+rm -f "$r/.claude/hooks/unused-guard.sh"
 # 声明了只在某个工具上触发（<事件>:<工具名>）的，注册在别的 matcher 上等于没挂：钩子一次都不会为那个工具触发
 hooks_registered_settings yes
 python3 - "$r/.claude/settings.json" <<'SETTINGS'
@@ -726,6 +750,11 @@ printf '#!/usr/bin/env bash\n# hook-events: Stop\nexit 0\n' > "$r/pkg/scripts/cl
 printf '{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"bash sample-hook.sh"}]}]}}\n' > "$r/proj/.claude/settings.json"
 printf 'import sys\nif sys.argv[1:2] == ["--for"]:\n    sys.exit(1)\nprint("Stop\\t\\tbash sample-hook.sh")\n' > "$r/pkg/scripts/hook-registrations.py"
 run_scripted "hooks-registered/读注册失败不报成没注册" 1 "个钩子的注册读不出来" -- bash "$r/pkg/scripts/hooks-registered.sh" "$r/proj"
+# 可选的理由太短：判不了该不该放行，判红
+r="$tmpd/hooks-optional-short"; mk_hooks_package "$r/pkg"; mkdir -p "$r/pkg/scripts/claude-hooks" "$r/proj/.claude"
+printf '#!/usr/bin/env bash\n# hook-events: Stop\n# hook-registration: optional 不必\nexit 0\n' > "$r/pkg/scripts/claude-hooks/sample-hook.sh"
+printf '{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"bash other-hook.sh"}]}]}}\n' > "$r/proj/.claude/settings.json"
+run_scripted "hooks-registered/可选的理由太短判红" 1 "理由不到 8 个字：sample-hook.sh" -- bash "$r/pkg/scripts/hooks-registered.sh" "$r/proj"
 
 # ── 门禁查重：新加的门禁与钩子先对过已有的，不整段抄 ──────
 r="$tmpd/gate-overlap"; mkdir -p "$r/.claude/gate.d" "$r/.claude/hooks"
@@ -846,6 +875,9 @@ run_scripted "history-ordinal/没有新增条目时通过" 0 "没有撞号" -- \
 printf '\n### 2026-09-17（其一）：又一条\n- 撞号了。\n' >> "$r/.claude/kb/decisions-history.md"
 run_scripted "history-ordinal/新增的条目撞号判红" 1 "处撞号" -- \
   bash "$SCRIPTS/history-ordinal.sh" "$r"
+# 用相对路径起它：cd 到仓根之后，键提取器照样要找得到
+run_scripted "history-ordinal/相对路径起也找得到键提取器" 1 "处撞号" -- \
+  bash -c 'cd "$1" && bash scripts/history-ordinal.sh "$2"' history_ordinal_relative "$SCRIPTS/.." "$r"
 run_scripted "history-ordinal/没有变更史文件退 77" 77 "" -- \
   bash "$SCRIPTS/history-ordinal.sh" "$tmpd"
 # 窗口按这一轮的 diff 基准算，不只和 HEAD 比：撞号的条目先提交、再跑门禁，此前就落在窗口外看不见了

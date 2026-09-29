@@ -1,2 +1,3 @@
 # 实验放在哪
 experiments  # 样本实验：一个 Rust、一个 shell
+.claude/scripts  # 样本：项目自己登记要判的脚本目录（轻脚本默认不判，要判就登记）

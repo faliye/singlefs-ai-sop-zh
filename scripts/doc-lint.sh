@@ -19,7 +19,7 @@
 #   G. kb/*.md 里编号的每一处引用都要带上简称，且与登记位一致（同上）
 #   H. kb/*.md 里编号形状的记号反复出现（≥3 次）却一处登记位都没有（同上）
 #   I. 所有给人读的 .md 不许出现翻译腔 / 古风腔 / 过度解释的固定构式
-#      （rules/writing-discipline.md「说人话」；同 A、D，只在有词表的语言上跑）
+#      （rules/writing-discipline.md「文风要简单自然」；同 A、D，只在有词表的语言上跑）
 #   J. $ROOT/.claude/doc-lint-exclude 里的每条排除都要带理由、指向真实目录、且真的有东西被排除
 #   K. rules/*.md 与 @ 引用逐项相等：SOP 仓的 CLAUDE.md 与模板，项目的 CLAUDE.md 与装进来的副本
 #      ——没被引用的规则不进上下文，等于没写
@@ -34,6 +34,18 @@
 # 在项目侧再扫一遍，只会让它的模板与项目 kb 的编号互相撞成假红。
 # 围栏代码块内的内容不检查（那是示例）。
 # 定义规则本身的文件加 <!-- doc-lint:rule-definition -->：正文照查，只把反引号与「」里举的例子在比对词表前挖掉。
+#
+# kb 里全篇都是历史登记（不是「正文只写现状、历史放文末」那种普通 kb 文件，是像
+# decisions-history.md 这样一条决策一节、节内本身就是完整历史的登记表）加
+# <!-- doc-lint:history-registry -->：D-1、D-2、I 与 A（上下文/自指指代、文风、历史陈述——
+# 这几类跟日期无关，没有算法能判断该不该放行）在这份文件里从第一个 `## ` 标题起就不判——那本来
+# 就是 body_of() 对「## 历史版本」之后内容的豁免，这张牌只是把豁免的起点从「文件自己的历史节」
+# 挪到「第一个 `## ` 节」，因为这类文件的每个 `## ` 节本身就是历史，不是要收口的当前正文。
+# D-3（时间指代）不受这张牌影响：它判的是「祖先标题里有没有日期」，这类文件的每个历史条目本来
+# 就挂在带日期的 `### ` 下，只是把序号与摘要另开一层 `#### `——D-3 的判据已经改成查全部祖先层级
+# 而不是只看最近一个标题，这类文件的日期块天然满足它，不需要豁免。C（必须以「## 历史版本」收尾）、
+# E/F/G/H（编号登记与引用）、A2（围栏与历史节位置）都照旧判，不受这张牌影响——它们读的是
+# 整份文件，不读 body_of() 的输出。
 
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 preflight "${BASH_SOURCE[0]}" "$@"; set -- ${PREFLIGHT_ARGUMENTS[@]+"${PREFLIGHT_ARGUMENTS[@]}"}
@@ -183,7 +195,7 @@ PATTERNS=(
   '已经不是现行'                 '"已经不是现行"是历史陈述，把现行值写出来'
 )
 
-# ── I. 文风：翻译腔与古风腔的固定构式（rules/writing-discipline.md「说人话」）──────
+# ── I. 文风：翻译腔与古风腔的固定构式（rules/writing-discipline.md「文风要简单自然」）──────
 # 只查**词表里那些固定说法**。句子顺不顺、转折多不多余、解释啰不啰嗦，机器判不了，
 # 那半靠人念一遍——词表全绿不代表这条守住了，只代表没踩到最明显的几个坑。
 # 与 A/D 同样是词表型检查，所以同样只在有词表的语言上跑。
@@ -200,12 +212,14 @@ STYLE=(
 
 fails=0; skipped=0; checked=0
 
-# 输出正文部分（截到「## 历史版本」之前），并剔除围栏代码块
+# 输出正文部分（截到「## 历史版本」之前，或者 $2 = 1 时截到第一个「## 」标题之前），
+# 并剔除围栏代码块。$2 = 1 是 <!-- doc-lint:history-registry --> 那张牌的效果，见文件头。
 body_of() {
-  awk -v HIST="$HIST_HEAD" '
+  awk -v HIST="$HIST_HEAD" -v REGISTRY="${2:-0}" '
     # 标题按「去掉行尾空白之后相等」认：行尾多一个空格，`$0 == HIST` 就不成立，
     # 于是正文扫描不在历史节停机、kb 还被报「必须有历史节收尾」（审计实测的假红）。
     $0 ~ ("^" HIST "[ \t]*$") { exit }
+    REGISTRY == 1 && /^## / { exit }
     /^[ \t]*```/ { infence = !infence; next }
     { if (!infence) print NR "\t" $0; else print NR "\t" }
   ' "$1"
@@ -343,9 +357,35 @@ while IFS= read -r f; do
         checked=$((checked+1)); fails=$((fails+1)); continue ;;
     esac
   fi
+  # <!-- doc-lint:history-registry -->：这份 kb 文件全篇都是历史登记（不是「正文 + 历史节」那种
+  # 普通 kb 文件），只许出现在 kb 里——别处（rules/、agents/ 这类不该有历史登记的位置）贴这张牌，
+  # 等于把整份规则文件都免检了（同 rule-definition 那条口子，反过来）。
+  registry_flag=0
+  if head -5 "$f" | grep -qx '<!-- doc-lint:history-registry -->'; then
+    case "$f" in
+      */kb/*)
+        [[ -n "${DOC_LINT_VERBOSE:-}" ]] && warn "历史登记文件，从第一个「## 」标题起不比对指代/历史陈述词表  $rel"
+        registry_flag=1 ;;
+      *)
+        bad "$rel  history-registry 标记只许用于 kb 里的文件"
+        howto "删掉文件头的 <!-- doc-lint:history-registry -->——这份文件不是历史登记表，" \
+              "内容就该受检；要留档的历史，写进文末「$HIST_HEAD」。"
+        checked=$((checked+1)); fails=$((fails+1)); continue ;;
+    esac
+  fi
   checked=$((checked+1))
-  body="$(body_of "$f")"
-  # 词表比对（历史陈述 A、文风 I）用的正文：规则定义文件把反引号里、「」里的举例挖掉，行号不变。
+  body="$(body_of "$f" "$registry_flag")"
+  # D-3（时间指代）单独用未截断的正文：它判的是「该行的祖先标题里有没有日期」，历史登记文件的
+  # `## D<n>`/`## E<n>` 节本身按日期分组，这条判据在那些节里一样成立，不需要 registry_flag 的
+  # 豁免；A（历史陈述）、D-1、D-2（位置/自指）、I（文风）这几类跟日期无关，继续用 $scan
+  # （历史登记文件从第一个「## 」标题起截断的那份）。
+  if [[ $registry_flag -eq 1 ]]; then
+    body_for_time_reference="$(body_of "$f" 0)"
+  else
+    body_for_time_reference="$body"
+  fi
+  # 词表比对（历史陈述 A、文风 I）用的正文：规则定义文件把反引号里、「」里的举例挖掉，行号不变；
+  # 历史登记文件从第一个「## 」标题起就是空的（body_of 按 registry_flag 截断）。
   # 结构检查（围栏配对、历史节位置）照旧看 $body。
   scan="$body"
   if [[ $example_exempt -eq 1 ]]; then
@@ -402,7 +442,7 @@ while IFS= read -r f; do
     i=$((i+2))
   done
 
-  # 文风（rules/writing-discipline.md「说人话」）。所有给人读的 .md 都查，不只 kb。
+  # 文风（rules/writing-discipline.md「文风要简单自然」）。所有给人读的 .md 都查，不只 kb。
   if [[ $WORDLIST -eq 1 ]]; then
     j=0
     while [[ $j -lt ${#STYLE[@]} ]]; do
@@ -414,7 +454,7 @@ while IFS= read -r f; do
           bad "$rel:$ln  $swhy"
           say "        > $(printf '%s' "$txt" | cut -c1-80)"
           howto "换成平时说话会用的说法。判据是「这句你会对同事说出口吗」——" \
-                "不会就改（rules/writing-discipline.md「说人话」）。"
+                "不会就改（rules/writing-discipline.md「文风要简单自然」）。"
           filefail=1
         done <<< "$shits"
       fi
@@ -541,20 +581,31 @@ while IFS= read -r f; do
     # D-3 时间指代：「本轮」在检索结果里锚不到任何一轮。
     # 位置指代指错了方向还能看出来，时间指代看不出来——「本轮实测判绿」被单条端出来时，
     # 哪一轮无从得知，而模型不会说看不懂，它会补一个。
-    # 判据：出现「本轮 / 这一轮 / 上一轮 / 前一轮 / 上轮」时，该行或它所属的最近一个标题里要有日期。
+    # 判据：出现「本轮 / 这一轮 / 上一轮 / 前一轮 / 上轮」时，该行、或它上面**每一层**标题
+    # （不只最近一个）里有一层带日期就放行——按标题的层级各记一份，见到更深层级的标题清空更深的
+    # 记录、见到更浅层级的标题不动更浅那几层，这样「日期在 `###`、序号与摘要另开一层 `#### `」
+    # 这种嵌套写法也认得出日期（一份 kb 文件一条历史条目按 `### 日期` + `#### 摘要` 两层拆开写
+    # 时，`#### ` 那一行本身没有日期，只看最近一个标题会漏判——使用者项目实测踩过，決策变更史按
+    # 决策分节、节内按日期分组、条目单独占一个 `#### ` 之后，几百处「本轮」全部误判成锚不到）。
     # 三类不判，各有理由（使用者项目的 343 份 kb 上量过）：
     #   「下一轮」指还没发生的任何一轮，本来就是泛指，锚不到也锚不该；
     #   「本次 / 上次 / 这次」多数挂在技术对象上（本次 diff、上次 scrub 的水位），那是自足的；
     #   历史节里的每条都挂在 `### YYYY-MM-DD` 下，而 body_of 在历史节就停机了，够不着。
     if [[ "$dockind" == "kb 正文" && $WORDLIST -eq 1 ]]; then
-      if rounds="$(printf '%s\n' "$scan" | awk '
+      if rounds="$(printf '%s\n' "$body_for_time_reference" | awk '
             { tab = index($0, "\t"); ln = substr($0, 1, tab - 1); line = substr($0, tab + 1) }
-            line ~ /^#/ { head = line }
+            line ~ /^#/ {
+              match(line, /^#+/); level = RLENGTH
+              head[level] = line
+              for (l = level + 1; l <= 6; l++) delete head[l]
+            }
             # 左边界排掉构词：「样本轮判决」里的「本轮」不是时间指代
             # （使用者项目的门禁样本上实测撞到一处）。
             line ~ /(^|[^样])本轮|这一轮|上一轮|前一轮|(^|[^以])上轮/ {
               if (line ~ /[0-9][0-9]-[0-9][0-9]/) next
-              if (head ~ /[0-9][0-9]-[0-9][0-9]/) next
+              anchored = 0
+              for (l = 1; l <= 6; l++) if (head[l] ~ /[0-9][0-9]-[0-9][0-9]/) anchored = 1
+              if (anchored) next
               print ln "\t" line
             }')"; [[ -n "$rounds" ]]; then
         while IFS= read -r r; do
@@ -948,7 +999,8 @@ if [[ -n "$kb_files" ]]; then
     [[ -z "$hits" ]] && continue
     n="$(printf '%s\n' "$hits" | wc -l)"
     bad "$rel  $n 处编号引用没带简称或简称不符"
-    printf '%s\n' "$hits" | head -3 | awk -F'\t' '{printf "        :%s  %s %s —— %s\n", $1, $3, $2, $4}'
+    # 只列前 3 条，但要读完全部输入：用 head 截的话命中一多，前段 printf 吃 SIGPIPE，pipefail 与 set -e 下整个脚本退 141
+    printf '%s\n' "$hits" | awk -F'\t' 'NR <= 3 {printf "        :%s  %s %s —— %s\n", $1, $3, $2, $4}'
     howto "每处引用都写成「编号（简称）」，简称照登记位抄，例：「D1（数据可移动性）」。" \
           "编号在引用处只剩一个符号，含义能被悄悄改掉而没有一个字看起来别扭——" \
           "规矩见 rules/kb-discipline.md「编号只能做索引，不能做称呼」。全量清单：DOC_LINT_VERBOSE=1"
@@ -968,6 +1020,8 @@ fi
 #   项目的 CLAUDE.md ↔ 装进来的副本 .claude/<族名>/rules/
 #     （实测于使用者项目：engineering-philosophy、sop-first、pushback-discipline、writing-style 四条从没被引用过）
 # 项目本地的 .claude/rules/ 是项目自己的事，由项目自己的门禁阶段管（判据一样，但那批文件不归上游）。
+# 有意不 @ 常驻、开会话读一次的规则，在同一份 md 里写一行 <!-- doc-lint:read-once <文件名> … -->（文件名之间空格分隔）登记：
+# 登记了的不算漏引；登记了却不在 rules/ 里的照样报「引用了不存在的文件」。
 metafails=0
 # `|| true`：I18N 不在时 sed 退 2，pipefail 下整条管道跟着退 2，set -e 把脚本当场带走（同 gate-lint 那处）。
 FAMILY="$(sed -n 's/^family=//p' "$(dirname "${BASH_SOURCE[0]}")/../I18N" 2>/dev/null | head -1 || true)"
@@ -976,6 +1030,9 @@ check_rule_refs() { # check_rule_refs <被查的 md，相对 ROOT> <@ 之后的�
   local md_rel="$1" prefix="$2" rules_dir="$3" which="$4" on_disk referenced missing extra
   on_disk="$(find "$rules_dir" -maxdepth 1 -name '*.md' -printf '%f\n' | sort)"
   referenced="$(grep -oE "@${prefix//./\\.}[A-Za-z0-9._-]+\.md" "$ROOT/$md_rel" | sed 's|.*/||' | sort -u || true)"
+  # 有意不 @ 常驻的规则：<!-- doc-lint:read-once a.md b.md --> 登记的，算引用过（开会话读一次），不算漏引
+  read_once="$(grep -oE '<!-- *doc-lint:read-once[^>]*-->' "$ROOT/$md_rel" | grep -oE '[A-Za-z0-9._-]+\.md' | sort -u || true)"
+  referenced="$(printf '%s\n%s\n' "$referenced" "$read_once" | grep -v '^$' | sort -u || true)"
   missing="$(comm -23 <(printf '%s\n' "$on_disk" | grep -v '^$' || true) \
                       <(printf '%s\n' "$referenced" | grep -v '^$' || true))"
   extra="$(comm -13 <(printf '%s\n' "$on_disk" | grep -v '^$' || true) \
