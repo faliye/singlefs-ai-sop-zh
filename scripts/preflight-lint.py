@@ -50,7 +50,7 @@ PACKAGE_DIRECTORIES = ('scripts', 'scripts/claude-hooks', 'scripts/githooks')
 PACKAGE_FILES = ('install.sh',)
 # 本包里不判的：一行一条，路径相对包根，理由不许省。
 PACKAGE_EXCLUDED = {
-    'scripts/lib.sh': '被每个 shell 脚本 source 的函数库，不单独调；preflight 函数就定义在它里面',
+    'scripts/lib.sh': '被 shell 脚本 source 的函数库，不单独调；它 source preflight.sh，preflight 函数在那里',
     'scripts/claude-hook-lib.sh': '被钩子 source 的函数库，只定义函数，不单独调',
     'scripts/session-transcript.py': '被 gate-overlap.py 与 handback-scratch.py import 的库，没有自己的入口',
     'scripts/preflight.py': '它就是判条件的那一个：自己再判一遍自己，会把要转给被判脚本的 --force 吃掉',

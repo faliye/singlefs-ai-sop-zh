@@ -27,7 +27,7 @@
 | 中文 | English | 日本語 | 说明 / Note / 注 |
 |---|---|---|---|
 | 门禁 | gate | ゲート | 自动化准入检查的总称<br>umbrella term for the automated acceptance checks<br>自動受入検査の総称 |
-| 准入判据 | acceptance criterion | 受入判定基準 | 决定 patch 收不收的依据<br>what decides whether a patch is taken<br>パッチを受け取るか否かの根拠 |
+| 准入标准 | acceptance criterion | 受入基準 | 决定 patch 收不收的依据，由项目定<br>what decides whether a patch is taken; set by the project<br>パッチを受け取るか否かの根拠。プロジェクトが決める |
 | 参照仓 | reference repository | 参照リポジトリ | 清单与门禁脚本维护在哪个仓；不等于权威<br>where the manifest and gate scripts are maintained; not the authority<br>マニフェストとゲートスクリプトの維持先。権威とは別 |
 | 会失败的检查 | failing check | 失敗しうる検査 | 与「提醒句」相对<br>as opposed to a reminder sentence<br>「注意書き」の対語 |
 | 出路 | remedy | 対処 | 每条拒绝必须带的下一步<br>the next step every rejection must carry<br>拒否のたびに必ず添える次の一手 |
@@ -38,12 +38,19 @@
 | 口径 | measurement basis | 計測条件 | 一个数字是怎么测出来的<br>how a number was measured<br>その数値がどう測られたか |
 | 实测 / 推理 | measured / inferred | 実測 / 推論 | kb 里每条结论二选一标注<br>every kb conclusion is marked one or the other<br>kb の結論はどちらかを明記する |
 | 判别力 | discriminating power | 判別力 | 被测对象坏掉时这条检查真的会红<br>the check really goes red when the thing under test breaks<br>被検査対象が壊れたとき実際に赤くなること |
-| 盲区 | blind spot | 盲点 | 有检查但没有样本盯着<br>a check with no fixture watching it<br>検査はあるが見張る標本が無い箇所 |
+| 盲区 | blind spot | 盲点 | 断言或变异没盯住的代码<br>code that no assertion or mutation watches<br>言明やミューテーションが見張っていないコード |
 | 变异测试 | mutation testing | ミューテーションテスト | 把被测代码改坏，验证断言真的会红<br>break the code under test to prove the assertions go red<br>被検査コードを壊し、言明が赤くなることを確かめる |
 | 变异清单 | mutation list | ミューテーションリスト | 入库的「改了哪里 → 哪条断言红」<br>a checked-in list of "what was changed → which assertion went red"<br>「どこを変えた → どの言明が赤くなった」の記録 |
 | 等价变异 | equivalent mutant | 等価ミュータント | 与原式同值，永远抓不到；不算盲区<br>same value on all inputs, never catchable; not a blind spot<br>全入力で同値。捕まらないが盲点ではない |
 | 对照组 | control case | 対照群 | 与被测的臂并排跑、用来判读结果的那一组：阳性对照（结果已知，证明这次测量分得出差别）或真实基线<br>the group run alongside the arm under test to read its result: a positive control (outcome known, showing the measurement can tell a difference) or a real baseline<br>被検のアームと並べて走らせ、結果を読むための組：陽性対照（結果が分かっており、今回の測定が差を見分けられることを示す）か実ベースライン |
+| 快档 | quick tier | 高速段 | 每次改完就跑的那一档：按项目定的快慢判据归为快的用例，加上对拍、剪枝自证、钉回来的红例这几类<br>the tier run after every change: cases the project's quick/slow criterion classes as quick, plus differentials, pruning self-checks and pinned-back reds<br>変更のたびに走らせる段：プロジェクトの速い・遅いの判定基準で速いとされたケースと、突き合わせ・枝刈りの自己検査・固定し戻した赤の例 |
+| 慢档 | slow tier | 低速段 | 按快慢判据归为慢的用例：穷举、长时间随机、真设备、外部工具这类；跟着全量跑<br>cases the quick/slow criterion classes as slow — exhaustive, long random, real device, external tools; run with the full run<br>速い・遅いの判定基準で遅いとされたケース：網羅、長時間ランダム、実デバイス、外部ツールの類。全量と一緒に走る |
+| 全量 | full run | 全量 | 测试入口脚本不带参数、规模变量没设过时跑的范围：快档加慢档<br>what a test entry script runs with no arguments and no scale variable set: the quick tier plus the slow tier<br>テストの入口スクリプトを引数なし・規模変数未設定で走らせたときの範囲：高速段と低速段 |
+| 钉回快档 | pin back into the quick tier | 高速段に固定し戻す | 全量出的红，按原输入缩到最小做成快档用例，修好之后留作回归<br>turn a red from the full run into a quick-tier case on its minimised original input, kept as a regression after the fix<br>全量で出た赤を、元の入力を最小化して高速段のケースにし、修正後も回帰として残す |
+| 自证 | self-test | 自己検査 | 脚本证明自己有效的那份测试（`--selftest`、同包测试或红绿样本）：每种判定喂已知答案，每个弄坏开关打开都要红<br>the test by which a script proves itself valid (`--selftest`, in-package tests or red/green fixtures): known answers for every verdict, red for every break switch<br>スクリプトが自らの有効性を示すテスト（`--selftest`、同じパッケージのテスト、赤緑の標本）：判定ごとに既知の答え、壊しスイッチごとに赤 |
+| 弄坏开关 | break switch | 壊しスイッチ | 只给自证用的开关，打开就把脚本的某一处判法改坏，证明自证会红<br>a switch used only by the self-test that breaks one part of the script's judging, proving the self-test goes red<br>自己検査専用のスイッチ。スクリプトの判定の一箇所を壊し、自己検査が赤くなることを示す |
 | 不变量 | invariant | 不変条件 | 项目的检查是它的可执行形式<br>the project's checks are its executable form<br>プロジェクトの検査がその実行可能な形 |
+| 欠账表 | debt table | 負債表 | 项目 kb 里的 `checks-owed.md`：已经知道要拦什么、还没立的检查，一周合一批评估<br>`checks-owed.md` in the project kb: checks we know we want but have not built yet, assessed in a weekly batch<br>プロジェクト kb の `checks-owed.md`：止めたいと分かっているがまだ立てていない検査。週に一度まとめて評価する |
 | 确定性模型 | deterministic model | 決定的モデル | 无随机源、真实 I/O、并发、时钟；跑 N 遍必然一致<br>no randomness, real I/O, concurrency or clock; N runs are identical<br>乱数・実 I/O・並行・時計を持たない。N 回走らせても同一 |
 | 规范本体 | governed paths | 規範本体 | 改了必须抬 `VERSION` 的那些路径<br>the paths whose change requires a `VERSION` bump<br>変更したら `VERSION` を上げねばならないパス群 |
 | 译本 | translation | 訳本 | 生成物，不是平行版本<br>a product, not a parallel edition<br>生成物であって並行版ではない |
@@ -53,22 +60,13 @@
 | 登记表 | registry table | 登録表 | 上方带 `doc-lint:registry` 标记的那张表<br>the table preceded by a `doc-lint:registry` marker<br>`doc-lint:registry` 標記が直前に付く表 |
 | 登记标题 | registry heading | 登録見出し | `## D1 数据可移动性 —— 已定` 这种形态<br>the `## D1 <short name> —— <state>` shape<br>`## D1 <簡称> —— <状態>` の形 |
 | 裸引用 | bare citation | 裸の引用 | 只写编号、不带简称的引用<br>a citation with the number but no short name<br>番号だけで簡称を伴わない引用 |
-| 上下文指代 | dangling reference | 文脈依存の参照 | 「如上所述」这类，kb 里禁止<br>"as stated above" and the like; forbidden in kb<br>「前述のとおり」の類。kb では禁止 |
-| 自指称呼 | self-reference | 自己参照 | 「本条」「该决策」这类指着「此处」的写法，kb 里禁止<br>"this entry", "that decision" — pointing at "here"; forbidden in kb<br>「本項」「当該判断」のように「ここ」を指す書き方。kb では禁止 |
-| 缩写 | abbreviation | 略語 | 我们声明的名字里不许用；登记过的领域缩写与 Rust 关键字除外<br>not allowed in any name we declare; registered domain abbreviations and Rust keywords excepted<br>自前で宣言する名前には使わない。登録済みの領域略語と Rust のキーワードは除く |
+| 位置指代 | positional reference | 位置の指代 | 「如上所述」「见下节」这类指文档里位置的说法；kb、规则、`CLAUDE.md`、agent 定义与 skill 正文里禁止<br>"as stated above", "see the section below" and the like — pointing at a position in the document; forbidden in kb, rules, `CLAUDE.md`, agent definitions and skill bodies<br>「前述のとおり」「次節参照」の類。文書内の位置を指す書き方。kb・規則・`CLAUDE.md`・agent 定義・skill 本文では禁止 |
+| 自称 | self-reference | 自己参照 | 「本节」「本条」这类指着「此处」的写法；kb、规则、`CLAUDE.md`、agent 定义与 skill 正文里禁止，kb 里另禁「本决策」「该实验」这类<br>"this section", "this clause" — pointing at "here"; forbidden in kb, rules, `CLAUDE.md`, agent definitions and skill bodies, and in kb also "this decision", "that experiment" and the like<br>「本節」「本条」のように「ここ」を指す書き方。kb・規則・`CLAUDE.md`・agent 定義・skill 本文では禁止。kb ではさらに「本決定」「当該実験」の類も禁止 |
+| 缩写 | abbreviation | 略語 | 我们声明的名字里不许用；登记过的领域缩写与 Rust 的关键字、基本类型名除外<br>not allowed in any name we declare; registered domain abbreviations and Rust keywords and primitive type names excepted<br>自前で宣言する名前には使わない。登録済みの領域略語と Rust のキーワード・基本型の名前は除く |
 | 缩写登记表 | abbreviation registry | 略語登録表 | 项目根的 `.claude/abbreviations`，每个领域缩写唯一的权威定义<br>`.claude/abbreviations` at the project root: the single authoritative definition of each domain abbreviation<br>プロジェクト直下の `.claude/abbreviations`。領域略語ごとの唯一の権威ある定義 |
-| 上下文约束 | context constraints | 文脈の制約 | 名字里带的前置条件与作用范围<br>the preconditions and scope carried in a name<br>名前に載せる前提条件と作用範囲 |
 | 路径数 | path count | 経路数 | 穷尽覆盖控制流需要多少用例；不含循环状态与数据<br>how many cases exhaustive control-flow coverage needs; loop state and data not included<br>制御フローの網羅に必要なケース数。ループの状態とデータは含まない |
 | 通配臂 | wildcard arm | ワイルドカードアーム | `match` 里的 `_ =>`；封闭集合的枚举上不许写<br>the `_ =>` arm of a `match`; not allowed on enums that are closed sets<br>`match` の `_ =>`。閉じた集合の列挙型には書かない |
 | 分支 | branch（实现分支） | 分岐 | **不是 git branch**，是代码路径<br>**not a git branch** — a code path<br>**git branch ではなく**、コード経路 |
-| 意图日志 | intent log | インテントログ | 无界操作的「写意图 → 分批 → 可续做」<br>"write intent → batch → resumable" for unbounded operations<br>非有界操作の「意図を書く → 分割 → 再開可能」 |
-| 无界操作 | unbounded operation | 非有界操作 | 可能修改无限多项的操作<br>an operation that may touch unboundedly many items<br>無限個の項目を変えうる操作 |
-| 幂等 | idempotent | 冪等 | 续做时重复执行不出错<br>re-running on resume does no harm<br>再開時に重複実行しても壊れない |
-| 事务层 | transaction layer | トランザクション層 | 所有结构共用的那一个<br>the single one shared by every structure<br>全構造が共有する唯一の層 |
-| 反向索引 | reverse index / backpointer | 逆引きインデックス | 物理位置 → 逻辑引用<br>physical location → logical reference<br>物理位置 → 論理参照 |
-| 记账 | accounting | 会計 | 空间统计，事务的副产品<br>space accounting, a by-product of the transaction<br>容量集計。トランザクションの副産物 |
-| 爆炸半径 | blast radius | 影響範囲 | 一处损坏波及多大<br>how far one piece of damage reaches<br>一箇所の破損がどこまで及ぶか |
-| 可重建性 | reconstructability | 再構築可能性 | 全盘扫描能否重建<br>whether a full scan can rebuild it<br>全走査で再構築できるか |
 
 ## 三句核心表述 / The three core statements / 三つの中核文
 

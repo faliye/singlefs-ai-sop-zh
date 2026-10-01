@@ -220,7 +220,7 @@ for orel in "${!OWNED[@]}"; do
   for srel in "${SEEDED[@]}"; do [[ "$srel" == "$orel" ]] && { hit=1; break; }; done
   if [[ $hit -eq 0 ]]; then
     bad ".claude/install-owned  这条路径 install.sh 根本不铺，写了也没用：$orel"
-    howto "只能写 install.sh 会铺下去的那些：CLAUDE.md、.claude/kb/*.md、" \
+    howto "只能写 install.sh 会铺下去的那些：CLAUDE.md、.claude/kb/*.md、.claude/warnings/.keep、" \
           ".claude/skills/*/SKILL.md、.claude/agents/*.md、.claude/scripts/*.sh。" \
           "路径拼错就改对；那份文件已经不铺了，就把这一行删掉。"
     ownfails=$((ownfails+1))

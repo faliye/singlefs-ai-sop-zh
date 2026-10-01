@@ -47,7 +47,7 @@
 |---|---|
 | shell | `source lib.sh`（不 source lib.sh 的钩子 source `preflight.sh`）之后、第一件干活的事之前照抄：`preflight "${BASH_SOURCE[0]}" "$@"; set -- ${PREFLIGHT_ARGUMENTS[@]+"${PREFLIGHT_ARGUMENTS[@]}"}`。它之前只许 `set <选项>`、`shopt`、`source`、整行只是赋值且不读参数的行、`unset` |
 | python | 先 `sys.dont_write_bytecode = True`，再 import 本包的 `scripts/preflight.py`；`if __name__ == '__main__':` 的第一句调 `preflight(__file__)`，没有这一段的，放在模块里第一句干活的语句之前。在它之前的顶层语句不许读参数、读标准输入、起子进程、开文件 |
-| Rust 与别的语言 | `main` 的第一句调名叫 `preflight` 的函数：它直接起 `python3 <规范副本>/scripts/preflight.py check <源文件的绝对路径> [--force] -- <参数…>`（不经 `sh -c`），退出码不是 0 就原样退出；stdout 那一行以 `met` 起头时记下它最后一段的指纹，以 `forced` 起头时把最后一段摘要当成 `PREFLIGHT_FORCED` |
+| Rust 与别的语言 | `main` 的第一句调名叫 `preflight` 的函数：它直接起 `python3 <规范副本>/scripts/preflight.py check <源文件的绝对路径> [--force] -- <参数…>`（不经 `sh -c`），退出码是 78 就退 78，是别的非 0 值就退 1；stdout 那一行以 `met` 起头时记下它最后一段的指纹，以 `forced` 起头时把最后一段摘要当成 `PREFLIGHT_FORCED` |
 
 写了 `inputs-changed` 的，成功跑完、退出之前调 `preflight_record_success`（Rust 执行 `preflight.py record <源文件> --fingerprint <开跑时的指纹> -- <参数…>`）。
 记的是开跑时判的那份指纹；收尾时输入已经变了、这一次是强制跑的、跑失败了、这一次有一部分本次未跑（`lib.sh` 的 `report_not_run` 报过），都不记。

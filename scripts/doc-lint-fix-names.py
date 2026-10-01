@@ -96,8 +96,20 @@ def short_name_spans(line):
     return spans
 
 
+CODE_SPAN = re.compile(r"`[^`\n]+`")
+
+
+def code_spans(line):
+    """→ [(起, 止)] 行内反引号包着的一段（含两端的反引号）；反引号数是奇数的行不认任何一段。"""
+    if line.count("`") % 2:
+        return []
+    return [(match.start(), match.end()) for match in CODE_SPAN.finditer(line)]
+
+
 def fixed_text(path, text, unique, duplicated, positions):
-    """→ (改后的文本, 补了几处, [补不了的编号])。"""
+    """→ (改后的文本, 补了几处, [补不了的编号])。
+    反引号里的编号是命令或路径的一段，简称不能补进去：编号是那一段最后一个词时，简称补在闭合反引号后面
+    （`replay.sh E1`（简称）——doc-lint 认这一形态）；夹在中间的不动、列成补不了。"""
     out, fixed, unfixable = [], 0, []
     in_fence = False
     for number, line in enumerate(text.split("\n"), 1):
@@ -109,18 +121,31 @@ def fixed_text(path, text, unique, duplicated, positions):
             out.append(line)
             continue
         protected_spans = short_name_spans(line)
-        def replace(match):
-            nonlocal fixed
+        spans = code_spans(line)
+        edits = []   # (起, 止, 换成什么)，止 == 起 的是插入
+        for match in REFERENCE.finditer(line):
             identifier = match.group(1)
             if any(start <= match.start() < end for start, end in protected_spans):
-                return identifier
+                continue
+            enclosing = [(start, end) for start, end in spans if start <= match.start() < end]
+            if enclosing:
+                start, end = enclosing[0]
+                if identifier not in unique:
+                    continue
+                if line[match.end():end - 1].strip() != "":
+                    unfixable.append(identifier)
+                elif not line[end:].startswith("（"):
+                    edits.append((end, end, f"（{unique[identifier]}）"))
+                    fixed += 1
+                continue
             if identifier in unique:
+                edits.append((match.start(), match.end(), f"{identifier}（{unique[identifier]}）"))
                 fixed += 1
-                return f"{identifier}（{unique[identifier]}）"
-            if identifier in duplicated or (identifier not in unique and re.match(r"^[A-Z]{1,2}-?\d", identifier)):
+            elif identifier in duplicated or re.match(r"^[A-Z]{1,2}-?\d", identifier):
                 unfixable.append(identifier)
-            return identifier
-        out.append(REFERENCE.sub(replace, line))
+        for start, end, replacement in sorted(edits, reverse=True):
+            line = line[:start] + replacement + line[end:]
+        out.append(line)
     return "\n".join(out), fixed, sorted(set(unfixable))
 
 
@@ -187,6 +212,13 @@ def selftest():
         checked += 1
         if "## D1 数据可移动性 —— 已定" not in registry_new or registry_fixed != 1:
             failures.append(f"登记标题那一行不动、正文里的 D1 补一处，实际补 {registry_fixed}：\n{registry_new}")
+        code_path = os.path.join(kb, "code.md")
+        code_text = "复跑 `bash replay.sh C120` 与 `C121_ROOT=1 run`，别碰 `run C121 now` 与 `已带 C120`（撤回没回扫）。\n"
+        code_new, code_fixed, code_unfixable = fixed_text(code_path, code_text, unique, duplicated, positions)
+        checked += 1
+        if (code_new != "复跑 `bash replay.sh C120`（撤回没回扫） 与 `C121_ROOT=1 run`，别碰 `run C121 now` 与 `已带 C120`（撤回没回扫）。\n"
+                or code_fixed != 1 or code_unfixable != ["C121"]):
+            failures.append(f"反引号里收尾的编号把简称补到闭合反引号后面、夹在中间的列成补不了、标识符里的与已带的不动，实际补 {code_fixed}、补不了 {code_unfixable}：\n{code_new}")
         nested_path = os.path.join(kb, "nested.md")
         nested_text = "引 C121（D1 之后的又一条） 与 D1。\n"
         nested_new, nested_fixed, _ = fixed_text(nested_path, nested_text, unique, duplicated, positions)
@@ -196,11 +228,11 @@ def selftest():
     finally:
         shutil.rmtree(work, ignore_errors=True)
     for failure in failures:
-        print(f"  ✗ 自检：{failure}")   # gate-lint:detail
+        print(f"  ✗ 自证：{failure}")   # gate-lint:detail
     if failures:
         print("    → 怎么办：看 registry_of() 与 fixed_text()；DOC_LINT_FIX_NAMES_BREAK=touch-registry 设着的话这里本来就该红")
         return 1
-    print(f"  ✓ 自检通过（查了 {checked} 项）：两种登记位都认；孤零零的编号补简称，带简称的、别的编号简称括注里的、路径与标识符里的、代码块里的、登记位那一行不动；没登记的列成补不了")
+    print(f"  ✓ 自证通过（查了 {checked} 项）：两种登记位都认；孤零零的编号补简称，带简称的、别的编号简称括注里的、路径与标识符里的、代码块里的、登记位那一行不动；反引号里收尾的编号把简称补到闭合反引号后面，夹在中间的与没登记的列成补不了")
     return 0
 
 

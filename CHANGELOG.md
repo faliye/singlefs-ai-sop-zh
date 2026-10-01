@@ -3,6 +3,35 @@
 规则与门禁的版本历史。`CLAUDE.md` 与 `rules/*.md` 不留历史节（design-doc-discipline），
 历史一律记在这里；逐条改动细节见 `git log`，提交信息即变更说明。
 
+## 0.0.63 — 2026-10-01
+
+**新规则 test-script-discipline：测试用例与测试脚本怎么写（原子用例、不带参数跑全量、快慢两档、判定复用、硬件加速、全量的红钉回快档、测试脚本自己要有自证）；全仓统一叫「自证」；一轮知识腐烂清理；kb 的历史节按登记判；删掉死掉的「使用者名字」检查与 `dmsetup` 硬依赖**
+
+规则：
+- 新规则 `test-script-discipline.md`：用例原子化（点名单跑与在全量里跑判定相同、一条用例一个场景、随机带种子、红了只重跑红的）；入口脚本不带参数跑全量，`--quick`、`--list-items`、`--item`，项名写错退 2，门禁阶段不算入口脚本、调入口脚本时显式写档位；退出码 0/1/2/77/78 含义固定；测试脚本与判法要有自证，弄坏开关在文件头列明、自证逐个打开复跑、自证不起重活；快档、慢档两档，全量是两档相加且规模变量没设过，对拍、剪枝自证、钉回来的红例一律进快档，用编译开关分档的快档里编进来 0 条不算跑过；判定按全部输入算键复用、按共享前缀剪枝、剪枝要自证、按登记整批不判的不算剪枝；优化构建照开溢出检查与断言，`debug_assert!` 关不关由项目量过代价再定；配置开了的硬件或机器用不上就退 78，不悄悄退回 CPU 或单机；全量的每个红钉进快档并登记进钉表。三语 `CLAUDE.md` 与模板 `CLAUDE.project.md` 引用它。
+- `command-safety.md`：跨轮缓存加上判定库，放 `GATE_CROSS_RUN_TMPDIR` 下或项目定的位置；并行度含进程内的线程数，从参数或环境变量取，没给按 `nproc`；`shell-lint` 判的是七条，补上 S7（pipefail 下以 `grep -q` 收尾的管道）。
+- `rules-discipline.md` 第 8 条：`I18N` 早没有 `consumers=`，「使用者名字」那一格检查随之删掉，第 8 条全靠 review；三语 `CLAUDE.md`、README 不再指 `consumers=`。
+- `kb-discipline.md`：第 8 条改成按项目根 `.claude/history-carriers` 判，登记的 kb 文件以「## 历史版本」收尾，没登记的不许有这一节、经过靠 git，没有这张表时每份都收尾；「上下文指代」改名「位置指代」；时间指代的判据写成「这一行或它上面任一层标题里有没有日期」。
+- 知识腐烂清理：`machine-first.md`「留下的」改成「不变量」「对外格式与协议兼容」；`test-discipline.md` 做成检查的是两条（补上「转发计时」）；`preflight-discipline.md` 里 Rust 的退出码写法与 shell、python 一侧对齐（78 原样退，别的非 0 退 1）；`session-wrapup.md` 撞号指向阶段「历史条目编号」；`show-me-test.md` 补上 `crates/*/build.rs`；`verify-before-claiming.md` 与 kb 模板里的「镜像」改成与系统无关的说法；`evidence-discipline.md` 的回扫清单改成欠账表；`skills/decide` 与决策模板按 `history-carriers` 写历史；`skills/gate` 的阶段表补全，shell 纪律补上 S6、S7；`agents/INDEX.md`、`templates/kb/INDEX.md` 里指不到的引用改正。
+- 术语：全仓统一叫「自证」（阶段名「门禁自检」、「环境自检」、「包含自检」、收工钩子里的「先自检」意思不同，不改）；`GLOSSARY.md` 加快档、慢档、全量、钉回快档、自证、弄坏开关、欠账表，「准入判据」改名「准入标准」，「上下文指代」「自指称呼」改名「位置指代」「自称」，「盲区」的说明改成断言或变异没盯住的代码，删掉九个只属于文件系统设计的词条。
+
+脚本：
+- `rules-lint.sh`：删掉「使用者名字」检查与它的两个样本。
+- `stage-selftest.sh`：加 `--item <阶段文件名>`（可给几次，只喂点名的几道）与 `--list-items`，写错、缺值退 2 并列出可点名的阶段；没有阶段目录、目录里没有阶段时各报一句再退 77。
+- `gate-overlap.py`：`--list` 的说明列不再印 `admission:` 那一行。
+- `gate.sh`：两条出路改成照抄能跑通的写法（包装自己会带项目根）。
+- `env.sh`：删掉本包没用到的 `dmsetup` 硬依赖。
+- `script-modes.sh`（阶段「脚本执行位」）：射程里有空目录判红，出路是放一个 `.keep` 再 `git add`。git 存不下空目录，样本 `rules-lint/empty` 要的空目录从来没进过提交，只在工作区里过，`gate.sh --staged` 一跑就判错；这个目录补上了 `.keep`。
+- `doc-lint.sh`：历史节按 `.claude/history-carriers` 判（路径不存在、没写理由也判红）；编号是标识符或环境变量名的一段时不算引用；出错信息里「上下文指代」改成「位置指代」。`doc-lint-fix-names.py` 不往反引号里补简称，编号是那一段最后一个词时补在闭合反引号后面。
+- 约三十处注释、出路与用法说明照现状改正：指向已删规则句子的引用、写错的条数（`shell-lint` 七条、`doc-lint` A–M、`changelog-lint` 五条、只在本包跑的阶段四个）、`relay-timing-lint.py` 与 `number-name-sync.sh` 的扫描范围、`history-ordinal.sh` 在英日仓判不到而没报未实现。
+
+**升级要做的**：
+- 项目 `CLAUDE.md` 的规则清单加一行 `@.claude/singlefs-ai-sop/rules/test-script-discipline.md`，doc-lint 判没 `@` 的规则。
+- kb 要分带不带历史的，在项目根建 `.claude/history-carriers`（一行一个目录或文件，`#` 后写理由）；不建照旧每份都以「## 历史版本」收尾。
+- 项目自己的测试入口脚本与验证代码照新规则对一遍，对不上的记进欠账表。
+- 用到被删九个术语的，收进项目自己的术语表；还要 `dmsetup` 的，放进项目自己的环境检查。
+- 项目 `.claude/gate.d/`、`.claude/scripts/` 下要留的空目录（多半在样本里）放一个 `.keep` 并 `git add`，否则「脚本执行位」判红。同步副本时为那个空样本目录写的排除可以去掉。
+
 ## 0.0.62 — 2026-09-29
 
 **新踩的坑照样做成会红的检查，立的时机改成按批；报进度不为门禁重跑整轮；回扫按批做；收工钩子 gate-reuse-check 可以不注册；项目的轻脚本不再写准入与运行条件；四篇理念类规则在项目里不 @ 常驻；新增补简称的 `doc-lint-fix-names.py`；`history-ordinal` 认嵌套的历史节；发版按周合批。**

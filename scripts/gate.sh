@@ -19,11 +19,10 @@ if [[ $PREFLIGHT_FORCE_GIVEN -eq 1 ]]; then GATE_FORCE_OPTION=(--force); fi
 SCRIPTS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # 从 git 钩子里跑时，git 设了 GIT_DIR / GIT_INDEX_FILE 这一组，它们压过 `git -C`：
 # --staged 的 worktree add 会失败，而报出来的出路是「先跑 git worktree prune」，指的方向是错的（审计实测）。
-# push-all.sh 早就清这一组，gate.sh 没清。
 # shellcheck disable=SC2046
 unset $(git rev-parse --local-env-vars 2>/dev/null) 2>/dev/null || true
 # 包自己的根，按物理路径算。判「被门禁的是不是 SOP 仓自身」时两边都要 pwd -P：
-# 只比 pwd 的话，经符号链接跑就判成消费项目——报「缺版本戳」判红，只在 SOP 仓跑的三个阶段还静默不跑（审计实测）。
+# 只比 pwd 的话，经符号链接跑就判成消费项目——报「缺版本戳」判红，只在 SOP 仓跑的四个阶段还静默不跑（审计实测）。
 PKG_DIR="$(cd "$SCRIPTS/.." && pwd -P)"
 is_pkg_itself() { [[ "$(cd "$1" 2>/dev/null && pwd -P)" == "$PKG_DIR" ]]; }
 # 族名（.claude/<族名>/ 那一段）。定义要排在第一处用到它的地方之前：
@@ -55,7 +54,8 @@ set -- ${GATE_ROOT_ARGS[@]+"${GATE_ROOT_ARGS[@]}"}
 # worktree 里的构建从零开始；要复用构建产物，自己设 CARGO_TARGET_DIR 之类的环境变量。
 if [[ $WANT_STAGED -eq 1 ]]; then
   src_root="$(cd "${1:-$(project_root)}" 2>/dev/null && pwd)" || die "找不到项目根：${1:-当前目录}" \
-    "在项目根跑，或把它作为第二个参数传进来： bash .claude/scripts/gate.sh --staged <项目根>"
+    "在项目根跑 bash .claude/scripts/gate.sh --staged（包装自己会带上项目根，别再给一个）；" \
+    "直接调共享脚本时才把项目根作为参数： bash <规范副本>/scripts/gate.sh --staged <项目根>"
   git -C "$src_root" rev-parse --git-dir >/dev/null 2>&1 || die "--staged 要在 git 仓里跑，而 $src_root 不是" \
     "去掉 --staged 直接跑，或者到仓里再跑。"
   staged_base="$(mktemp -d)"; staged_tree="$staged_base/tree"
@@ -110,7 +110,7 @@ if [[ $WANT_STAGED -eq 1 ]]; then
   # 比直接跑窄一档：「分两次提交就绕过去」那条口子在 --staged 这边开着（实测：直接跑基准是 origin/master，--staged 是 HEAD~1）。
   staged_diff_base="${GATE_BASE:-$(diff_base "$src_root")}"
   # 被门禁的是 SOP 仓自身时，里层要跑临时树里那份脚本：跑源仓的 $SCRIPTS 会让里层把临时树当成消费项目，
-  # 报「缺版本戳」判红，只在 SOP 仓跑的三个阶段还静默不跑（实测）。
+  # 报「缺版本戳」判红，只在 SOP 仓跑的四个阶段还静默不跑（实测）。
   if is_pkg_itself "$src_root"; then staged_gate="$staged_tree/scripts/gate.sh"; else staged_gate="$SCRIPTS/gate.sh"; fi
   if [[ ! -f "$staged_gate" ]]; then
     die "临时树里没有 scripts/gate.sh（$staged_gate）" "暂存区是不是把 scripts/gate.sh 删了？先把它恢复进暂存区再跑。"
@@ -142,7 +142,8 @@ fi
 STAGED_FROM="${GATE_STAGED_FROM:-}"; unset GATE_STAGED_FROM
 ROOT="${1:-$(project_root)}"
 [[ -d "$ROOT" ]] || die "找不到项目根：$ROOT" \
-  "在项目根跑，或把它作为第一个参数传进来： bash .claude/scripts/gate.sh <项目根>"
+  "在项目根跑 bash .claude/scripts/gate.sh（包装自己会带上项目根，别再给一个）；" \
+  "直接调共享脚本时才把项目根作为参数： bash <规范副本>/scripts/gate.sh <项目根>"
 cd "$ROOT"
 # 判红时留下的临时目录按它记：只清、只列同一个项目根留下的
 GATE_PROJECT_ROOT_PHYSICAL="$(pwd -P)"
@@ -156,7 +157,7 @@ START_TREE="$(worktree_fingerprint "$ROOT")"
 # 而它们的注释都写着「与 Show me test 同一套口径」（审计实测于使用者项目的一个本地阶段）。
 # 与 GATE_BASE 分成两个名字：GATE_BASE 的含义是「人指定了窗口」，文末 gate-ok 那一条要靠它区分。
 # 不写成 `export X="$(…)"`：export 是内建命令，它会把命令替换的退出码吞掉，
-# GATE_BASE 写错时 diff_base 的拒绝就传不出来（command-safety.md 里「子 shell 赋值」的同族）。
+# GATE_BASE 写错时 diff_base 的拒绝就传不出来（rules/command-safety.md「进程边界上的三种静默失效」）。
 GATE_DIFF_BASE="$(diff_base "$ROOT")"
 export GATE_DIFF_BASE
 
@@ -388,13 +389,14 @@ if ! is_pkg_itself "$ROOT" && [[ ! -f "$ROOT/.claude/preflight-dirs" ]]; then
   NOT_RUN+=("实验脚本的准入与运行条件  本次未查：项目没有 .claude/preflight-dirs，实验脚本放在哪没登记。建这个文件，一行一个目录（没有实验也写一行注释说明）")
 fi
 # 每条拒绝有没有出路是一回事，检查本身红不红得起来是另一回事。
-# 后者靠样本证明（rules/sop-first.md：没有自检能力的门禁是摆设）。
+# 后者靠样本证明（rules/sop-first.md：门禁脚本自己也要有测试）。
 run_stage "门禁判别力" bash "$SCRIPTS/selftest.sh"
-# command-safety.md 里可机检的那五条：pkill -f / killall、pgrep -f、子 shell 赋值往外带值、git 的撤销命令、无守卫的 rm -rf。
+# command-safety.md 里做成检查的那几条（shell-lint.sh 的 S1–S7）：子 shell 赋值往外带值、pkill -f / killall、pgrep -f、git 的撤销命令、
+# 无守卫的 rm -rf、不带参数的 wait、pipefail 下以 grep -q 收尾的管道。
 # 做成检查的起因：一个测试装置违反了其中一条整整一轮，而那条纪律当时只是文档里的提醒句。
 run_stage "shell 纪律" bash "$SCRIPTS/shell-lint.sh" ${LINT_EXTRA[@]+"${LINT_EXTRA[@]}"}
 # 暂存区里的执行位：手工只暂存「这一轮的」时写死 100644，可执行位就丢在历史里，
-# 而工作区那份还是可执行的——在工作区上跑的门禁一声不吭。
+# 而工作区那份还是可执行的——在工作区上跑的门禁一声不吭。同一道也判射程里的空目录：git 存不下，提交与 --staged 的临时树里没有它。
 MODE_DIRS=("$SCRIPTS"); [[ -d "$ROOT/.claude/gate.d" ]] && MODE_DIRS+=("$ROOT/.claude/gate.d")
 [[ -d "$ROOT/.claude/scripts" ]] && MODE_DIRS+=("$ROOT/.claude/scripts")
 run_stage_may_skip "脚本执行位" "本次无对象可判：不在 git 仓库里，暂存区的模式无从判起" \
@@ -417,7 +419,7 @@ run_stage_may_skip "工具层的闸" "本次无对象可判：项目与装进来
 # 新加的门禁与钩子先对过已有的：能追加就追加、能合并就合并，不另起一份，更不整段抄一份（rules/sop-first.md）。
 run_stage_may_skip "门禁查重" "本次无对象可判：这一次没有新加或改动门禁与钩子，或不在 git 仓里" \
   python3 "$SCRIPTS/gate-overlap.py" "$ROOT"
-# 分段计时不许在转发输出的循环里打时间戳（rules/command-safety.md）：转打会阻塞，
+# 分段计时不许在转发输出的循环里打时间戳（rules/test-discipline.md「分段计时在被测进程里计，不在转发输出的循环里计」）：转打会阻塞，
 # 子进程写管道不被挡，行到达的时间戳里就混进前面几行的打印积压，看着像调度抖动。
 run_stage_may_skip "转发计时" "本次无对象可判：它扫的那几处目录里没有 .rs / .py（扫哪几处见上方它的输出）" \
   python3 "$SCRIPTS/relay-timing-lint.py" --check "$ROOT"
@@ -444,7 +446,7 @@ else
 fi
 
 # ── 阶段 1a2：规则纪律 ──────────────────────────────────
-# 规则只写怎么做，历史与原因搬进案卷（rules/rules-discipline.md）。
+# 规则只写怎么做，历史与原因直接删掉、不另立落点，共享规则的历史进 CHANGELOG.md（rules/rules-discipline.md 第 3 条）。
 # 上游包自己的 rules/ 只在上游判；项目的 .claude/rules/ 在哪边跑都判。
 # 装进项目的副本不判：它由上游自己的门禁管，跟 doc-lint 同规矩。
 # 退出码 77 = 那个目录下一个 .md 都没有，或者本包的语言整个没有词表，记「本次未跑」，不记通过。
@@ -803,7 +805,7 @@ if [[ $failed -gt 0 ]]; then
   exit 1
 fi
 # 记下「门禁在这里通过过」。下一轮的 diff 基准优先取它——
-# 判据因此变成规则原本那句话：**上次过闸之后的所有改动都要过闸**，
+# 判据因此是：**上次过闸之后的所有改动都要过闸**，
 # 而不是「最近一个 commit 里有没有」。没有这个标记时窗口只有一格，
 # 分两次提交就能把改代码的那次挤出去（对抗测试实测，gate 退出码 0）。
 # 记的是**开跑时**的 HEAD：跑完再解析一次的话，另一个会话在这一轮跑的过程中提交，

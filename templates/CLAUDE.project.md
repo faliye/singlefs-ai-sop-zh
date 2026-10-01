@@ -11,6 +11,7 @@
 @.claude/singlefs-ai-sop/rules/kb-discipline.md
 @.claude/singlefs-ai-sop/rules/rules-discipline.md
 @.claude/singlefs-ai-sop/rules/test-discipline.md
+@.claude/singlefs-ai-sop/rules/test-script-discipline.md
 @.claude/singlefs-ai-sop/rules/evidence-discipline.md
 @.claude/singlefs-ai-sop/rules/verify-before-claiming.md
 @.claude/singlefs-ai-sop/rules/command-safety.md
@@ -35,7 +36,7 @@
 | `.claude/kb/invariants.md` | 不变量清单，项目的检查是它的可执行形式 |
 | `.claude/kb/prior-art.md` | 他家方案调研，含来源与口径 |
 | `.claude/kb/pitfalls.md` | 避坑清单，每做设计决定回来对一遍 |
-| `.claude/kb/checks-owed.md` | 欠的检查：知道要拦什么但还拦不了的，含前置 |
+| `.claude/kb/checks-owed.md` | 欠账表：知道要拦什么但还拦不了的检查，含前置 |
 | `records/` | 建设过程 |
 
 ## 门禁
@@ -48,7 +49,7 @@ bash .claude/scripts/gate.sh          # 准入门禁，提交前必跑
 
 bash .claude/scripts/check.sh         # 快速反馈（格式/lint/构建/单测）
 bash .claude/scripts/gate-lint.sh     # 门禁自身：每条拒绝是否都给了下一步
-bash .claude/scripts/shell-lint.sh    # shell 纪律：pkill -f / pgrep -f、子 shell 赋值往外带值、git 撤销命令、无守卫的 rm -rf
+bash .claude/scripts/shell-lint.sh    # shell 纪律：pkill -f / pgrep -f、子 shell 赋值往外带值、git 撤销命令、无守卫的 rm -rf、不带参数的 wait、pipefail 下以 grep -q 收尾的管道
 bash .claude/scripts/naming-lint.sh   # 命名纪律：.rs 里的单字母名与常见缩写
 bash .claude/scripts/env.sh           # 环境自检
 ```

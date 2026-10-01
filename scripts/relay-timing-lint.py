@@ -6,7 +6,7 @@
 """读子进程输出的循环里，不许一边给行打时间戳、一边把行转打出去。
 
 用法：
-    relay-timing-lint.py --check [仓库根]   # 扫 research/ 与 crates/ 下的 .rs 与 .py，逐处报「文件:行」与循环头；不给仓库根就判当前目录所在的 git 仓
+    relay-timing-lint.py --check [仓库根]   # 扫仓根下的顶层目录（SKIP_DIRECTORIES 与点开头的不扫，.claude* 照扫）里的 .rs 与 .py，逐处报「文件:行」与循环头；不给仓库根就判当前目录所在的 git 仓
     relay-timing-lint.py --selftest         # 自证：内嵌红绿样本逐个判、钉死统计数；再另起一个子进程在弱判据下跑自证，它必须判红
 
 为什么要有它：一个实验的来宾程序在 `for line in BufReader::new(child_output).lines()` 里
@@ -35,8 +35,10 @@
   - 读线程把行经通道送出、收的那一侧一边取时间一边打印：收的一侧不认作读子进程输出；
   - `loop` 套着内层循环时，外层与内层可能各报一次；宏展开出来的循环；shell 装置（`while read` 配 `date`）不查。
 
-不扫：`research/prompts/` 与 `research/results/`。那两处是原样保存的证据，门禁不许逼人回去改原件
-（`.claude/singlefs-ai-sop/rules/evidence-discipline.md`「原样保存的证据不许事后改」）；没扫的文件数与解析不了的文件在统计里现算报出。
+扫哪些：仓根下的每个顶层目录，SKIP_DIRECTORIES（.git、node_modules、target、fixtures）与点开头的不扫，点开头里 `.claude` 起头的照扫；
+往下走时 SKIPPED_DIRECTORY_NAMES（.git、target、node_modules、__pycache__）不进。
+不扫：项目根 `.claude/doc-lint-exclude` 登记的目录，那是原样保存的证据，门禁不许逼人回去改原件
+（rules/evidence-discipline.md「原样保存的证据不许事后改」），清单与 doc-lint 读的是同一份；没扫的文件数与解析不了的文件在统计里现算报出。
 
 RELAY_TIMING_LINT_IGNORE_OUTPUT=1 强制走「只看取时间、不看输出调用」的弱判据，--selftest 在它下面必须判红。
 
@@ -510,7 +512,8 @@ def run(root: pathlib.Path) -> int:
     statistics = (f"扫了 {result.scanned_file_count} 个文件、{len(result.child_output_loops)} 个读子进程输出的循环、"
                   f"豁免 {len(exempted)} 处；没扫：{frozen_text}、{unparsable_text}")
     if result.scanned_file_count == 0:
-        print(f"  ! research/ 与 crates/ 下没有可扫的 .rs / .py，本轮无对象可判（{statistics}）")
+        print(f"  ! 仓根下的顶层目录（{'、'.join(sorted(SKIP_DIRECTORIES))} 与点开头的不扫，.claude* 照扫）里没有可扫的 .rs / .py，"
+              f"本轮无对象可判（{statistics}）")
         return 77
     failed = False
     if unexempted:

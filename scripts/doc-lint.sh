@@ -3,7 +3,7 @@
 # run-condition: command git gawk
 # 文档铁律的自动检查。rules/writing-discipline.md 和它分出去的 design-doc、kb 两篇靠这个脚本强制，不靠自觉。
 #
-# 检查十二条：
+# 检查 A–M 十三类（A2、B2、B3 与 D-1、D-2、D-3 是各类下的子项）：
 #   A. 正文（「## 历史版本」之前的部分）不许出现历史陈述与就地废弃标注
 #   A2. 围栏必须配对；「## 历史版本」之后不许再开 ## 级小节——
 #       两者任一成立时，其后内容都躲开了全部扫描（对抗测试实测）
@@ -11,9 +11,12 @@
 #   B3. GLOSSARY.md 的说明列必须三语并列（zh<br>en<br>ja），少一段判红
 #   B2. agents/*.md 同 rules/：不留历史节；且必须有 frontmatter 的 name（与文件名一致）
 #       与 description——两样都不会报错，只会安静地不生效
-#   C. kb/*.md 必须有「## 历史版本」节收尾
-#   D. kb/*.md 正文不许出现上下文指代、方位指代与自指称呼（检索把单条端出来时，
-#      「上文」「下面」「此处」一起断掉；rules/kb-discipline.md 第 1 条）
+#   C. kb/*.md 必须有「## 历史版本」节收尾；项目根有 .claude/history-carriers 登记表时只有登记的目录或文件要收尾，
+#      没登记的 kb 文件不许有这一节（历史靠 git）。INDEX.md 一律不判
+#   D. kb/*.md 与规范文本（CLAUDE.md、rules/、agents/、skills/*/SKILL.md）的正文不许出现
+#      D-1 位置指代（「上文」「见下表」「上面那张表」）与 D-2 自指称呼（「此处」「本节」）——检索把单条端出来时它们一起断掉
+#      （rules/kb-discipline.md 第 1 条、rules/rules-discipline.md 第 7 条）；
+#      D-3 时间指代（「本轮」「上一轮」）只判 kb/*.md，该行或它的每一层祖先标题里有日期就放行
 #   E. kb/*.md 里引用的不变量编号（I-<类>.<号>）必须真的被某张表定义过
 #   F. kb/*.md 里一个编号只许有一处登记位（rules/kb-discipline.md 第 5 条）
 #   G. kb/*.md 里编号的每一处引用都要带上简称，且与登记位一致（同上）
@@ -25,10 +28,12 @@
 #      ——没被引用的规则不进上下文，等于没写
 #   L. .claude/warnings/ 下的警告记录：文件名是 YYYY-MM-DD.md，每个 ## 小节四项齐全
 #      （rules/pushback-discipline.md）
+#   M. 历史条目的 `### 日期` 与正文里「实测（日期）」的日期不许是编的：
+#      早于本仓第一个提交出宽限（lib.sh 的 DATE_GRACE_DAYS）、或晚于最晚时区的今天，判红
 #
 # 门禁自己的样本（$ROOT/scripts/fixtures/）不扫：那些文件是**故意写坏的**，
 # 排除写成相对本次 ROOT 的路径——selftest 把某个样本目录当 ROOT 跑时，这个前缀不匹配，
-# 样本照查（写成 */fixtures/* 的话样本永远被跳过，自检就成了摆设）。
+# 样本照查（写成 */fixtures/* 的话样本永远被跳过，自证就成了摆设）。
 # 由 scripts/selftest.sh 拿去证明检查会红，不是项目内容。
 # 装进项目的 SOP 副本（$ROOT/.claude/<family>/）不扫：它由上游自己的门禁管，
 # 在项目侧再扫一遍，只会让它的模板与项目 kb 的编号互相撞成假红。
@@ -37,7 +42,7 @@
 #
 # kb 里全篇都是历史登记（不是「正文只写现状、历史放文末」那种普通 kb 文件，是像
 # decisions-history.md 这样一条决策一节、节内本身就是完整历史的登记表）加
-# <!-- doc-lint:history-registry -->：D-1、D-2、I 与 A（上下文/自指指代、文风、历史陈述——
+# <!-- doc-lint:history-registry -->：D-1、D-2、I 与 A（位置/自指指代、文风、历史陈述——
 # 这几类跟日期无关，没有算法能判断该不该放行）在这份文件里从第一个 `## ` 标题起就不判——那本来
 # 就是 body_of() 对「## 历史版本」之后内容的豁免，这张牌只是把豁免的起点从「文件自己的历史节」
 # 挪到「第一个 `## ` 节」，因为这类文件的每个 `## ` 节本身就是历史，不是要收口的当前正文。
@@ -77,7 +82,7 @@ require_date_arithmetic
 #   $ROOT/scripts/fixtures/    —— 门禁自己的样本，故意写坏的，由 selftest.sh 拿去用
 #   $ROOT/.claude/<family>/    —— 装进项目的 SOP 副本，由上游自己的门禁管
 # 两条都写成「相对本次 ROOT」的形态。写死成 */…/* 的话，selftest 把样本目录当 ROOT 跑时
-# 路径照样匹配，样本被跳过、全绿——自检就成了摆设（装进项目后实测踩到）。
+# 路径照样匹配，样本被跳过、全绿——自证就成了摆设（装进项目后实测踩到）。
 # 副本那条此前是 */singlefs-ai-sop/* 加一个「ROOT 在包里就不排除」的例外：扫描范围随**包所在的路径**变——
 # 同一个样本 projok，在 zh 仓里跑「检查 1」，在项目副本（路径里有 /singlefs-ai-sop/）里跑「检查 2」
 # （0.0.50 同步到使用者项目时实测，那边的 selftest 因此红了一例）。相对 ROOT 写，包放在哪都一样。
@@ -87,7 +92,7 @@ EXCL+=(-not -path "$ROOT/.claude/${DOC_LINT_FAMILY:-singlefs-ai-sop}/*")
 
 # ── 语言 ────────────────────────────────────────────────
 # 本脚本在 SHARED 里逐字节复制到各语言仓，而它的判据（历史陈述的词、
-# 「## 历史版本」这个标题、上下文指代与自指的词表）**全是语言相关的字面量**。
+# 「## 历史版本」这个标题、位置指代与自指的词表）**全是语言相关的字面量**。
 # 复制过去之后：英文项目的 kb 写 `## Revision history`，被要求写中文标题——
 # 而英文的 "previously"、"as noted above" 一条也抓不到（复核实测：
 # **en 仓自己发的 kb 模板过不了 en 仓自己的 doc-lint**）。
@@ -125,7 +130,7 @@ case "$DOC_LANG" in
       W_ITEMS=('**提议**' '**异议**' '**已知风险**' '**结果**') ;;
 esac
 
-# 词表型检查（历史陈述 A、上下文指代与自指 D）只有中文词表。
+# 词表型检查（历史陈述 A、位置指代与自指 D）只有中文词表。
 # **不给别的语言硬造一套**：这类判据是用字形黑名单去判语义，中文这一套是按撞到的
 # 假红逐个补出来的（`脚副样文版译抄剧根基成日资蓝范母拓孤标课` 这串就是存档），
 # 再造两套等于把假红面乘三。没有就说没有——门禁不许假装通过
@@ -228,7 +233,7 @@ body_of() {
 head1 "文档铁律检查"
 
 if [[ $LANG_FORCED -eq 1 ]]; then
-  warn "语言由 DOC_LINT_LANG 指定为 $DOC_LANG（本包是 ${PKG_LANG:-zh}）——这个变量只给门禁自检用"
+  warn "语言由 DOC_LINT_LANG 指定为 $DOC_LANG（本包是 ${PKG_LANG:-zh}）——这个变量只给门禁自证用"
   howto "跑真实项目不要设它：判据换成别的语言，等于自己给自己改判据。" \
         "要让本包换语言，改 I18N 的 this=，别在命令行上盖。"
 fi
@@ -295,9 +300,57 @@ if [[ ${#expaths[@]} -gt 0 ]]; then
   for i in "${!expaths[@]}"; do warn "  ${expaths[$i]}/  （${exns[$i]} 个）—— ${exwhys[$i]}"; done
 fi
 
+# ── C 的登记表：哪些 kb 文件带「## 历史版本」 ──────────────────────────
+# 项目根 .claude/history-carriers，一行一条 <相对 ROOT 的目录或文件>  # 为什么。
+# 登记的 kb 文件必须以「## 历史版本」收尾；没登记的不许有这一节（改动直接改正文，经过靠 git）。
+# 没有这张表时 kb 下每一份都要收尾（INDEX.md 一律不判）。表里的路径要存在、带理由、是 ROOT 之下的相对路径，
+# 与 .claude/doc-lint-exclude 同一套判法；判法坏了这一格红，不会静默放过。
+CARRIERS_FILE="$ROOT/.claude/history-carriers"
+carrierfails=0; carriers=(); carriers_registered=0
+if [[ -f "$CARRIERS_FILE" ]]; then
+  carriers_registered=1
+  cline=0
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    cline=$((cline+1))
+    [[ -z "${line//[[:space:]]/}" || "${line#"${line%%[![:space:]]*}"}" == \#* ]] && continue
+    if [[ "$line" != *\#* ]]; then
+      bad ".claude/history-carriers:$cline  这一条没写理由：$line"
+      howto "每条登记都要写清为什么这份文件带历史，格式： kb/decisions/  # 决策的历史住在这里"
+      carrierfails=$((carrierfails+1)); continue
+    fi
+    cpath="${line%%#*}"; cwhy="${line#*#}"
+    cpath="${cpath#"${cpath%%[![:space:]]*}"}"; cpath="${cpath%"${cpath##*[![:space:]]}"}"
+    cwhy="${cwhy#"${cwhy%%[![:space:]]*}"}";   cwhy="${cwhy%"${cwhy##*[![:space:]]}"}"
+    cpath="${cpath%/}"
+    if [[ -z "$cwhy" ]]; then
+      bad ".claude/history-carriers:$cline  # 后面是空的，等于没写理由"
+      howto "在 # 后面写清为什么这份文件带历史。"
+      carrierfails=$((carrierfails+1)); continue
+    fi
+    if [[ -z "$cpath" || "$cpath" == "." || "$cpath" == /* || "$cpath" == *..* ]]; then
+      bad ".claude/history-carriers:$cline  路径不合法：「$cpath」"
+      howto "只收 ROOT 之下的相对目录或文件，例： kb/decisions/ ；不收 . 、绝对路径、含 .. 的路径。"
+      carrierfails=$((carrierfails+1)); continue
+    fi
+    if [[ ! -e "$ROOT/$cpath" ]]; then
+      bad ".claude/history-carriers:$cline  路径不存在：$cpath"
+      howto "登记项烂掉了：改成现在的路径，或者把这一行删掉。"
+      carrierfails=$((carrierfails+1)); continue
+    fi
+    carriers+=("$cpath")
+  done < "$CARRIERS_FILE"
+fi
+is_history_carrier() {
+  local rel="$1" c
+  for c in ${carriers[@]+"${carriers[@]}"}; do
+    [[ "$rel" == "$c" || "$rel" == "$c"/* ]] && return 0
+  done
+  return 1
+}
+
 while IFS= read -r f; do
   rel="${f#"$ROOT"/}"
-  # CHANGELOG 是规则指定的历史存放处（design-doc-discipline：历史外置到 CHANGELOG.md）——
+  # CHANGELOG 是规则指定的历史存放处（rules/rules-discipline.md 第 3、5 条：共享规则的历史进 CHANGELOG.md）——
   # 它整个文件就是历史，拿「正文不许历史陈述」去扫它是范畴错误。
   if [[ "$(basename "$f")" == "CHANGELOG.md" ]]; then
     [[ -n "${DOC_LINT_VERBOSE:-}" ]] && warn "跳过 $rel（历史文件）"
@@ -312,19 +365,19 @@ while IFS= read -r f; do
   # ⚠️ **历史节的有无要在免检牌之前判。**
   # 免检牌的用途是「这份文件在定义那些模式，正文里出现『原为 X』不算违规」——
   # 它管的是**模式匹配**，不该连「有没有 ## 历史版本 这个标题」这种纯结构判定一起豁免。
-  # 而本仓 14 份规范文本全带着这张牌，于是 design-doc-discipline 声称由本脚本强制的
-  # 那条「rules 连文末历史节都不留」，对它真正管的那批文件一次也没红过（复核实测）。
+  # 规范文本全带着这张牌：免检牌要是连历史节一起豁免，rules/rules-discipline.md 第 5 条
+  # 「规则文件不留历史节」对它真正管的那批文件就一次也红不了。
   structfail=0
     if [[ "$base" == "CLAUDE.md" && $has_hist -eq 1 ]]; then
-    bad "$rel  CLAUDE.md 不许有「$HIST_HEAD」节，历史外置到 kb/ 或 CHANGELOG.md"
-    howto "把这一节整段挪到 CHANGELOG.md 或 kb/。CLAUDE.md 每次开工都要通读，" \
-          "混进历史会稀释它（rules/design-doc-discipline.md）。"
+    bad "$rel  CLAUDE.md 不许有「$HIST_HEAD」节"
+    howto "把这一节整段删掉，不另立落点；共享规则的历史进 CHANGELOG.md，一版一节" \
+          "（rules/rules-discipline.md 第 3、5 条）。"
     structfail=1
   fi
   if [[ ( "$f" == */rules/*.md || "$f" == */agents/*.md ) && $has_hist -eq 1 ]]; then
-    bad "$rel  规则/agent 定义连文末「$HIST_HEAD」都不留，历史外置到 CHANGELOG.md"
-    howto "把这一节挪到 CHANGELOG.md。规则是每次开工都要通读的，" \
-          "混进历史会稀释（rules/design-doc-discipline.md）。"
+    bad "$rel  规则/agent 定义连文末「$HIST_HEAD」都不留"
+    howto "把这一节整段删掉，不另立落点；共享规则的历史进 CHANGELOG.md，一版一节" \
+          "（rules/rules-discipline.md 第 3、5 条）。"
     structfail=1
   fi
 
@@ -351,7 +404,7 @@ while IFS= read -r f; do
         [[ -n "${DOC_LINT_VERBOSE:-}" ]] && warn "规则定义文件，反引号与「」里的举例不比对词表  $rel"
         example_exempt=1 ;;
       *)
-        bad "$rel  rule-definition 标记只许用于 CLAUDE.md、rules/、skills/*/SKILL.md"
+        bad "$rel  rule-definition 标记只许用于 CLAUDE.md、rules/、agents/、skills/*/SKILL.md"
         howto "删掉文件头的 <!-- doc-lint:rule-definition -->——这份文件不是规则定义，" \
               "内容就该受检。要引用规则，链到 rules/ 对应文件。"
         checked=$((checked+1)); fails=$((fails+1)); continue ;;
@@ -463,7 +516,7 @@ while IFS= read -r f; do
   fi
 
   # kb 是被检索的，不是被通读的：一条事实被单独取出时必须仍然成立
-  #   D-1 上下文指代：指着「上文」，而检索结果里没有上文
+  #   D-1 位置指代：指着「上文」，而检索结果里没有上文
   #   D-2 自指称呼：指着「此处」，而检索把这一条从文件里摘下来时，「此处」也没了——
   #       那个 `## D22 单元原子性怎么合成` 的标题不会跟着走。
   #       尾字排除是实测出来的：kb 里真有「该节点」，不排除就是假红。
@@ -473,7 +526,7 @@ while IFS= read -r f; do
   # 规则定义文件扫的是 $scan——反引号与「」里的举例已挖掉，列举指代词的那几张表不判。
   if [[ ( "$f" == */kb/*.md || "$f" == */rules/*.md || "$base" == "CLAUDE.md" || "$f" == */agents/*.md || "$f" == */skills/*/SKILL.md ) && $REFERENCE_WORDLIST -eq 1 ]]; then
     if [[ "$f" == */kb/*.md ]]; then dockind="kb 正文"; else dockind="规范正文"; fi
-    # 方位指代（见下 / 见上表 / 上面那张表）与上下文指代同一个病：检索结果里没有上下。
+    # 方位形态（见下 / 见上表 / 上面那张表）与「上文」同属位置指代，同一个病：检索结果里没有上下。
     # 「上一条」「下一条」**不在其内**——实测假红压倒真红：一个已登记的简称就叫
     # 「上一条时间线的残留」，还有「记下一条自评」「装得下一条记录」这类动宾。
     # 「同上」要认边界：左排除构词（协同/合同/不同），右排除「同上游/同上层」——
@@ -510,13 +563,13 @@ while IFS= read -r f; do
     # 判据先单独编一次：下面那条 grep 带着 `|| true`，grep 编不过（退出码 2）与「没命中」长得一样，
     # 整条检查对每份 kb 都静默判绿（2026-09-17 实测：区间 `①-⑳` 在 grep 里报 Invalid collation character）。
     ctxrc=0; printf '\n' | grep -E "$ctx" > /dev/null || ctxrc=$?
-    [[ $ctxrc -le 1 ]] || die "上下文指代的判据 grep 编不过（退出码 $ctxrc），这一条对哪份 kb 都没判过" \
+    [[ $ctxrc -le 1 ]] || die "位置指代的判据 grep 编不过（退出码 $ctxrc），这一条对哪份 kb 都没判过" \
       "是 doc-lint 的判据写坏了，不是文档的错：把 ctx 单独喂给 grep -E 看报错（非 ASCII 字符的区间 grep 不认），改好再跑。"
     if refs="$(printf '%s\n' "$scan" | grep -nE "$ctx" || true)"; [[ -n "$refs" ]]; then
       while IFS= read -r r; do
         rln="$(printf '%s' "$r" | sed 's/^[0-9]*://; s/\t.*//')"
         rtx="$(printf '%s' "$r" | sed 's/^[0-9]*://; s/^[0-9]*\t//')"
-        bad "$rel:$rln  $dockind不许用上下文指代"
+        bad "$rel:$rln  $dockind不许用位置指代"
         say "        > $(printf '%s' "$rtx" | cut -c1-80)"
         howto "把被指代的内容直接写出来：小节写成它的标题，表写成它判的那件事，" \
               "别处的事实链到它所在的文件。" \
@@ -561,7 +614,7 @@ while IFS= read -r f; do
       if [[ "$dockind" == "kb 正文" ]]; then self="$self|${jlead}本(決定|実験|不変条件)"; fi
       selfskip='本(プロジェクト|リポジトリ|機|ファイルシステム|システム|パッケージ)'
     fi
-    # 同上下文指代那一处：判据编不过时 `|| true` 会把它吞成「没命中」。
+    # 同位置指代那一处：判据编不过时 `|| true` 会把它吞成「没命中」。
     selfrc=0; printf '\n' | grep -E -e "$self" -e "$selfskip" > /dev/null || selfrc=$?
     [[ $selfrc -le 1 ]] || die "自指称呼的判据 grep 编不过（退出码 $selfrc），这一条对哪份 kb 都没判过" \
       "是 doc-lint 的判据写坏了，不是文档的错：把 self 与 selfskip 单独喂给 grep -E 看报错，改好再跑。"
@@ -673,11 +726,27 @@ while IFS= read -r f; do
     fi
   fi
 
-  if [[ "$f" == */kb/*.md && "$base" != "INDEX.md" && $has_hist -eq 0 ]]; then
-    bad "$rel  kb 文档必须有「$HIST_HEAD」节收尾"
-    howto "在文末补上（没有历史也要留这个节，供以后写）：" \
-          "$HIST_HEAD" "" "### $(date +%F)" "- 建档。"
-    filefail=1
+  if [[ "$f" == */kb/*.md && "$base" != "INDEX.md" ]]; then
+    if [[ $carriers_registered -eq 1 ]]; then
+      if is_history_carrier "$rel"; then
+        if [[ $has_hist -eq 0 ]]; then
+          bad "$rel  登记在 .claude/history-carriers 里的 kb 文件必须有「$HIST_HEAD」节收尾"
+          howto "在文末补上（没有历史也要留这个节，供以后写）：" \
+                "$HIST_HEAD" "" "### $(date +%F)" "- 建档。"
+          filefail=1
+        fi
+      elif [[ $has_hist -eq 1 ]]; then
+        bad "$rel  没登记在 .claude/history-carriers 里的 kb 文件不留「$HIST_HEAD」节"
+        howto "把这一节整段删掉：改动直接改正文，经过靠 git（要查就 git log 这份文件）；" \
+              "这份文件确实要带历史，登记进 .claude/history-carriers 并写明为什么。"
+        filefail=1
+      fi
+    elif [[ $has_hist -eq 0 ]]; then
+      bad "$rel  kb 文档必须有「$HIST_HEAD」节收尾"
+      howto "在文末补上（没有历史也要留这个节，供以后写）：" \
+            "$HIST_HEAD" "" "### $(date +%F)" "- 建档。"
+      filefail=1
+    fi
   fi
 
   # ── M. 日期不许是编的 ───────────────────────────────────
@@ -707,7 +776,7 @@ while IFS= read -r f; do
 done < <(find "$ROOT" -name '*.md' -not -path '*/.git/*' -not -path '*/target/*' \
                  "${EXCL[@]}" | sort)
 
-# E. 引用了不存在的编号 —— 空白比错误更危险（rules/kb-discipline.md 第 3 条）
+# E. 引用了不存在的编号（rules/kb-discipline.md 第 3 条「显式记录「不知道」」）
 #    典型形态：「历史版本」写了「补 I-4.4~I-4.7」，正文其实没补，别处还在引用它们。
 #    人通读能察觉，检索不会——它只会把那条引用端出来，模型照单全收。
 reffails=0
@@ -957,10 +1026,11 @@ if [[ -n "$kb_files" ]]; then
             # `-`/`.`/`_` 留在排除集里：把它们拿掉能堵住「写成 `-D1` 藏掉裸引用」这种
             # 刻意绕法，但代价是在真实项目的 kb 上误拒了 9 处正常引用（实测于使用者项目）。
             # 按 selftest.sh 头部那条：误拒比漏检更会把人推去绕过门禁，所以留着。
-            # 那条绕法记在 kb-discipline.md 的「只能靠人的那半」里，不假装拦住了。
+            # 那条绕法记在 kb-discipline.md 第 5 条的「已知但没拦」里，不假装拦住了。
             if (before ~ /[A-Za-z0-9._-]/) continue
             if (after ~ /[A-Za-z]/) continue
             if (after ~ /[0-9]/) continue
+            if (after == "_") continue              # 标识符的一段（E164_REPOSITORY_ROOT 这类环境变量名、e57_field），不是引用
             if (after == "." && nxt ~ /[0-9]/) continue  # I-6 出现在 I-6.1 里面
             if (!(tok in name)) continue
             # 登记行/登记标题：只放过它登记的那个编号本身，同一行里对**别的**编号的
@@ -1137,17 +1207,17 @@ if [[ $WORDLIST -ne 1 ]]; then
   if [[ $REFERENCE_WORDLIST -eq 1 ]]; then
     warn "  D kb 的时间指代（本轮 / 这一轮 …）；位置指代与自称按本语言的词表判了"
   else
-    warn "  D kb 的上下文指代与自指称呼"
+    warn "  D kb 的位置指代与自指称呼"
   fi
   warn "  I 文风（翻译腔 / 古风腔 / 过度解释）"
   howto "要补就在 scripts/doc-lint.sh 的 PATTERNS 与 ctx/self 里加本语言的词表，" \
         "并在 scripts/fixtures/ 下配该语言的红样本与踩边界的绿样本（日文的在 doc-lint-ja/）。" \
         "在那之前这几类违规不会被拦——绿灯不代表这几条验过了。"
 fi
-if [[ $fails -gt 0 || $reffails -gt 0 || $numfails -gt 0 || $exfails -gt 0 || $metafails -gt 0 ]]; then
-  bad "文档铁律检查失败：$fails 个文件违规、$reffails 处编号引用无定义、$numfails 处编号定义/引用不合规、$exfails 条排除项不合规、$metafails 处规则清单/警告记录不合规（检查 $checked，跳过 $skipped）"   # gate-lint:summary
+if [[ $fails -gt 0 || $reffails -gt 0 || $numfails -gt 0 || $exfails -gt 0 || $carrierfails -gt 0 || $metafails -gt 0 ]]; then
+  bad "文档铁律检查失败：$fails 个文件违规、$reffails 处编号引用无定义、$numfails 处编号定义/引用不合规、$exfails 条排除项不合规、$carrierfails 条历史登记不合规、$metafails 处规则清单/警告记录不合规（检查 $checked，跳过 $skipped）"   # gate-lint:summary
   exit 1
 fi
-warn "上下文指代与自指称呼这两条是**启发式**：只认句首或标点之后的常见说法，"
+warn "位置指代与自指称呼这两条是**启发式**：只认句首或标点之后的常见说法，"
 warn "  「按本决策办」这种嵌在句中的漏得掉。绿不代表这两条穷举过了。"
 ok "文档铁律检查通过（检查 $checked，跳过 $skipped；DOC_LINT_VERBOSE=1 看全部）"

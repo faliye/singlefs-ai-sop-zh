@@ -2,7 +2,7 @@
 # gate-similar: 无 查过 shell-lint.sh、gate-lint.sh：它们读脚本正文，没有哪一道读暂存区里的文件模式
 # admission: always 判的是此刻暂存区里的文件模式，一秒跑完
 # run-condition: command git
-# 脚本的执行位在暂存区里没有丢。
+# 脚本的执行位在暂存区里没有丢，射程里也没有 git 存不下的空目录。
 #
 # 手工只暂存「这一轮的」时，`git update-index --cacheinfo` 要自己写模式；写死 100644 就把
 # 可执行位丢在暂存区里，而工作区那份还是可执行的——在工作区上跑的门禁一声不吭，
@@ -12,7 +12,10 @@
 # 判据（只看已跟踪的 .sh 与 .py，fixtures/ 下的不看——样本故意不可执行）：
 #   ① `.sh` 在暂存区里必须是 100755；
 #   ② 暂存区里的模式与工作区的执行位一致（100755 ⇔ 工作区可执行）。
-#   符号链接（120000）判它在暂存区里指向的那一份：那一份也要在暂存区里，.sh 的要是 100755。
+#   符号链接（120000）判它在暂存区里指向的那一份：那一份也要在暂存区里，.sh 的要是 100755；
+#   ③ 射程里没有空目录（.git 与被 .gitignore 挡着的不算）：git 只记文件，空目录进不了提交，
+#      工作区里靠它过的样本，到了提交与 gate.sh --staged 的临时树里就没有那个目录。要留空目录就放一个 .keep。
+#      这一条只在工作区上看得见：--staged 的临时树里空目录本来就不存在。
 #
 # 用法：
 #   script-modes.sh [目录…]        不给目录就扫本包的 scripts/
@@ -79,6 +82,23 @@ for dir in "${DIRS[@]}"; do
   fi
 done
 
+# ③ 空目录：在 git 仓里的那几个射程目录上数，.git 与被 .gitignore 挡着的跳过
+directories_checked=0; empty_directories=()
+for dir in "${DIRS[@]}"; do
+  [[ -d "$dir" ]] || continue
+  dir_root="$(cd "$dir" && git rev-parse --show-toplevel 2>/dev/null || true)"
+  [[ -n "$dir_root" ]] || continue
+  directory_listing="$(find "$dir" -name .git -prune -o -type d -print)"
+  while IFS= read -r candidate_directory; do
+    [[ -n "$candidate_directory" ]] || continue
+    if git -C "$dir_root" check-ignore -q -- "$candidate_directory" 2>/dev/null; then continue; fi
+    directories_checked=$((directories_checked + 1))
+    if [[ -z "$(find "$candidate_directory" -mindepth 1 -maxdepth 1 -print -quit)" ]]; then
+      empty_directories+=("$candidate_directory")
+    fi
+  done <<< "$directory_listing"
+done
+
 if (( checked > 0 )); then
   for unjudged_directory in ${unjudged_directories[@]+"${unjudged_directories[@]}"}; do
     report_not_run "脚本执行位：$unjudged_directory，那里的执行位没查"
@@ -96,10 +116,16 @@ if (( checked == 0 )); then
   exit 1
 fi
 
-if (( wrong > 0 )); then
-  bad "$wrong 个脚本的执行位在暂存区里不对（查了 $checked 个）"   # gate-lint:summary
+if ((${#empty_directories[@]})); then
+  for empty_directory in "${empty_directories[@]}"; do
+    say "  ✗ $empty_directory 是空目录：git 存不下它，提交与 --staged 的临时树里没有这个目录"   # gate-lint:detail
+  done
+fi
+if (( wrong > 0 || ${#empty_directories[@]} > 0 )); then
+  bad "$wrong 个脚本的执行位在暂存区里不对（查了 $checked 个）；${#empty_directories[@]} 个空目录（查了 $directories_checked 个目录）"   # gate-lint:summary
   howto "用 git update-index --chmod=+x <路径>（或 -x）改暂存区里的模式，让它与工作区一致；是符号链接的，改它指向的那一份，" \
-        "指向的文件没进暂存区就先 git add 它。手工暂存时别写死 100644——那会把可执行位丢进历史。"
+        "指向的文件没进暂存区就先 git add 它。手工暂存时别写死 100644——那会把可执行位丢进历史。" \
+        "空目录要留着的，放一个 .keep 再 git add（: > <目录>/.keep）；用不着的删掉。"
   exit 1
 fi
-ok "查了 $checked 个脚本：.sh 都可执行，暂存区里的模式与工作区一致（射程 ${#DIRS[@]} 个目录，没查的 ${#unjudged_directories[@]} 个，见上）"
+ok "查了 $checked 个脚本：.sh 都可执行，暂存区里的模式与工作区一致；查了 $directories_checked 个目录，没有空目录（射程 ${#DIRS[@]} 个目录，没查的 ${#unjudged_directories[@]} 个，见上）"

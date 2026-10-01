@@ -2,14 +2,14 @@
 # hook-events: Stop SubagentStop
 # hook-registration: optional 判的与提交前的门禁阶段「门禁查重」是同一件事，只是早一步拦；项目可以只靠提交前那一道
 # gate-similar: gate-overlap.py 判定全在它那里；这个钩子只负责在 agent 收工时拿这个会话写过的文件调它，有红就拦下收工
-# gate-similar: hooks-registered.sh 它判钩子注册着没有、自检过没有，不判这一轮新建的钩子该不该单独存在
+# gate-similar: hooks-registered.sh 它判钩子注册着没有、自证过没有，不判这一轮新建的钩子该不该单独存在
 # gate-similar: pattern-process-guard.sh 它挂在 PreToolUse 的 Bash 上、在命令执行前拦；这里挂在 Stop 与 SubagentStop 上，触发点不同
 # gate-similar: handback-scratch-check.sh 同挂在 SubagentStop 上，但它判子 agent 交回时临时目录里还留着自己建的编译目录与仓副本，这里判这一轮新写的门禁与钩子该不该单独存在，对象与放行条件都不同；读钩子输入那一段两边共用 claude-hook-lib.sh
 # admission: always Claude Code 在 agent 收工时调它，判的是这个会话此刻写过的门禁与钩子
 # run-condition: command python3 git
 # Claude Code 的 Stop / SubagentStop 钩子（收工的尾门禁）：agent 这一轮新建了门禁或钩子，收工前先自检它是不是非得单独加。
 #
-# 主 agent 收工触发 Stop，子 agent 收工触发 SubagentStop，两个都要注册。
+# 主 agent 收工触发 Stop，子 agent 收工触发 SubagentStop。注册是可选的；注册就两个都挂。
 # 判定全在 scripts/gate-overlap.py 的 --touched-by：只看这个会话开始以来、它自己写过的门禁与钩子。
 # 新建的没写 `# gate-similar:` / `# hook-events:`、同一触发点上或字面上很像的已有门禁与钩子没点名、
 # 或整段抄了已有的一份，就拦下收工，把判定输出交给 agent（该点名的、最像的几份、查全表的命令都在里面）。
@@ -131,7 +131,7 @@ run_selftest() {
       passed=$((passed + 1))
     else
       failed=$((failed + 1))
-      printf '  ✗ 自检「%s」：期望退出 %s%s，实测 %s\n' "$label" "$wanted_exit_code" "${wanted_text:+、输出含「$wanted_text」}" "$exit_code"   # gate-lint:detail
+      printf '  ✗ 自证「%s」：期望退出 %s%s，实测 %s\n' "$label" "$wanted_exit_code" "${wanted_text:+、输出含「$wanted_text」}" "$exit_code"   # gate-lint:detail
       printf '%s\n' "$output" | sed 's/^/      /'
     fi
   }
@@ -162,11 +162,11 @@ run_selftest() {
   expect_stop "写明为什么不并进已有的就放行" 0 "" "$(stop_input Stop false writes.jsonl)"
   rm -rf "${scratch:?}"
   if (( failed > 0 )); then
-    printf '  ✗ gate-reuse-check 自检：%s 种情形判错（共 %s 种）\n' "$failed" "$((passed + failed))"   # gate-lint:summary
+    printf '  ✗ gate-reuse-check 自证：%s 种情形判错（共 %s 种）\n' "$failed" "$((passed + failed))"   # gate-lint:summary
     printf '%s\n' '     → 怎么办：看上面判错的那几种情形，修 gate-reuse-check.sh 或它调的 gate-overlap.py，再跑 bash gate-reuse-check.sh --selftest。'
     return 1
   fi
-  printf '  ✓ gate-reuse-check 自检：%s 种情形判得都对\n' "$passed"
+  printf '  ✓ gate-reuse-check 自证：%s 种情形判得都对\n' "$passed"
   return 0
 }
 

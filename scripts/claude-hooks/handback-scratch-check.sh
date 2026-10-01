@@ -325,7 +325,7 @@ print(json.dumps(hook_input, ensure_ascii=False))' "$main_transcript" "$project"
       passed=$((passed + 1))
     else
       failed=$((failed + 1))
-      printf '  ✗ 自检「%s」：期望退出 %s%s%s，实测 %s\n' "$label" "$wanted_exit_code" "${wanted_text:+、输出含「$wanted_text」}" "${unwanted_text:+、不含「$unwanted_text」}" "$exit_code"   # gate-lint:detail
+      printf '  ✗ 自证「%s」：期望退出 %s%s%s，实测 %s\n' "$label" "$wanted_exit_code" "${wanted_text:+、输出含「$wanted_text」}" "${unwanted_text:+、不含「$unwanted_text」}" "$exit_code"   # gate-lint:detail
       printf '%s\n' "$output" | sed 's/^/      /'
     fi
     [[ -n "${6:-}" ]] || rm -rf "${scratch:?}/state"
@@ -417,7 +417,7 @@ EOF")"
     exit_code=$?
     if [[ "$exit_code" == "$2" ]]; then passed=$((passed + 1)); else
       failed=$((failed + 1))
-      printf '  ✗ 自检「%s」：判定脚本期望退出 %s，实测 %s\n' "$1" "$2" "$exit_code"   # gate-lint:detail
+      printf '  ✗ 自证「%s」：判定脚本期望退出 %s，实测 %s\n' "$1" "$2" "$exit_code"   # gate-lint:detail
       printf '%s\n' "$output" | sed 's/^/      /'
     fi
   }
@@ -441,11 +441,11 @@ EOF")"
   PATH="$scratch/fake-bin:$PATH" expect_handback "取不到创建时间时不拦" 1 "取不到创建时间" "" "$first_stop"
   rm -rf "${scratch:?}"
   if (( failed > 0 )); then
-    printf '  ✗ handback-scratch-check 自检：%s 种情形判错（共 %s 种）\n' "$failed" "$((passed + failed))"   # gate-lint:summary
+    printf '  ✗ handback-scratch-check 自证：%s 种情形判错（共 %s 种）\n' "$failed" "$((passed + failed))"   # gate-lint:summary
     printf '%s\n' '     → 怎么办：看上面判错的那几种情形，修 handback-scratch-check.sh 或它调的 handback-scratch.py，再跑 bash handback-scratch-check.sh --selftest。'
     return 1
   fi
-  printf '  ✓ handback-scratch-check 自检：%s 种情形判得都对\n' "$passed"
+  printf '  ✓ handback-scratch-check 自证：%s 种情形判得都对\n' "$passed"
   return 0
 }
 

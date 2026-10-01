@@ -10,7 +10,7 @@
 #   父进程拿到的是未定义，五处失败分支在打印诊断之前就被 set -u 带走。
 #   一条写在文档里的纪律，被写文档的人自己违反了整整一轮——所以它要变成检查。
 #
-# 查六条：
+# 查七条：
 #
 #   S1 子 shell 里的赋值传不回父进程
 #      三个条件同时成立才判红，误报面很窄：
@@ -33,7 +33,6 @@
 #      变量为空时它从根目录往下删。写成 `"${VAR:?}/..."` 就拦住了。
 #
 #   S6 不带参数的 `wait`
-#   S7 pipefail 下以提前退出的 `grep -q` 收尾的管道
 #      它的退出码恒为 0：并行跑的检测项红了几个，父进程一个字都不知道
 #      （实测 2026-09-19：三个后台作业里第二个 exit 7，光秃的 wait 报 0；
 #      后台体里写 `|| bad=1` 也一样是 0，因为后台是子 shell，就是 S1 那条）。
@@ -44,13 +43,16 @@
 #      理由不许省，跟 .claude/abbreviations 与 naming-lint-exclude 同规矩：
 #      猜不着的东西不猜，要放行就把退出码的去向写出来。
 #
+#   S7 pipefail 下以提前退出的 `grep -q` 收尾的管道
+#      grep 命中就退出，前段吃 SIGPIPE，管道返回 141，`if` 把它读成「没命中」。
+#
 # 机器管得了哪一半：
 #   S1 靠三个条件的合取，认的是**看得明白**的那种形态。多行函数体的收尾按行首 `}` 认，
 #   定义与收尾写在同一行的函数按那一行判；赋值按命令位置认——用 eval/间接赋值的认不出来，不判。
-#   「认不出」不是「通过」：这条与 rules/show-me-test.md「门禁能证明什么」同律，
+#   「认不出」不是「通过」：这条与 rules/show-me-test.md「门禁能证明什么，不能证明什么」同律，
 #   所以下面每条拒绝都指着规则，不只指着症状。
-#   command-safety.md 另外几条（echo 假装成功、管道退出码、破坏性操作先看清楚）
-#   还没有可靠的机检形态，**没做**——不是漏了，是判据还没想清楚，先不写成检查。
+#   command-safety.md 另外几条（echo 假装成功、破坏性操作先看清楚）还没有可靠的机检形态，**没做**——
+#   不是漏了，是判据还没想清楚，先不写成检查。管道退出码只做了 S7 那一种。
 #
 # SHELL_LINT_DIR 可指定要扫的目录（selftest 拿样本喂它用），默认扫本脚本所在目录。
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -61,7 +63,7 @@ SCRIPTS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # 而它此前不在扫描范围里——本轮刚把「只带一句话的 die 判红」写成规矩，
 # scripts/ 下 17 处全补齐了，仓根那 4 处却一处没查（复核实测）。
 # 样本排除写成**相对本次 SCAN** 的前缀：写死成 */fixtures/* 的话，
-# 拿样本目录当 SCAN 跑时会把样本自己全排除掉，自检当场变成摆设（doc-lint 踩过）。
+# 拿样本目录当 SCAN 跑时会把样本自己全排除掉，自证当场变成摆设（doc-lint 踩过）。
 SCAN="${SHELL_LINT_DIR:-$(cd "$SCRIPTS/.." && pwd)}"
 # 位置参数是**额外**要扫的目录（gate.sh 拿它传项目本地阶段目录）。
 # 项目扔进 .claude/gate.d/ 的阶段跑在同一道门禁里，命令安全的坑对它们一样致命。
@@ -116,7 +118,7 @@ S7_PIPEFAIL_RE='^[[:space:]]*set[[:space:]].*pipefail'
 fails=0; checked=0
 for BASE in "${SCANS[@]}"; do
 # 装进项目的 SOP 副本不扫：它由上游自己的门禁管，而它带着一整套**故意写坏的**样本——
-# 项目里单跑 `bash .claude/scripts/shell-lint.sh`（README 就是这么写的）时，那些样本会被当成项目自己的违规报出来（审计实测）。
+# 项目里单跑 `bash .claude/scripts/shell-lint.sh`时，那些样本会被当成项目自己的违规报出来（审计实测）。
 LINT_FAMILY="$(sed -n 's/^family=//p' "$SCRIPTS/../I18N" 2>/dev/null || true)"
 EXCL=(-not -path "$BASE/scripts/fixtures/*" -not -path "$BASE/fixtures/*" -not -path "$BASE/.claude/${LINT_FAMILY:-singlefs-ai-sop}/*")
 while IFS= read -r f; do

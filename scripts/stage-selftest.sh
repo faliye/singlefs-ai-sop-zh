@@ -18,7 +18,11 @@
 # setup.sh 在那里跑，所以不会把 `.git` 塞进本仓。
 #
 # 用法：
-#   stage-selftest.sh [阶段目录]      不给就找 <仓根>/.claude/gate.d
+#   stage-selftest.sh [阶段目录]                    不给就找本脚本所在包的根下的 .claude/gate.d（<包根>/.claude/gate.d）；
+#                                                   装进项目时包根是 .claude/<包名>/，不是项目根，所以项目里要把阶段目录作为参数给（gate.sh 就是这么调的）
+#   stage-selftest.sh [阶段目录] --item <阶段文件名>  只喂点名那几道的样本，给几次取并集；没点名的不起、也不报「本次未跑」
+#   stage-selftest.sh [阶段目录] --list-items        逐行列出配了样本、可以点名的阶段，不喂样本
+# 退出码：0 判得都对；1 有样本判错；2 用法错（--item 缺值、点名的阶段没配样本或不存在，都列出可点名的阶段）；77 无对象可判；78 准入不满足。
 #
 # 没有阶段目录、或者没有一个阶段配了样本时退 77（本次无对象可判），不报绿
 # （rules/show-me-test.md「门禁不许假装通过」：exit 0 的跳过在汇总里与「判过了」一模一样）。
@@ -27,12 +31,26 @@ set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 preflight "${BASH_SOURCE[0]}" "$@"; set -- ${PREFLIGHT_ARGUMENTS[@]+"${PREFLIGHT_ARGUMENTS[@]}"}
 
-GD="${1:-}"
+GD=""; requested_stages=(); list_items_only=0
+while (($#)); do
+  case "$1" in
+    --item)
+      if (($# < 2)) || [[ -z "$2" ]]; then requested_stages+=(""); shift; continue; fi
+      requested_stages+=("$2"); shift 2 ;;
+    --list-items) list_items_only=1; shift ;;
+    *) GD="$1"; shift ;;
+  esac
+done
 if [[ -z "$GD" ]]; then
   root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
   GD="$root/.claude/gate.d"
 fi
-if [[ ! -d "$GD" ]] || ! compgen -G "$GD/*.sh" >/dev/null; then
+if [[ ! -d "$GD" ]]; then
+  warn "没有阶段目录 $GD，本阶段无对象可判（这不是通过）"
+  exit 77
+fi
+if ! compgen -G "$GD/*.sh" >/dev/null; then
+  warn "$GD 下没有本地阶段（*.sh），本阶段无对象可判（这不是通过）"
   exit 77
 fi
 # 阶段要在样本的临时目录里跑，相对路径到了那里就指不到东西。手跑时传 `.claude/gate.d`，
@@ -47,9 +65,28 @@ if [[ ! -d "$FX" ]]; then
   exit 1
 fi
 
+# 配了样本、可以点名的阶段：--list-items 列它们，--item 只认它们。
+stages_with_samples=()
+for stage in "$GD"/*.sh; do
+  [[ -d "$FX/$(basename "$stage")" ]] && stages_with_samples+=("$(basename "$stage")")
+done
+if ((list_items_only)); then
+  printf '%s\n' ${stages_with_samples[@]+"${stages_with_samples[@]}"}
+  exit 0
+fi
+for requested_stage in ${requested_stages[@]+"${requested_stages[@]}"}; do
+  if [[ -z "$requested_stage" || ! " ${stages_with_samples[*]-} " == *" $requested_stage "* ]]; then
+    say "  ✗ --item ${requested_stage:-（缺阶段名）}：$GD 下没有这个配了样本的阶段"   # gate-lint:detail
+    say "     → 怎么办：点名下面列的阶段文件名之一（stage-selftest.sh $GD --list-items 也列这一份）："
+    printf '       %s\n' ${stages_with_samples[@]+"${stages_with_samples[@]}"}
+    exit 2
+  fi
+done
+
 pass=0; fail=0; nocase=()
 for stage in "$GD"/*.sh; do
   name="$(basename "$stage")"
+  if ((${#requested_stages[@]})) && [[ ! " ${requested_stages[*]} " == *" $name "* ]]; then continue; fi
   if [[ ! -d "$FX/$name" ]]; then nocase+=("$name"); continue; fi
   # 样本只验阶段判得对不对，不产出证据：写了准入与运行条件的阶段带 --force 喂（输入没变、环境不齐也照判；
   # 强制跑的那一次不记成「上次成功」）。没写的不带：它还不认 --force，多一个参数可能被当成项目根（rules/preflight-discipline.md）。
@@ -118,4 +155,8 @@ if ((pass == 0)); then
   warn "没有一个阶段配了样本，一个样本都没判，本阶段无对象可判（这不是通过）"
   exit 77
 fi
-ok "有样本的阶段判得都对（$pass 个样本），$((${#nocase[@]})) 个阶段仍未自检"
+if ((${#requested_stages[@]})); then
+  ok "点名的 ${#requested_stages[@]} 道阶段判得都对（$pass 个样本）：${requested_stages[*]}；没点名的这一趟不喂"
+  exit 0
+fi
+ok "有样本的阶段判得都对（$pass 个样本），$((${#nocase[@]})) 个阶段仍未自证"

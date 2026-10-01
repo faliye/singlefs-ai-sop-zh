@@ -82,7 +82,7 @@ run_cargo clippy --all-targets --all-features -- -D warnings "${CODE_DISCIPLINE_
   || die "clippy 有告警（按 -D warnings 视为错误），或者踩了编码纪律的某一条（退出码 $?）" \
   "上面每条告警都指着文件和行号，逐条改。编码纪律那几条的写法见 rules/code-discipline.md。" \
   "确有必要保留的，在那一处写 #[allow(<lint>, reason = \"为什么\")]，理由写进 reason——" \
-  "不要整仓关掉 -D warnings（rules/command-safety.md：警告是最便宜的信号）。" ${CARGO_PREFIX_NOTE[@]+"${CARGO_PREFIX_NOTE[@]}"}
+  "不要整仓关掉 -D warnings（rules/command-safety.md「脚本改文件之后要回读确认，警告是免费的信号」）。" ${CARGO_PREFIX_NOTE[@]+"${CARGO_PREFIX_NOTE[@]}"}
 ok "clippy 通过"
 
 head1 "cargo build"

@@ -39,7 +39,7 @@ fi
 # 判据只有一条：**里面有没有面向人的散文。** 有就翻译（进清单），没有就复制。
 # 两张表都要显式列全——不列的那些由下面的覆盖率检查拦下，「忘了纳入」不许静默通过。
 #
-# TRANSLATED：逐篇翻译、逐篇溯源。
+# translated_paths：逐篇翻译、逐篇溯源。
 #   skills/ 与 templates/ 曾经走复制，于是日语仓的 skill 正文与项目骨架全是中文，
 #   而 templates/CLAUDE.project.md 会被 install.sh 写成使用者项目根的 CLAUDE.md。
 # `|| true` 不能省：目录不存在时 find 退出码非 0，而 2>/dev/null 只藏消息不藏退出码——
@@ -54,7 +54,7 @@ translated_paths() {
   find templates  -name '*.md'       2>/dev/null || true
 }
 
-# NOT_TRANSLATED：显式豁免 + 理由。改这张表就是改分发策略，不许顺手加。
+# not_translated_re：显式豁免 + 理由。改这张表就是改分发策略，不许顺手加。
 #   README.md      各语言仓各自的门面，只指路不定规矩（README 里写明了这一点）
 #   CHANGELOG.md   历史文件，各仓记各仓的
 #   GLOSSARY.md    各语言并列的**一张**对照表，翻译它等于抄成 N 份。
@@ -75,7 +75,7 @@ gen() { cd "$PKG" && translated_paths | LC_ALL=C sort | xargs sha256sum; }
 coverage() {
   local listed missed
   # agents/ 已纳入治理但可能还没有内容。空是**状态**，不是通过——
-  # 「没有」和「忘了」在目录里长得一模一样（rules/kb-discipline.md：空白比错误更危险）。
+  # 「没有」和「忘了」在目录里长得一模一样（rules/kb-discipline.md 第 3 条「显式记录「不知道」」）。
   if [[ -d "$PKG/agents" ]]; then
     local n; n="$(find "$PKG/agents" -maxdepth 1 -name '*.md' -not -name 'INDEX.md' | wc -l)"
     [[ "$n" -eq 0 ]] && warn "本层已纳入治理，当前为空：agents/（约定见 agents/INDEX.md）"

@@ -3,7 +3,7 @@
 
 **贡献者治理规范和门禁工具（Contributor Governance）。**
 管的是**项目怎么跟 AI 协作**，不管文件系统怎么设计。
-只有一个使用者，名字登记在 `I18N` 的 `consumers=`。在这个仓里干活，同样受这些规则管。
+只有一个使用者。在这个仓里干活，同样受这些规则管。
 
 改规范本体**必须同时抬 `VERSION`**，否则项目那边的门禁会报版本对不上。
 发版按周合批：规则与脚本的改动先在工作区攒着，一周合一版；误报、误判的修正累积到那一版一起发；使用者项目随发版同步一次副本。
@@ -44,6 +44,7 @@
 @rules/kb-discipline.md
 @rules/rules-discipline.md
 @rules/test-discipline.md
+@rules/test-script-discipline.md
 @rules/evidence-discipline.md
 @rules/verify-before-claiming.md
 @rules/pushback-discipline.md
@@ -53,7 +54,7 @@
 
 ## 分工判据
 
-**这套 SOP 是给它那一个使用者做的（名字在 `I18N` 的 `consumers=`），不假设别的项目也能用。**
+**这套 SOP 是给它那一个使用者做的，不假设别的项目也能用。**
 所以判据不是「别的项目会不会也需要」——根本没有别的项目可看，
 这个问题谁都能答「会」，答完什么都往上游塞。
 

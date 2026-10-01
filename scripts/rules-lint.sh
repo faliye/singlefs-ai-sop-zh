@@ -25,11 +25,11 @@
 #      而同一行没有「别读」或「不要读」。反引号里的路径不判，那是在说明落点。
 #      读的人和模型默认跟着链接走，跟过去就把刚分出去的东西又装回了上下文。
 #
-# 语言：判据按本包 I18N 的 this= 取。英文、日文判 ① ② ③ ⑦ 与使用者名字：它们认的是标题、日期与链接这类结构，
+# 语言：判据按本包 I18N 的 this= 取。英文、日文判 ① ② ③ ⑦：它们认的是标题、日期与链接这类结构，
 # 换一种语言只换几个词；④ ⑤ 只认「标签词加冒号」这一种（段首或句末标点之后的 Observed: / 実測： 这类），
 # 连词起头、标点后的连词与 ⑥ 认的是「，因为」「以免」这种汉语句式，照翻过去误判比真违规多，
 # 这几样在英文、日文上显式报未实现（--not-impl），不假装通过（rules/show-me-test.md）。
-# RULES_LINT_LANG 只给门禁自检用：样本的语言是样本的属性，不是仓的属性；设了就自报，与 doc-lint 的 DOC_LINT_LANG 同规矩。
+# RULES_LINT_LANG 只给门禁自证用：样本的语言是样本的属性，不是仓的属性；设了就自报，与 doc-lint 的 DOC_LINT_LANG 同规矩。
 #
 # 都不判的：围栏（``` 或 ~~~）里的行；表格行（以 | 起头）不判 ④ ⑤ ⑥，① ② ③ ⑦ 照判。
 # 判不到的：这几条只认上面写的字面。不在标点之后的因果、括注与冒号引出的为什么、
@@ -73,7 +73,7 @@ SCAN="${RULES_LINT_DIR:-$PACKAGE_ROOT/rules}"
   "项目的规则目录不在默认位置时，用 RULES_LINT_DIR 指过去： RULES_LINT_DIR=.claude/rules bash scripts/rules-lint.sh ."
 
 if [[ $RULES_LANGUAGE_FORCED -eq 1 ]]; then
-  warn "语言由 RULES_LINT_LANG 指定为 $RULES_LANGUAGE（本包是 ${PACKAGE_LANGUAGE:-zh}）——这个变量只给门禁自检用"
+  warn "语言由 RULES_LINT_LANG 指定为 $RULES_LANGUAGE（本包是 ${PACKAGE_LANGUAGE:-zh}）——这个变量只给门禁自证用"
   howto "跑真实项目不要设它：判据换成别的语言，等于自己给自己改判据。" \
         "要让本包换语言，改 I18N 的 this=，别在命令行上盖。"
 fi
@@ -85,14 +85,8 @@ case "$RULES_LANGUAGE" in
     exit 77 ;;
 esac
 
-# 使用这套 SOP 的项目叫什么，登记在**被扫那个仓**的 I18N 的 consumers= 里——
-# 上游脚本不写死下游的名字。读 $ROOT 的 I18N 而不是本包的：项目根没有 I18N，
-# 所以项目拿 RULES_LINT_DIR 扫自己的规则时这一条无对象可判（项目写自己的名字是正常的）。
-CONSUMERS="$(sed -n 's/^consumers=//p' "$ROOT/I18N" 2>/dev/null || true)"
-PACKAGE_FAMILY="$(sed -n 's/^family=//p' "$ROOT/I18N" 2>/dev/null || true)"
-
 RULES_LINT_SCAN="$SCAN" RULES_LINT_ROOT="$ROOT" RULES_LINT_FILES="${RULES_LINT_FILES:-}" \
-  RULES_LINT_CONSUMERS="$CONSUMERS" RULES_LINT_FAMILY="$PACKAGE_FAMILY" RULES_LINT_LANGUAGE="$RULES_LANGUAGE" python3 - <<'PY'
+  RULES_LINT_LANGUAGE="$RULES_LANGUAGE" python3 - <<'PY'
 import glob, os, re, sys
 
 scan = os.path.realpath(os.environ["RULES_LINT_SCAN"])
@@ -227,12 +221,9 @@ def paragraph_opener(first_line):
                 return word
     return None
 
-CONSUMER_NAMES = [n for n in os.environ.get("RULES_LINT_CONSUMERS", "").split() if n]
-FAMILY = os.environ.get("RULES_LINT_FAMILY", "")
-
 history_sections, argument_sections, dated_lines_found = [], [], []
 explanatory_paragraphs, explanatory_half_sentences = [], []
-lexical_explanations, bare_links, consumer_mentions = [], [], []
+lexical_explanations, bare_links = [], []
 scanned_lines = dated_only_in_quotes = lexical_lines = 0
 
 for path in scanned_targets:
@@ -291,13 +282,6 @@ for path in scanned_targets:
                     lexical_explanations.append(f"{location}（{kind}「{match.group(0).strip()}」）：…{unquoted_line[start:match.end() + 24].strip()}…")
         if HISTORY_LINK.search(line) and not DISCOURAGEMENT.search(line):
             bare_links.append(f"{location}：{line.strip()[:90]}")
-        # ⑧ 使用者项目的名字：本包名（family）先整串挖掉，剩下的还出现就是在写下游的东西
-        if CONSUMER_NAMES:
-            stripped = line.replace(FAMILY, "") if FAMILY else line
-            for name in CONSUMER_NAMES:
-                if name in stripped:
-                    consumer_mentions.append(f"{location}（「{name}」）：{line.strip()[:90]}")
-                    break
     index = 0
     while PROSE_CHECKS and index < len(lines):
         if not starts_paragraph[index]:
@@ -312,7 +296,7 @@ for path in scanned_targets:
         index = end
 
 # ── 判决 ────────────────────────────────────────────────
-MOVE_HINT = "删掉（共享规则的历史进 CHANGELOG.md 一版一节；项目本地规则的经过进项目已有的 records/、kb/）"
+MOVE_HINT = "删掉，不另立落点（rules/rules-discipline.md 第 3 条；共享规则的历史进 CHANGELOG.md，一版一节）"
 failed = False
 
 def report(entries, summary, *steps):
@@ -331,12 +315,12 @@ report(exclude_problems, "条排除项不合规（.claude/rules-lint-exclude）�
        "每条排除写成「路径 # 理由」，路径指向真实的规则文件，理由不许省；",
        "文件已经回扫完就把那一行删掉——排除只缩不涨。")
 report(history_sections, "个记录小节（标题带「历史」或「变更史」）——规则是执行用的，不是说明：",
-       f"把这一节整段{MOVE_HINT}，正文里删掉这一节；",
-       "共享规则的历史进 CHANGELOG.md（rules/rules-discipline.md 第 5 条）。")
+       f"把这一节整段{MOVE_HINT}；",
+       "规则文件不留历史节（rules/rules-discipline.md 第 5 条）。")
 report(argument_sections, f"个论证小节（标题以{WORDS['argument_words']}这类论证词起头）：",
        f"把这一节整段{MOVE_HINT}；",
        "里面那句判得出该不该做的，改写成判据留在正文（rules/rules-discipline.md 第 2 条）。")
-report(dated_lines_found, "行写了日期——规矩没有日期，日期属于案卷：",
+report(dated_lines_found, "行写了日期——规矩不写日期：",
        f"把这一句的经过{MOVE_HINT}，正文只留该怎么做；",
        "日期是引的小节名的一部分，就把小节名放进「」里原样引；判据的起算日、路径里的日期放进反引号。")
 report(explanatory_paragraphs, "处解释性段落（以日期、「为什么」「依据」「实测」「经过」「因为」这类起头）：",
@@ -347,12 +331,8 @@ report(explanatory_half_sentences, "处解释性半句（指令后面挂着「�
        "指令留下，尾巴删掉；",
        f"尾巴里的经过{MOVE_HINT}。")
 report(lexical_explanations, "处词法说明（「实测」「今天」后跟数、标点后的「免得」「以免」「为了」「所以」）：",
-       f"数与经过删掉，要留的{MOVE_HINT}；",
+       f"数与经过{MOVE_HINT}；",
        "执行者要照它分支的前提不删，改写成一条指令（条件 → 动作）。")
-report(consumer_mentions, "处写了使用这套 SOP 的项目的名字——规范是给任何使用者读的，正文里不许出现某一个使用者：",
-       "把那半句删掉，或者改写成不指名的说法：接法写成「项目在 `.claude/gate.d/` 里接一个本地阶段」，",
-       "实测来历整句删掉（规则正文本来就不写来历）。名单在 I18N 的 consumers=。")
-
 report(bare_links, "处指向历史的链接没带劝阻句：",
        f"在同一行写上{WORDS['discouragement_example']}，一字不许省；",
        "指的不是历史，就别链到 records/ 或 CHANGELOG.md。")
@@ -363,12 +343,10 @@ if failed:
 skipped_names = [os.path.relpath(p, root) for p in skipped]
 skipped_text = "；没扫 0 个" if not skipped_names else \
     f"；没扫 {len(skipped_names)} 个（登记在 .claude/rules-lint-exclude）：{'、'.join(skipped_names)}"
-consumer_text = ("使用者名字 0 处（名单：" + "、".join(CONSUMER_NAMES) + "）") if CONSUMER_NAMES \
-    else "使用者名字这一条无对象可判：被扫的仓没有 I18N 或没登记 consumers="
 prose_text = (f"解释性段落 0、解释性半句 0、没带劝阻句的链接 0；词法说明判了 {lexical_lines} 行（围栏与表格行不判），命中 0；"
               if PROSE_CHECKS else
               f"标签式解释 0、没带劝阻句的链接 0；以连词起头的段落与半句、词法说明在 {LANGUAGE} 上未实现，没判；")
 print(f"  ✓ 规则只写怎么做（语言 {LANGUAGE}；扫了 {len(scanned_targets)} 份文件 {scanned_lines} 行{skipped_text}；"
       f"记录小节 0、论证小节 0、带日期的行 0（另有 {dated_only_in_quotes} 行的日期只在引号或反引号里）、"
-      f"{prose_text}{consumer_text}）")
+      f"{prose_text.rstrip('；')}）")
 PY

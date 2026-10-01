@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 公共函数。所有门禁脚本 source 它。
+# 公共函数。门禁脚本 source 它。
 # 约定：任何"验证"函数都必须能返回非零。不许有只会成功的检查。
 
 set -euo pipefail

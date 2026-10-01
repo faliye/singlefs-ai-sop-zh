@@ -1,2 +1,2 @@
 exit=1
-want=只许用于 CLAUDE.md、rules/、skills/*/SKILL.md
+want=只许用于 CLAUDE.md、rules/、agents/、skills/*/SKILL.md

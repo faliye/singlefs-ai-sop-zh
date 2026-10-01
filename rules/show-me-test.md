@@ -11,7 +11,7 @@
 
 ## 没有测试的 patch 一律不收
 
-**改了 `crates/*/src/` 就得带测试。** 没有例外，「这个太简单了」「下个 patch 补上」都不算。只改文档和脚本除外。
+**改了 `crates/*/src/` 或 `crates/*/build.rs` 就得带测试。** 没有例外，「这个太简单了」「下个 patch 补上」都不算。只改文档和脚本除外。
 
 由 `scripts/show-me-test.sh` 强制（`gate.sh` 把它当一个阶段跑）。
 

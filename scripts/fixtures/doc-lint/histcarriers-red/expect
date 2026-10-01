@@ -1,0 +1,6 @@
+exit=1
+want=.claude/history-carriers:2  路径不存在：kb/gone
+want=.claude/history-carriers:3  这一条没写理由：kb/other.md
+want=kb/decisions/01-样本.md  登记在 .claude/history-carriers 里的 kb 文件必须有「## 历史版本」节收尾
+want=kb/other.md  没登记在 .claude/history-carriers 里的 kb 文件不留「## 历史版本」节
+want=2 条历史登记不合规

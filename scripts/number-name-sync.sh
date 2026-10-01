@@ -1,17 +1,19 @@
 #!/usr/bin/env bash
-# gate-similar: doc-lint.sh 它判 markdown 里的「编号（简称）」；这一道把同一条判据延到源码注释、脚本与记录。登记标题的解析两边各写了一份，没抽成共用：doc-lint 那份在 awk 里、按 markdown 的结构认，抽出来要先把它从 awk 里拆出来
+# gate-similar: doc-lint.sh 它判 markdown 里的「编号（简称）」；这一道把同一条判据延到 kb 之外的源码注释与记录。登记标题的解析两边各写了一份，没抽成共用：doc-lint 那份在 awk 里、按 markdown 的结构认，抽出来要先把它从 awk 里拆出来
 # gate-similar: link-targets.py 读 .claude/doc-lint-exclude、找 SOP 副本目录的两个函数，它、这一道与 relay-timing-lint.py 各写了一份，三份已经分叉（候选路径、结尾斜杠的处理不同）；抽成共用要先定哪一份的行为对，没在加查重门禁的这一次动它们
-# admission: always 判的是此刻仓里的源码注释、脚本与记录，几秒跑完；每一轮门禁都现判
+# admission: always 判的是此刻仓里的源码注释与记录，几秒跑完；每一轮门禁都现判
 # run-condition: command python3
 # 编号与简称在 doc-lint 够不到的地方也要一致。
 #
-# `doc-lint.sh` 管的是 markdown。而编号引用还散在**源码注释、脚本、记录**里，
+# `doc-lint.sh` 管的是 kb 里的 markdown。而编号引用还散在 kb 之外的**源码注释（.rs）与记录（.md）**里，
 # 那些地方没有任何东西在看：编号在引用处只剩一个符号，含义能被悄悄改掉而没有一个字别扭
 # （rules/kb-discipline.md 第 5 条：编号只能做索引，不能做称呼）。
 # 原是使用者项目的一个本地阶段，判据通用，收归这里。
 #
-# 登记位：kb 里各条目正文的首行 `## <编号> <简称> —— <状态>`，与 doc-lint 的「登记标题」同形态。
-# 射程：默认扫仓根下的 .rs / .sh / .py / .md（kb 自己与冻结证据除外），也可以把目录作为参数给。
+# 登记位：只读 .claude/kb/experiments/*.md（E 编号）与 .claude/kb/decisions/*.md（D 编号）各文件的首行
+#   `## <编号> <简称> —— <状态>`，与 doc-lint 的「登记标题」同形态。别处登记的编号这一道不认。
+# 射程：默认扫仓根下的 .rs / .md（SCANNED_SUFFIXES；.claude/kb/、装进项目的 SOP 副本、fixtures 与冻结证据除外），
+#   也可以把目录作为参数给，后缀照样只认这两种。
 # 冻结证据按项目根的 .claude/doc-lint-exclude 绕开：那是原样保存的输入，
 # 里面的旧简称是当时写的，要改只能连同重跑一起改（rules/evidence-discipline.md）。
 #

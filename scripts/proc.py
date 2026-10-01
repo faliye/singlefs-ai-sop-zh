@@ -19,7 +19,7 @@ scripts/claude-hooks/pattern-process-guard.sh 在执行前拒绝）。这里三�
 就放后台起（Claude Code 的 run_in_background）、等完成通知。这个脚本给的是「进程不是自己起的、或 pid 没记下来」时的写法：
 先 `find` 拿到 pid，再 `wait` / `stop` 那个 pid。
 
-退出码：0 成；1 自检不过；2 参数错或拒绝（停自己、停祖先、进程号不存在）；3 等超时。
+退出码：0 成；1 自证不过；2 参数错或拒绝（停自己、停祖先、进程号不存在）；3 等超时。
 """
 import argparse
 import os
@@ -116,7 +116,7 @@ def stop(process_id, grace_seconds):
 
 def selftest():
     failures = []
-    # sleep 的参数：只有这一份自检起的 sleep 带它。带上本进程号：几份自检同时跑时（三个语言仓并行跑 selftest），
+    # sleep 的参数：只有这一份自证起的 sleep 带它。带上本进程号：几份自证同时跑时（三个语言仓并行跑 selftest），
     # 参数写死的话 find 会把别的那份起的 sleep 也列出来，两份一起判红（2026-09-19 实测）
     marker = f"4242.{os.getpid()}"
     sleepers = [subprocess.Popen(["sleep", marker]) for _ in range(2)]
@@ -127,7 +127,7 @@ def selftest():
         own_ids = [process_id for process_id, _ in find(os.path.basename(sys.executable), None)]
         if os.getpid() in own_ids:
             failures.append("find 列出了发出这条命令的进程自己（祖先那一支应当排除）")
-        # 超时那一项在子进程里跑、外面套硬超时：破坏开关打开时 wait 不会自己返回，不能把自检挂死
+        # 超时那一项在子进程里跑、外面套硬超时：破坏开关打开时 wait 不会自己返回，不能把自证挂死
         try:
             timed = subprocess.run([sys.executable, os.path.abspath(__file__), "wait", str(sleepers[0].pid), "--timeout", "0.3", "--interval", "0.05"],
                                    capture_output=True, text=True, timeout=10)
@@ -142,7 +142,7 @@ def selftest():
         if wait([sleepers[0].pid], 2, 0.05) != []:
             failures.append("停掉之后 wait 应当立刻返回")
         # 拒绝停祖先：在一次性的 bash 里让 proc.py 去停这个 bash（它的父进程）。拒绝时 bash 接着打出退出码；
-        # 破坏开关打开时被停掉的只是这个一次性的 bash，不是跑自检的那一支（使用者项目实测：拿真的 getppid 试，把调用它的 shell 一起停了）
+        # 破坏开关打开时被停掉的只是这个一次性的 bash，不是跑自证的那一支（使用者项目实测：拿真的 getppid 试，把调用它的 shell 一起停了）
         refusal = subprocess.run(["bash", "-c", f'"{sys.executable}" "{os.path.abspath(__file__)}" stop $$ --grace 1; echo "exit=$?"'],
                                  capture_output=True, text=True, timeout=30)
         if "exit=2" not in refusal.stdout:
@@ -153,11 +153,11 @@ def selftest():
                 process.kill()
                 process.wait()
     for failure in failures:
-        print(f"  ✗ 自检：{failure}")  # gate-lint:detail
+        print(f"  ✗ 自证：{failure}")  # gate-lint:detail
     if failures:
         print("    → 看 find() 的祖先排除、wait() 的超时与 stop() 的祖先拒绝；PROC_BREAK 设着的话这里本来就该红")
         return 1
-    print("  ✓ proc.py 自检通过：find 按可执行文件名加参数逐字找、不列自己那一支，wait 到点超时、进程没了立刻返回，stop 停得掉、停祖先拒绝（查了 6 项）")
+    print("  ✓ proc.py 自证通过：find 按可执行文件名加参数逐字找、不列自己那一支，wait 到点超时、进程没了立刻返回，stop 停得掉、停祖先拒绝（查了 6 项）")
     return 0
 
 

@@ -27,12 +27,11 @@ req() { # req <命令> <说明> <是否必须:hard|soft>
 req gawk     "判定不许随 awk 实现变（lib.sh 已经拦，这里报出来是为了一次看全）。装：sudo apt install gawk" hard
 req python3  "每个脚本开头判准入与运行条件（scripts/preflight.py），好几道门禁阶段也是 python 写的。没有它，别的脚本都按条件不满足拒绝" hard
 req sha256sum "规则清单与译文溯源的哈希" hard
-req timeout  "门禁自检给每个用例设超时；没有它挂死的检查既不红也不绿" hard
+req timeout  "门禁自证给每个用例设超时；没有它挂死的检查既不红也不绿" hard
 
 req cargo    "Rust 工具链。装：curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh" hard
 req rustc    "同上" hard
 req git      "版本控制" hard
-req dmsetup  "device-mapper 块层工具（录写请求、造故障设备）" hard
 req shellcheck "脚本静态检查" soft
 
 # 版本下限：selftest 用 git init -b（2.28 起），--staged 用 git worktree；
@@ -42,8 +41,8 @@ git_major_version=""; git_minor_version=""
 read -r git_major_version git_minor_version < <(git --version 2>/dev/null | sed -n 's/^git version \([0-9][0-9]*\)\.\([0-9][0-9]*\).*/\1 \2/p' | head -1) || true
 if [[ -n "$git_major_version" && -n "$git_minor_version" ]] \
    && (( 10#$git_major_version < 2 || (10#$git_major_version == 2 && 10#$git_minor_version < 28) )); then
-  bad "git 版本过低（$(git --version)）：门禁自检要 git init -b，2.28 起才有"
-  howto "升级 git 到 2.28 或更新；旧版上样本仓建不起来，自检会整体判错而不是判红。"
+  bad "git 版本过低（$(git --version)）：门禁自证要 git init -b，2.28 起才有"
+  howto "升级 git 到 2.28 或更新；旧版上样本仓建不起来，自证会整体判错而不是判红。"
   missing=$((missing+1))
 fi
 if (( BASH_VERSINFO[0] < 4 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] < 3) )); then

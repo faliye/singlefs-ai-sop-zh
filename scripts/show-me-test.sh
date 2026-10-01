@@ -3,7 +3,7 @@
 # run-condition: command git
 # Show me test 阶段：改了 crates 代码就必须带测试（rules/show-me-test.md）。
 # 从 gate.sh 里拆出来，selftest 才能拿样本仓单独喂它（rules/sop-first.md：
-# 没有自检能力的门禁是摆设）。
+# 门禁脚本自己也要有测试）。
 #
 #   show-me-test.sh <项目根>
 #

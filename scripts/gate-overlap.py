@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # gate-similar: gate-lint.sh 它逐个脚本、逐行判拒绝带不带出路，不看文件之间，也不看这一次改动加了什么
-# gate-similar: hooks-registered.sh 它判钩子注册着、自检过、事件挂全，不看两个钩子是不是挂在同一个触发点上；读 settings.json、认命令指向哪个钩子的那段已抽成 hook-registrations.py，两边共用
+# gate-similar: hooks-registered.sh 它判钩子注册着、自证过、事件挂全，不看两个钩子是不是挂在同一个触发点上；读 settings.json、认命令指向哪个钩子的那段已抽成 hook-registrations.py，两边共用
 # admission: always 判的是这一次 diff 窗口（或这个会话）里新加与改动的门禁与钩子，窗口随提交在动
 # run-condition: command git
 """新加的门禁与钩子要先对过已有的：能追加就追加，能合并就合并，不另起一份，更不整段抄一份。
@@ -85,8 +85,8 @@ HOOK_EVENTS_RE = re.compile(r'^\s*#\s*hook-events:\s*(.*?)\s*$')
 GATE_STAGE_REFERENCE_RE = re.compile(r'\$\{?SCRIPTS\}?/([A-Za-z0-9._-]+\.(?:sh|py))')
 IDENTIFIER_RE = re.compile(r'[A-Za-z_][A-Za-z0-9_.-]{3,}')
 EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904'
-# 文件头里给机器读的那几种标记行，不当说明取。
-MACHINE_DIRECTIVE_RE = re.compile(r'^(gate-similar|gate-overlap|gate-covers|gate-lint|shell-lint|hook-events|hook-registration|shellcheck)\b')
+# 文件头里给机器读的那几种标记行，不当说明取。准入与运行条件（admission: / run-condition:）每个脚本都排在说明前面，不跳过它们的话说明列整列都是它们。
+MACHINE_DIRECTIVE_RE = re.compile(r'^(gate-similar|gate-overlap|gate-covers|gate-lint|shell-lint|hook-events|hook-registration|shellcheck|admission|run-condition)\b')
 
 WRITING_TOOL_NAMES = {'Write', 'Edit', 'MultiEdit', 'NotebookEdit'}
 SHELL_SEPARATORS = {';', '&&', '||', '|', '|&', '&', '(', ')', ';;'}

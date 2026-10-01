@@ -5,12 +5,12 @@
 #
 # 为什么必须有（rules/sop-first.md）：
 #   改了 scripts/ 就得造一个应该被拦的输入，确认它真的会红。
-#   没有自检能力的门禁是摆设——一条永远不红的检查与没有这条检查，
+#   一条永远不红的检查与没有这条检查，
 #   在门禁输出里长得一模一样。
 #
 # 每个门禁脚本都要有自己的样本或脚本化用例，**包括 gate.sh 自己**——
 # 它是整道门禁唯一的判决点，而它长期不在覆盖之内：把 run_stage 改成无条件记 PASS，
-# 造一处真实的文档违规，gate.sh 退出码是 0，而自检 69 例全绿（复核实测）。
+# 造一处真实的文档违规，gate.sh 退出码是 0，而自证 69 例全绿（复核实测）。
 #
 # **等价变异分开记，不算盲区**（`rules/test-discipline.md`）。复核跑了 126 个变异，
 # 剩下门禁察觉不到的，逐个验过都是等价的：
@@ -38,7 +38,7 @@
 # 删光、kb 历史节检查删光、gate-lint 的窗口从 5 改成 99、
 # show-me-test 的标注集缩到只认 #[test]——**每一条都全绿**。
 # 根因是 blind 样本一次触发六类违规，而它的 want 写成了「正文不许」，
-# 上下文指代那条消息也含这四个字。所以：一个样本触发多类违规时，
+# 位置指代那条消息也含这四个字。所以：一个样本触发多类违规时，
 # 每一类都要有自己的 want；宁可多写几个单一职责的样本。
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 preflight "${BASH_SOURCE[0]}" "$@"; set -- ${PREFLIGHT_ARGUMENTS[@]+"${PREFLIGHT_ARGUMENTS[@]}"}
@@ -47,7 +47,7 @@ SCRIPTS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FX="$SCRIPTS/fixtures"
 tmpd="$(mktemp -d)"; trap 'rm -rf "$tmpd"' EXIT
 # 样本仓不受用户全局 git 配置影响。`commit.gpgsign=true` 之类会让第一个样本仓就建不起来，
-# 而 set -e 在那里把整个自检带走——「判错 0 条」加一行 git 的报错，看着不像自检失败（审计实测 rc=128）。
+# 而 set -e 在那里把整个自证带走——「判错 0 条」加一行 git 的报错，看着不像自证失败（审计实测 rc=128）。
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 
 pass=0; fails=0; cases=0
@@ -139,7 +139,7 @@ spawn_fixture() { # spawn_fixture <标签> <样本目录> <命令...>（命令�
     echo "$local_rc" > "$out.rc" ) &
   inflight=$((inflight+1))
   # 在手的作业到上限就先收一个。`wait -n` 拿回来的是样本自己的退出码，红样本本来就非 0，
-  # 不加 `|| true` 的话 set -e 会在第一个红样本上把整个自检带走（写这段时实测）。
+  # 不加 `|| true` 的话 set -e 会在第一个红样本上把整个自证带走（写这段时实测）。
   while [[ $inflight -ge $SELFTEST_JOBS ]]; do wait -n || true; inflight=$((inflight-1)); done
 }
 
@@ -160,7 +160,7 @@ collect_fixtures() { # 等这一批跑完，按派活顺序逐个判
     if [[ ! -f "$out.rc" ]]; then
       cases=$((cases+1)); fails=$((fails+1))
       bad "$label 派出去了，却没有退出码文件"
-      howto "这一项的后台作业没跑完，或者被杀了——自检不许把它当通过。" \
+      howto "这一项的后台作业没跑完，或者被杀了——自证不许把它当通过。" \
             "看它的输出： cat $out"
       continue
     fi
@@ -190,7 +190,7 @@ run_scripted() { # run_scripted <名> <期望exit> <want...> -- <命令...>
 }
 
 # ════ doc-lint ═══════════════════════════════════════════
-head1 "门禁自检：doc-lint 的判别力"
+head1 "门禁自证：doc-lint 的判别力"
 [[ -d "$FX/doc-lint" ]] || { bad "缺样本目录 $FX/doc-lint"
   howto "样本要随仓走。没有样本，下一个改 doc-lint.sh 的人无从复跑。"; exit 1; }
 # ⚠️ **样本一律按 zh 判**。样本是中文写的，而 scripts/ 会逐字节复制进每个语言仓：
@@ -221,10 +221,10 @@ r="$tmpd/doc-lint-many-bare"; mkdir -p "$r/kb"
 run_scripted "doc-lint/没带简称的命中很多时照样跑完" 1 "处编号引用没带简称" "文档铁律检查失败" -- \
   env DOC_LINT_LANG=zh bash "$SCRIPTS/doc-lint.sh" "$r"
 
-# 补简称的工具：自检过得了，弄坏开关打开时自检必须红（证明它分得出登记位那一行动没动过）
-run_scripted "doc-lint-fix-names/自检通过" 0 "自检通过（查了" -- \
+# 补简称的工具：自证过得了，弄坏开关打开时自证必须红（证明它分得出登记位那一行动没动过）
+run_scripted "doc-lint-fix-names/自证通过" 0 "自证通过（查了" -- \
   python3 "$SCRIPTS/doc-lint-fix-names.py" --selftest
-run_scripted "doc-lint-fix-names/改动登记位那一行时自检判红" 1 "登记标题那一行不动" -- \
+run_scripted "doc-lint-fix-names/改动登记位那一行时自证判红" 1 "登记标题那一行不动" -- \
   env DOC_LINT_FIX_NAMES_BREAK=touch-registry python3 "$SCRIPTS/doc-lint-fix-names.py" --selftest
 
 # 扫描范围不许随包所在的路径变。副本排除项此前写成 */singlefs-ai-sop/* 加「ROOT 在包里就不排除」：
@@ -236,17 +236,17 @@ cp -r "$FX/doc-lint/projok" "$r/scripts/fixtures/doc-lint/"
 run_scripted "doc-lint/扫描范围不随包所在路径变" 0 "文档铁律检查通过（检查 1，跳过 0" -- \
   env DOC_LINT_LANG=zh bash "$r/scripts/doc-lint.sh" "$r/scripts/fixtures/doc-lint/projok"
 
-# 判据编不过要当场红。2026-09-17 给上下文指代加光秃的方位形态时写了圈码区间 `①-⑳`，grep 报
+# 判据编不过要当场红。2026-09-17 给位置指代加光秃的方位形态时写了圈码区间 `①-⑳`，grep 报
 # Invalid collation character，而那条 grep 外面套着 `|| true`：整条检查对每份 kb 静默判绿，dirref 样本照样过。
 # 这里拷一份脚本、把圈码那一格改回区间写法，要求它报「编不过」，而不是「检查通过」。
 b="$tmpd/brokenctx"; mkdir -p "$b/scripts"
 cp "$SCRIPTS/lib.sh" "$SCRIPTS/preflight.py" "$SCRIPTS/preflight.sh" "$SCRIPTS/proc.py" "$SCRIPTS/doc-lint.sh" "$b/scripts/"; cp "$SCRIPTS/../I18N" "$b/I18N"
-run_scripted "doc-lint/判据编不过要当场红" 1 "上下文指代的判据 grep 编不过" -- \
+run_scripted "doc-lint/判据编不过要当场红" 1 "位置指代的判据 grep 编不过" -- \
   bash -c 'sed -i "s/①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳/①-⑳/" "$1/scripts/doc-lint.sh" && grep -q "①-⑳" "$1/scripts/doc-lint.sh" || { echo "没改到圈码那一格，这条用例什么也没测"; exit 3; }
            env DOC_LINT_LANG=zh bash "$1/scripts/doc-lint.sh" "$2"' brokenctx "$b" "$FX/doc-lint/dirref"
 
 # ════ gate-lint ══════════════════════════════════════════
-head1 "门禁自检：gate-lint 的判别力"
+head1 "门禁自证：gate-lint 的判别力"
 for d in "$FX"/gate-lint/*/; do
   [[ -d "$d" ]] || continue
   spawn_fixture "gate-lint/$(basename "$d")" "$d" \
@@ -258,7 +258,7 @@ collect_fixtures
 # 样本目录法测不到它：环境变量一设就把默认值盖掉了。所以现搭一个包，
 # 在**包根**放一份该被拦的脚本，不带环境变量地跑。
 # 钉住的是「install.sh 在包根，也要扫」（复核实测：它那 4 处裸 die 曾一处没查到）。
-head1 "门禁自检：默认扫描范围"
+head1 "门禁自证：默认扫描范围"
 # ⚠️ 该被拦的样本内容**放到样本文件里**，不许写成本脚本内的字符串字面量——
 # gate-lint / shell-lint 扫的是 *.sh 的内容，写在这里它会把样本当成真实拒绝，
 # 门禁自己红（本轮实测：`die "单测失败"` 写在 printf 里，gate-lint 当场判红）。
@@ -297,7 +297,7 @@ run_scripted "gate-lint/项目里单跑不报副本里的样本" 0 "门禁自检
 run_scripted "shell-lint/项目里单跑不报副本里的样本" 0 "shell 纪律检查通过" -- bash "$pkg/scripts/shell-lint.sh" "$r/proj"
 
 # ════ shell-lint ═════════════════════════════════════════
-head1 "门禁自检：shell-lint 的判别力"
+head1 "门禁自证：shell-lint 的判别力"
 for d in "$FX"/shell-lint/*/; do
   [[ -d "$d" ]] || continue
   spawn_fixture "shell-lint/$(basename "$d")" "$d" \
@@ -309,7 +309,7 @@ collect_fixtures
 # 样本目录本身当项目根喂进去：里面有 rules/ 和可选的 .claude/rules-lint-exclude。
 # 每个红样本只犯一处，want 指着那一条检查自己的消息——只比退出码的话，
 # 一个「因为别的检查红了」的样本也算过。
-head1 "门禁自检：rules-lint 的判别力"
+head1 "门禁自证：rules-lint 的判别力"
 # 样本的语言是样本的属性，不是仓的属性：rules-lint/ 下的按中文判，rules-lint-en/、rules-lint-ja/ 下的按英文、日文判，
 # 用 RULES_LINT_LANG 钉住。三套在每个语言仓里都跑，哪个仓都不缺一套（与 doc-lint 的 DOC_LINT_LANG 同规矩）。
 for rules_lint_fixture_language in zh en ja; do
@@ -331,7 +331,7 @@ run_scripted "rules-lint/语言被覆盖时要自报" 0 "语言由 RULES_LINT_LA
 # ════ pattern-process-guard（会话钩子）═══════════════════
 # 样本是钩子的 JSON 输入（input.json），不是 .sh：shell-lint / gate-lint 不扫它们。
 # 红的 want 带「第一处：」那一行，钉住是哪一行命中的——只比退出码的话，一个因为别的行红了的样本也算过。
-head1 "门禁自检：pattern-process-guard 的判别力"
+head1 "门禁自证：pattern-process-guard 的判别力"
 [[ -d "$FX/pattern-process-guard" ]] || { bad "缺样本目录 $FX/pattern-process-guard"
   howto "样本要随仓走。没有样本，下一个改 claude-hooks/pattern-process-guard.sh 的人无从复跑。"; exit 1; }
 for d in "$FX"/pattern-process-guard/*/; do
@@ -342,13 +342,13 @@ done
 collect_fixtures
 
 # ════ proc.py（按进程号找、等、停）═══════════════════════
-# 它是钩子给出的替代写法，自检坏了等于出路是假的。三个破坏开关各关掉一样东西，自检必须判红。
-head1 "门禁自检：proc.py 的判别力"
-run_scripted "proc/自检通过" 0 "proc.py 自检通过" -- python3 "$SCRIPTS/proc.py" --selftest
+# 它是钩子给出的替代写法，自证坏了等于出路是假的。三个破坏开关各关掉一样东西，自证必须判红。
+head1 "门禁自证：proc.py 的判别力"
+run_scripted "proc/自证通过" 0 "proc.py 自证通过" -- python3 "$SCRIPTS/proc.py" --selftest
 run_scripted "proc/PROC_BREAK=ancestors 必须判红" 1 "find 列出了发出这条命令的进程自己" -- \
   env PROC_BREAK=ancestors python3 "$SCRIPTS/proc.py" --selftest
 # ⚠️ 下面这一例要**空等 10 秒**：它验的就是「超时逻辑被破坏之后 wait 不返回」，
-# 那个 10 秒是 proc.py 自检里外层 subprocess 的超时。2026-09-19 实测它占整个自检 21.4 秒里的 10 秒。
+# 那个 10 秒是 proc.py 自证里外层 subprocess 的超时。2026-09-19 实测它占整个自证 21.4 秒里的 10 秒。
 # 这是故意的等待，不是并行度问题——并行治不了它，别拿并行去解释这一段为什么慢。
 run_scripted "proc/PROC_BREAK=timeout 必须判红" 1 "10 秒没返回" -- \
   env PROC_BREAK=timeout python3 "$SCRIPTS/proc.py" --selftest
@@ -358,7 +358,7 @@ run_scripted "proc/PROC_BREAK=stopself 必须判红" 1 "stop 停自己的祖先�
 # ════ 准入与运行条件（rules/preflight-discipline.md）═══════
 # 三样各自要会红：preflight-lint 判文件头与开头；preflight.py 现判时拒绝得了、--force 放得过、输入没变拦得住；
 # gate.sh 条件不满足时不起那个阶段。
-head1 "门禁自检：准入与运行条件的判别力"
+head1 "门禁自证：准入与运行条件的判别力"
 for d in "$FX"/preflight-lint/*/; do
   spawn_fixture "preflight-lint/$(basename "$d")" "$d" python3 "$SCRIPTS/preflight-lint.py" "$d"
 done
@@ -459,7 +459,7 @@ run_scripted "preflight/有一部分本次未跑就不记（后半：照判输�
 run_scripted "preflight/全跑了的那一次照记（输入没变就拒绝）" 78 "以来没变" -- bash "$r/scripts/partial.sh"
 
 # ════ show-me-test（要 git 仓才摆得出场景，现搭现跑）═════
-head1 "门禁自检：show-me-test 的判别力"
+head1 "门禁自证：show-me-test 的判别力"
 mk_repo() { # mk_repo <目录> —— 一个已提交基线的最小 crates 仓
   mkdir -p "$1/crates/foo/src"
   git -C "$1" init -qb master
@@ -673,9 +673,9 @@ printf 'import subprocess\nimport time\n\n\ndef relay():\n    process = subproce
 run_scripted "relay-timing-lint/不给仓库根时判当前目录所在的仓" 1 "research/relay.py:7" -- \
   bash -c 'cd "$1/research" && python3 "$2/relay-timing-lint.py" --check' relay_default_root "$r/proj" "$r/a/b/pkg/scripts"
 
-# ── 工具层的闸：钩子注册着没有、自检过不过 ──────────────
+# ── 工具层的闸：钩子注册着没有、自证过不过 ──────────────
 r="$tmpd/hooks-reg"; mkdir -p "$r/.claude/hooks"
-printf '#!/usr/bin/env bash\n[[ "${1:-}" == --selftest ]] && { echo "  自检：查了 2 种情形"; exit 0; }\nexit 0\n' > "$r/.claude/hooks/guard.sh"
+printf '#!/usr/bin/env bash\n[[ "${1:-}" == --selftest ]] && { echo "  自证：查了 2 种情形"; exit 0; }\nexit 0\n' > "$r/.claude/hooks/guard.sh"
 chmod +x "$r/.claude/hooks/guard.sh"
 # 包自带的钩子也要注册：pattern-process-guard 挂 PreToolUse（rules/command-safety.md），
 # gate-reuse-check 可选，注册了就挂 Stop 与 SubagentStop（rules/sop-first.md「谁来查」），
@@ -688,7 +688,7 @@ hooks_registered_settings() { # hooks_registered_settings <gate-reuse-check 挂�
     "$gate_reuse_on_stop" "$gate_reuse_on_subagent_stop" > "$r/.claude/settings.json"
 }
 hooks_registered_settings yes
-run_scripted "hooks-registered/注册着且自检过就通过" 0 "个钩子都注册着" -- \
+run_scripted "hooks-registered/注册着且自证过就通过" 0 "个钩子都注册着" -- \
   bash "$SCRIPTS/hooks-registered.sh" "$r"
 hooks_registered_settings no
 run_scripted "hooks-registered/声明的事件没挂全判红" 1 "gate-reuse-check.sh→SubagentStop" -- \
@@ -729,10 +729,10 @@ run_scripted "hooks-registered/一条都没注册时判红" 1 "一条钩子都�
 printf '{"hooks":{"PreToolUse":[{"matcher":"Write","hooks":[{"type":"command","command":"bash other.sh"}]}]}}\n' > "$r/.claude/settings.json"
 run_scripted "hooks-registered/钩子没被注册到时判红" 1 "没在 settings.json 里注册" -- \
   bash "$SCRIPTS/hooks-registered.sh" "$r"
-# 自检会红的钩子：注册着也不算数——自检就是这道闸「会拒绝」的证据
-printf '#!/usr/bin/env bash\n[[ "${1:-}" == --selftest ]] && { echo "  自检：有一种情形没拦住"; exit 1; }\nexit 0\n' > "$r/.claude/hooks/guard.sh"
+# 自证会红的钩子：注册着也不算数——自证就是这道闸「会拒绝」的证据
+printf '#!/usr/bin/env bash\n[[ "${1:-}" == --selftest ]] && { echo "  自证：有一种情形没拦住"; exit 1; }\nexit 0\n' > "$r/.claude/hooks/guard.sh"
 hooks_registered_settings yes
-run_scripted "hooks-registered/钩子自检没过时判红" 1 "个钩子的自检没过" -- \
+run_scripted "hooks-registered/钩子自证没过时判红" 1 "个钩子的自证没过" -- \
   bash "$SCRIPTS/hooks-registered.sh" "$r"
 # 有钩子（装进来的副本自带三个）却没有 settings.json：等于一个都没注册，判红；一个钩子都没有才是无对象可判
 mkdir -p "$tmpd/hooks-none"
@@ -767,7 +767,7 @@ rich_identifiers() { local index; for ((index = 1; index <= 25; index++)); do pr
 { printf '#!/usr/bin/env bash\n# gate-stage: 早就抄了一份的旧阶段\n'; overlap_block; } > "$r/.claude/gate.d/16-legacy-copy.sh"
 printf '#!/usr/bin/env bash\n# gate-stage: 另一个旧阶段\necho "只判一件不相干的事"\n' > "$r/.claude/gate.d/15-plain.sh"
 { printf '#!/usr/bin/env bash\n# gate-stage: 标识符很多的旧阶段\n'; for word in $(rich_identifiers); do printf 'check_column "%s"\n' "$word"; done; } > "$r/.claude/gate.d/30-rich.sh"
-printf '#!/usr/bin/env bash\n# 已有的钩子\necho "拦 Bash 里的一种写法"\n' > "$r/.claude/hooks/old-guard.sh"
+printf '#!/usr/bin/env bash\n# admission: always 样本钩子，每次调都要判\n# run-condition: none 样本钩子没有环境要求\n# 已有的钩子\necho "拦 Bash 里的一种写法"\n' > "$r/.claude/hooks/old-guard.sh"
 overlap_settings() { # overlap_settings <新钩子挂的事件> <新钩子的 matcher> [新钩子的命令]：已有钩子挂在 PreToolUse 的 Bash|Write 上
   local old_entry new_entry
   old_entry='{"matcher":"Bash|Write","hooks":[{"type":"command","command":"bash .claude/hooks/old-guard.sh"}]}'
@@ -784,7 +784,8 @@ git -C "$r" add -A; git -C "$r" -c user.name=t -c user.email=t@t commit -qm base
 overlap_check=(env GATE_DIFF_BASE="$(git -C "$r" rev-parse HEAD)" python3 "$SCRIPTS/gate-overlap.py")
 # 存量里就有的整段相同（10 与 16）不判：它们都不在这一次的改动里
 run_scripted "gate-overlap/没有新加或改动门禁时退 77" 77 "这一次没有新加或改动门禁与钩子" -- "${overlap_check[@]}" "$r"
-run_scripted "gate-overlap/--list 列出已有的与触发点" 0 "old-guard.sh" "PreToolUse[Bash|Write]" "已有的样本阶段" -- \
+# 说明列取的是真正的说明行：old-guard.sh 的头几行是 admission: / run-condition:，说明「已有的钩子」排在它们后面
+run_scripted "gate-overlap/--list 列出已有的与触发点，说明列跳过准入与运行条件" 0 "old-guard.sh" "PreToolUse[Bash|Write]" "已有的样本阶段" "已有的钩子" -- \
   python3 "$SCRIPTS/gate-overlap.py" --list "$r"
 printf '#!/usr/bin/env bash\necho "新判据：只看一件别的事"\n' > "$r/.claude/gate.d/20-new.sh"
 run_scripted "gate-overlap/新阶段没写 gate-similar 判红" 1 "20-new.sh 是新加的，没写 gate-similar" "按字面最像的几份" -- \
@@ -862,7 +863,7 @@ mkdir -p "$tmpd/overlap-no-git/.claude/gate.d"
 run_scripted "gate-overlap/不在 git 仓里退 77" 77 "不在 git 仓里" -- python3 "$SCRIPTS/gate-overlap.py" "$tmpd/overlap-no-git"
 
 # ── 收工钩子：agent 这一轮新建了门禁或钩子，收工前先自检能不能复用已有的 ──
-run_scripted "gate-reuse-check/自检的每种情形都判得对" 0 "gate-reuse-check 自检：15 种情形判得都对" -- \
+run_scripted "gate-reuse-check/自证的每种情形都判得对" 0 "gate-reuse-check 自证：15 种情形判得都对" -- \
   bash "$SCRIPTS/claude-hooks/gate-reuse-check.sh" --selftest
 
 # ── 历史条目编号：本次新增的条目撞了已有的号 ──────────────
@@ -925,10 +926,13 @@ rm -f "$r/.claude/gate.d/fixtures/10-demo.sh/third/expect"
 run_scripted "stage-selftest/样本目录没有 expect 要判错" 1 "样本目录里没有 expect" -- \
   bash "$SCRIPTS/stage-selftest.sh" "$r/.claude/gate.d"
 rm -rf "${r:?}/.claude/gate.d/fixtures/10-demo.sh/third"
-# 没有本地阶段目录时退 77（本次无对象可判），不许报绿
-run_scripted "stage-selftest/没有本地阶段退 77" 77 "" -- \
+# 没有本地阶段目录、或目录里没有阶段时退 77（本次无对象可判），不许报绿，而且要说出是哪一种：gate.sh 的跳过说明让人看它的输出
+run_scripted "stage-selftest/没有本地阶段目录退 77 并说出来" 77 "没有阶段目录" "这不是通过" -- \
   bash "$SCRIPTS/stage-selftest.sh" "$tmpd/stage-selftest-none"
-# 写了准入与运行条件的阶段带 --force 喂样本：它的条件（这里是一条永远不满足的）不挡判别力自检（rules/preflight-discipline.md）
+mkdir -p "$tmpd/stage-selftest-empty"
+run_scripted "stage-selftest/阶段目录里没有阶段退 77 并说出来" 77 "下没有本地阶段（*.sh）" "这不是通过" -- \
+  bash "$SCRIPTS/stage-selftest.sh" "$tmpd/stage-selftest-empty"
+# 写了准入与运行条件的阶段带 --force 喂样本：它的条件（这里是一条永远不满足的）不挡判别力自证（rules/preflight-discipline.md）
 r="$tmpd/stage-selftest-conditions"; mkdir -p "$r/.claude/gate.d/fixtures/10-demo.sh/red" "$r/.claude/gate.d/fixtures/10-demo.sh/green" "$r/.claude/singlefs-ai-sop/scripts"
 cp "$SCRIPTS/lib.sh" "$SCRIPTS/preflight.py" "$SCRIPTS/preflight.sh" "$SCRIPTS/proc.py" "$r/.claude/singlefs-ai-sop/scripts/"
 printf '#!/usr/bin/env bash\n# admission: always 样本：每次调都有意义\n# run-condition: check false :: 样本：这条条件永远不满足\nsource "$(dirname "${BASH_SOURCE[0]}")/../singlefs-ai-sop/scripts/lib.sh"\npreflight "${BASH_SOURCE[0]}" "$@"; set -- ${PREFLIGHT_ARGUMENTS[@]+"${PREFLIGHT_ARGUMENTS[@]}"}\n[[ -f "${1:-.}/bad.txt" ]] && { echo "  拒绝：有 bad.txt"; exit 1; }\necho "  通过：没有 bad.txt"\n' > "$r/.claude/gate.d/10-demo.sh"
@@ -950,6 +954,26 @@ run_scripted "stage-selftest/没有样本的阶段逐个报本次未跑" 0 "本�
 r="$tmpd/stage-selftest-nosamples"; mkdir -p "$r/.claude/gate.d/fixtures"
 printf '#!/usr/bin/env bash\necho "  通过"\n' > "$r/.claude/gate.d/10-demo.sh"
 run_scripted "stage-selftest/一个阶段都没配样本退 77" 77 "一个样本都没判" -- bash "$SCRIPTS/stage-selftest.sh" "$r/.claude/gate.d"
+# --item 只喂点名那几道：另摆一道坏成恒绿的阶段，没点名它时整趟要绿（证明它没被起），点名它时要红
+r="$tmpd/stage-selftest-item"; mkdir -p "$r/.claude/gate.d/fixtures/10-demo.sh/red" "$r/.claude/gate.d/fixtures/10-demo.sh/green" "$r/.claude/gate.d/fixtures/30-broken.sh/red"
+printf '#!/usr/bin/env bash\n[[ -f "${1:-.}/bad.txt" ]] && { echo "  拒绝：有 bad.txt"; exit 1; }\necho "  通过：没有 bad.txt"\n' > "$r/.claude/gate.d/10-demo.sh"
+printf 'exit=1\nwant=有 bad.txt\n' > "$r/.claude/gate.d/fixtures/10-demo.sh/red/expect"
+: > "$r/.claude/gate.d/fixtures/10-demo.sh/red/bad.txt"
+printf 'exit=0\n' > "$r/.claude/gate.d/fixtures/10-demo.sh/green/expect"
+printf '#!/usr/bin/env bash\necho "  通过：恒绿"\n' > "$r/.claude/gate.d/30-broken.sh"
+printf 'exit=1\nwant=有 bad.txt\n' > "$r/.claude/gate.d/fixtures/30-broken.sh/red/expect"
+: > "$r/.claude/gate.d/fixtures/30-broken.sh/red/bad.txt"
+printf '#!/usr/bin/env bash\necho "  通过：没有样本的阶段"\n' > "$r/.claude/gate.d/20-nosample.sh"
+run_scripted "stage-selftest/--item 只喂点名的阶段" 0 "点名的 1 道阶段判得都对（2 个样本）：10-demo.sh" -- \
+  bash "$SCRIPTS/stage-selftest.sh" "$r/.claude/gate.d" --item 10-demo.sh
+run_scripted "stage-selftest/--item 点名坏阶段要红" 1 "30-broken.sh                 red   期望退出 1，实测 0" -- \
+  bash "$SCRIPTS/stage-selftest.sh" "$r/.claude/gate.d" --item 30-broken.sh
+run_scripted "stage-selftest/--item 写错退 2 并列出可点名的阶段" 2 "--item nope.sh：" "       10-demo.sh" "       30-broken.sh" -- \
+  bash "$SCRIPTS/stage-selftest.sh" "$r/.claude/gate.d" --item nope.sh
+run_scripted "stage-selftest/--item 缺阶段名退 2" 2 "--item （缺阶段名）" -- \
+  bash "$SCRIPTS/stage-selftest.sh" "$r/.claude/gate.d" --item
+run_scripted "stage-selftest/--list-items 只列配了样本的阶段" 0 "10-demo.sh" "30-broken.sh" -- \
+  bash "$SCRIPTS/stage-selftest.sh" "$r/.claude/gate.d" --list-items
 
 # ── 脚本执行位：暂存区里丢了可执行位，工作区那份还是可执行的 ──────
 # 手工暂存时写死 100644 就是这个形态，而在工作区上跑的门禁一声不吭。
@@ -987,6 +1011,16 @@ run_scripted "script-modes/射程里不在 git 仓的目录要报出来" 0 "脚�
 mkdir -p "$r/ignored-copy"; printf 'ignored-copy/\n' > "$r/.gitignore"; printf '#!/usr/bin/env bash\necho hi\n' > "$r/ignored-copy/tool.sh"
 run_scripted "script-modes/射程里一个已跟踪脚本都没有的目录要报出来" 0 "$r/ignored-copy（一个已跟踪的 .sh / .py 都没有" -- \
   bash "$SCRIPTS/script-modes.sh" "$r/scripts" "$r/ignored-copy"
+# 空目录 git 存不下：工作区里靠它过的样本，到了提交与 --staged 的临时树里就没有那个目录
+mkdir -p "$r/scripts/fixtures/sample/rules"
+run_scripted "script-modes/射程里有空目录判红" 1 "$r/scripts/fixtures/sample/rules 是空目录" "1 个空目录" -- \
+  bash "$SCRIPTS/script-modes.sh" "$r/scripts"
+: > "$r/scripts/fixtures/sample/rules/.keep"
+run_scripted "script-modes/空目录放了 .keep 就通过" 0 "没有空目录" -- \
+  bash "$SCRIPTS/script-modes.sh" "$r/scripts"
+printf 'scripts/build-cache/\n' >> "$r/.gitignore"; mkdir -p "$r/scripts/build-cache"
+run_scripted "script-modes/被 .gitignore 挡着的空目录不判" 0 "没有空目录" -- \
+  bash "$SCRIPTS/script-modes.sh" "$r/scripts"
 # 符号链接形式的阶段：判它在暂存区里指向的那一份。此前链接本身的 120000 被判成「.sh 要可执行」，给的出路对链接不起作用
 mk_linked_stage_repository() { # mk_linked_stage_repository <目录> <指向的脚本在暂存区里的模式：+x 或 -x>
   git -C "$1" init -q 2>/dev/null || { mkdir -p "$1" && git -C "$1" init -q; }
@@ -1081,7 +1115,7 @@ run_scripted "manifest/包里没有 I18N 也照常判" 0 "清单与规范文本�
   bash -c 'bash "$1/scripts/manifest.sh" --update >/dev/null && bash "$1/scripts/manifest.sh"' _ "$r"
 
 # ════ bump.sh ════════════════════════════════════════════
-head1 "门禁自检：bump.sh 的判别力"
+head1 "门禁自证：bump.sh 的判别力"
 # 此前零覆盖：一次升全部语言的 VERSION，靠的就是「先查全部在场、再动手」这一个顺序。
 # 在 <族目录>/f-zh 放一个只带 bump.sh 的包；清单生成换成桩，这里只测版本号那一半。
 mk_bump_pkg() { # mk_bump_pkg <族目录> <声明的语言...>
@@ -1104,7 +1138,7 @@ r="$tmpd/bump-ok"; mk_bump_pkg "$r" zh en; mkdir -p "$r/f-en"
 run_scripted "bump/全部语言仓都在就一起升" 0 "f-zh  → 0.0.2" "f-en  → 0.0.2" -- bash "$r/f-zh/scripts/bump.sh" 0.0.2
 
 # ════ install.sh ═════════════════════════════════════════
-head1 "门禁自检：install.sh 的判别力"
+head1 "门禁自证：install.sh 的判别力"
 # 版本戳只许往上走。副本比项目声明的版本旧时照写，就是把戳**降级**，而戳是入库的——
 # 降级顺着提交传给所有人，门禁从此按旧规矩判（审计实测这条路是通的）。
 r="$tmpd/inst-downgrade"; mkdir -p "$r/proj"
@@ -1124,7 +1158,7 @@ run_scripted "install/包装说得清副本不在" 1 "找不到共享脚本" -- 
 # 不直接跑真 gate.sh：它把 selftest 当一个阶段跑，那样会无限递归。
 # 改成把 gate.sh + lib.sh 拷进一个临时包，各子脚本换成**桩**（按参数决定退出码）。
 # 这样测的正是 run_stage 的记录、汇总的判读、以及最终退出码——与子脚本无关。
-head1 "门禁自检：gate.sh 判决逻辑的判别力"
+head1 "门禁自证：gate.sh 判决逻辑的判别力"
 STUB_CONDITIONS='# admission: always 桩：selftest 里替真脚本占位，每次调都有意义
 # run-condition: none 桩：不碰任何环境'
 mk_gate_pkg() { # mk_gate_pkg <目录> [要让哪个桩失败]
@@ -1274,8 +1308,8 @@ GATE_BASE=HEAD GATE_STAGED_FROM=/nonexistent run_scripted "selftest/自己起的
   bash -c 'echo "GATE_BASE=${GATE_BASE:-<空>}"; echo "GATE_STAGED_FROM=${GATE_STAGED_FROM:-<空>}"'
 
 # 样本仓也不看用户的全局 / 系统 git 配置（头部两个 export 钉的就是这个）。
-# 不钉的话，用户开着 commit.gpgsign 之类，第一个样本仓就建不起来，set -e 把整个自检带走——
-# 打出来是「判错 0 条」加一行 git 的报错，看着不像自检失败（审计实测 rc=128）。
+# 不钉的话，用户开着 commit.gpgsign 之类，第一个样本仓就建不起来，set -e 把整个自证带走——
+# 打出来是「判错 0 条」加一行 git 的报错，看着不像自证失败（审计实测 rc=128）。
 run_scripted "selftest/样本仓不看用户的全局 git 配置" 0 "GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1" -- \
   bash -c 'echo "GIT_CONFIG_GLOBAL=${GIT_CONFIG_GLOBAL:-<空>} GIT_CONFIG_NOSYSTEM=${GIT_CONFIG_NOSYSTEM:-<空>}"'
 
@@ -1287,7 +1321,7 @@ run_scripted "gate/--staged 不把 GATE_STAGED_FROM 漏给本地阶段" 0 "GATE_
   bash "$r/pkg/scripts/gate.sh" --staged "$r/proj"
 
 # 被门禁的是 SOP 仓自身时，--staged 要跑临时树里那份脚本、按 SOP 仓判；跑源仓的脚本会把临时树当消费项目，
-# 报「缺版本戳」判红，只在 SOP 仓跑的三个阶段还静默不跑（审计实测）。
+# 报「缺版本戳」判红，只在 SOP 仓跑的四个阶段还静默不跑（审计实测）。
 r="$tmpd/gate-staged-self"; mk_gate_pkg "$r"
 git -C "$r" init -q && git -C "$r" add -A && git -C "$r" -c user.name=t -c user.email=t@t commit -qm base
 printf '# 规则乙\n' >> "$r/rules/a.md"; git -C "$r" add rules/a.md
@@ -1321,7 +1355,7 @@ run_scripted "gate/认不出的参数要拒绝" 1 "认不出的参数：--stagd"
   bash "$r/pkg/scripts/gate.sh" --stagd "$r/proj"
 
 # 判「被门禁的是不是 SOP 仓自身」要按物理路径：只比 pwd 的话，经符号链接跑就判成消费项目，
-# 报「缺版本戳」判红，只在 SOP 仓跑的三个阶段还静默不跑（审计实测）。
+# 报「缺版本戳」判红，只在 SOP 仓跑的四个阶段还静默不跑（审计实测）。
 r="$tmpd/gate-symlink"; mk_gate_pkg "$r/pkg"; ln -s "$r/pkg" "$r/link"
 run_scripted "gate/经符号链接也认得出 SOP 仓自身" 0 "本仓即 SOP 本身" -- \
   bash "$r/link/scripts/gate.sh" "$r/pkg"
@@ -1488,7 +1522,7 @@ run_scripted "gate/版本戳对不上时那条拒绝打得出来" 1 "规范版�
   bash "$r/proj/.claude/f/scripts/gate.sh" "$r/proj"
 
 # ── gate.sh 的判决分支：改成无条件记 PASS 也要有人发现 ──
-# 审计实测：把这几处改成 record PASS，自检 292 例一个都没红——判决点自己没人盯。
+# 审计实测：把这几处改成 record PASS，自证 292 例一个都没红——判决点自己没人盯。
 # 本地阶段要交给两个 lint：它们和共享阶段一样会拒绝提交者。
 r="$tmpd/gate-lintextra"; mk_gate_pkg "$r/pkg"; mk_staged_project "$r/proj"
 cp "$SCRIPTS/gate-lint.sh" "$SCRIPTS/shell-lint.sh" "$r/pkg/scripts/"
@@ -1714,7 +1748,7 @@ printf 'nice -n 5  # 样本：工作区里有、没进暂存区的前缀登记\n
 run_scripted "gate/--staged 时前缀登记没进暂存区要判红" 1 "HEAD + 暂存区里没有它" -- bash "$r/pkg/scripts/gate.sh" --staged "$r/proj"
 
 # ════ changelog-lint ═════════════════════════════════════
-head1 "门禁自检：changelog-lint 的判别力"
+head1 "门禁自证：changelog-lint 的判别力"
 [[ -d "$FX/changelog-lint" ]] || { bad "缺样本目录 $FX/changelog-lint"
   howto "样本要随仓走。没有样本，下一个改 changelog-lint.sh 的人无从复跑。"; exit 1; }
 for d in "$FX"/changelog-lint/*/; do
@@ -1723,7 +1757,7 @@ done
 collect_fixtures
 
 # ════ naming-lint ════════════════════════════════════════
-head1 "门禁自检：naming-lint 的判别力"
+head1 "门禁自证：naming-lint 的判别力"
 [[ -d "$FX/naming-lint" ]] || { bad "缺样本目录 $FX/naming-lint"
   howto "样本要随仓走。没有样本，下一个改 naming-lint.sh 的人无从复跑。"; exit 1; }
 for d in "$FX"/naming-lint/*/; do
@@ -1732,7 +1766,7 @@ done
 collect_fixtures
 
 # ════ version-discipline ═════════════════════════════════
-head1 "门禁自检：version-discipline 的判别力"
+head1 "门禁自证：version-discipline 的判别力"
 mk_sop() { # mk_sop <目录> —— 一个已提交基线的最小规范仓
   mkdir -p "$1/scripts"
   printf '0.0.1\n' > "$1/VERSION"
@@ -1765,13 +1799,14 @@ run_scripted "version-discipline/降级要红" 1 降级了 -- bash "$SCRIPTS/ver
 
 # CHANGELOG 不在 GOVERNED 里：它是记版本变更的地方，改它本身不构成规范变更。
 # （README.md 曾经被当成这个用例的「无关改动」，纳入 GOVERNED 后这里当场红——
-#  自检起作用的样子就是这样。）
+#  自证起作用的样子就是这样。）
 r="$tmpd/vd-na"; mk_sop "$r"
 echo note > "$r/CHANGELOG.md"
 run_scripted "version-discipline/无关改动记无对象可判" 77 "版本纪律无对象可判" -- bash "$SCRIPTS/version-discipline.sh" "$r"
 
-# GOVERNED 是脚本自称的唯一权威，**每一项都要有人盯**：
-# 复核实测，9 项里只有 scripts/ 与 README.md 有样本，其余 7 项可以静默摘掉。
+# GOVERNED（scripts/version-discipline.sh）是脚本自称的唯一权威，**每一项都要有人盯**：
+# scripts/ 由别的用例盯着（改 scripts/x.sh 的那几例），其余每一项在这个循环里各有一例；GOVERNED 加了一项，这里跟着加一例，
+# 不然摘掉那一项也没有用例会红。
 for gp in README.md CLAUDE.md install.sh GLOSSARY.md I18N \
           rules/a.md skills/s/SKILL.md templates/t.md agents/a.md; do
   r="$tmpd/vd-gov-$(printf '%s' "$gp" | tr '/.' '__')"; mk_sop "$r"
@@ -1801,9 +1836,9 @@ printf 'echo more\n' >> "$r/scripts/x.sh"; printf '0.0.0\n' > "$r/VERSION"
 run_scripted "version-discipline/基准里的 VERSION 读不出就判不了" 1 "却读不出它的内容" -- env PATH="$fake_git_show_directory:$PATH" bash "$SCRIPTS/version-discipline.sh" "$r"
 
 # ════ manifest 与 i18n-sync（失败分支曾静默崩溃，这两条是回归钉）══
-head1 "门禁自检：manifest / i18n-sync 的判别力"
-# 搭样本用的盖章。失败要当场说清：输出丢进 /dev/null 的话，lib.sh 的 set -e 会把整个自检一声不响地带走，
-# 后面几十个用例一个都不跑，只剩一个退出码 1（审核实测：盖章与回读的形态一对不上，自检停在第 245 例）。
+head1 "门禁自证：manifest / i18n-sync 的判别力"
+# 搭样本用的盖章。失败要当场说清：输出丢进 /dev/null 的话，lib.sh 的 set -e 会把整个自证一声不响地带走，
+# 后面几十个用例一个都不跑，只剩一个退出码 1（审核实测：盖章与回读的形态一对不上，自证停在第 245 例）。
 setup_stamp() { # setup_stamp <参照仓> <语言> <篇目...>
   local ref="$1" lang="$2" log; shift 2
   log="$(mktemp)"
@@ -1990,7 +2025,7 @@ run_scripted "i18n-sync/--stamp 回读对不上要拒绝" 1 "盖章后回读不�
 # ════ check.sh（此前零用例）══════════════════════════════
 # 复核实测：删掉整个 cargo test 阶段、或去掉 clippy 的 -D warnings，selftest 无感。
 # 它是门禁的「构建与单测」阶段，坏了等于代码根本没被验过。
-head1 "门禁自检：check.sh 的判别力"
+head1 "门禁自证：check.sh 的判别力"
 if command -v cargo >/dev/null 2>&1; then
   mk_crate() { # mk_crate <目录> <lib.rs 内容>
     mkdir -p "$1/src"
@@ -2094,7 +2129,7 @@ fi
 # 装出来的项目里不许留分发层的账：溯源标记是「这份译文译自哪个版本」，
 # 抄进使用者项目就是一条永不更新的陈旧标注，而且贴在他马上要改的文件上。
 # 实测过：第一版原样 cp，装出来的 CLAUDE.md 第 1 行就是 generated-from。
-head1 "门禁自检：install.sh 铺出来的东西"
+head1 "门禁自证：install.sh 铺出来的东西"
 # 从一个**模板带着溯源标记**的包里装——参照仓自己的模板没有标记（它是源文），
 # 拿它装什么也测不出来。译本仓的模板才带标记，那才是使用者实际装的东西。
 pkg="$tmpd/inst-pkg"; cp -a "$SCRIPTS/.." "$pkg"
@@ -2230,7 +2265,7 @@ fi
 
 # ════ lib.sh 的环境守卫（此前零覆盖）═════════════════════
 # 两道守卫都是「判定结果不许随环境变」的前提，坏了不会报错，只会悄悄改判。
-head1 "门禁自检：环境守卫的判别力"
+head1 "门禁自证：环境守卫的判别力"
 
 # LC_ALL：lib.sh 把 locale 钉成 UTF-8。摘掉之后，C locale 下 gawk 按字节走，
 # doc-lint 的编号引用检查会把每处「D1（简称）」都误判成「括注没闭合」（复核实测）。
@@ -2255,7 +2290,7 @@ run_scripted "lib/die 少了出路也要兜一句" 1 怎么办 -- \
 # ════ manifest：CLAUDE.md 必须在清单里 ═══════════════════
 # manifest.sh 专门写了一段解释它为什么在清单里（它是规范正文、还规定对话语言）。
 # 复核实测：把它从 gen() 里摘掉，只改 CLAUDE.md 时清单照样「一致」。
-head1 "门禁自检：manifest 覆盖面"
+head1 "门禁自证：manifest 覆盖面"
 p="$tmpd/mani-claude/f-zh"; mkdir -p "$(dirname "$p")"; mk_pkg "$p" f
 printf '改了规范正文\n' >> "$p/CLAUDE.md"
 run_scripted "manifest/只改 CLAUDE.md 也要红" 1 不一致 -- bash "$p/scripts/manifest.sh"
@@ -2293,7 +2328,7 @@ p="$tmpd/i18n-noi18n/f-zh"; mkdir -p "$(dirname "$p")"; mk_pkg "$p" f; rm -f "$p
 run_scripted "i18n-sync/没有 I18N 退 77" 77 "未声明语言族" -- bash "$p/scripts/i18n-sync.sh"
 
 # ════ link-targets、env、rules-lint --not-impl（此前没有直接喂它们的用例）══
-head1 "门禁自检：link-targets / env / rules-lint --not-impl 的判别力"
+head1 "门禁自证：link-targets / env / rules-lint --not-impl 的判别力"
 # link-targets 按当前目录找文档：门禁里是先 cd 到项目根再起它
 link_targets_in=(bash -c 'cd "$1" && python3 "$2/link-targets.py"' link_targets_in)
 r="$tmpd/link-targets"; mkdir -p "$r/docs"
@@ -2318,7 +2353,7 @@ r="$tmpd/env-git"; mkdir -p "$r/old" "$r/new"
 printf '#!/usr/bin/env bash\n[[ "${1:-}" == --version ]] && { echo "git version 2.27.0"; exit 0; }\nexec %q "$@"\n' "$(command -v git)" > "$r/old/git"
 printf '#!/usr/bin/env bash\n[[ "${1:-}" == --version ]] && { echo "git version 2.28.1"; exit 0; }\nexec %q "$@"\n' "$(command -v git)" > "$r/new/git"
 chmod +x "$r/old/git" "$r/new/git"
-# 只看 git 这一条判没判：env.sh 的退出码还取决于这台机器缺不缺别的（dmsetup 之类）
+# 只看 git 这一条判没判：env.sh 的退出码还取决于这台机器缺不缺别的工具
 env_reports_old_git=(bash -c 'env_output="$(env PATH="$1:$PATH" bash "$2/env.sh" 2>&1)"; printf "%s\n" "$env_output"
   if grep -q "git 版本过低（git version" <<<"$env_output"; then echo "判定：报了 git 过低"; else echo "判定：没报 git 过低"; fi' env_reports_old_git)
 run_scripted "env/git 2.27 判过低" 0 "判定：报了 git 过低" -- "${env_reports_old_git[@]}" "$r/old" "$SCRIPTS"
@@ -2341,7 +2376,7 @@ run_scripted "rules-lint/没有词表的语言退 77，不记通过" 77 "规则�
   env RULES_LINT_DIR="$FX/rules-lint/ok/rules" bash "$r/scripts/rules-lint.sh" "$FX/rules-lint/ok"
 
 # ════ push-all ═══════════════════════════════════════════
-head1 "门禁自检：push-all 的判别力"
+head1 "门禁自证：push-all 的判别力"
 # 三个语言仓各带一个没推的提交，各配一个本地裸仓当远端；gate.sh 用桩，红绿由参数定。
 # 推 master 只走 push-all.sh：先验完三个仓，才逐个连远端推验过的那个提交；直接 git push master 由钩子当场拒绝。
 mk_push_family() { # mk_push_family <目录> [门禁判红的语言] [门禁跑的时候又提交一次的语言]
@@ -2439,9 +2474,9 @@ run_scripted "push-all/推到一半被拒要报出已推的仓" 1 "en：推送�
 # ── 汇总 ────────────────────────────────────────────────
 say ""
 [[ $cases -gt 0 ]] || { bad "一个用例都没跑"
-  howto "样本目录空了。至少要有一个该绿的和一个该红的，否则这个自检本身什么也不证明。"; exit 1; }
-[[ $fails -eq 0 ]] || { bad "门禁自检失败：$fails 个用例判错（共 $cases）"; exit 1; }   # gate-lint:summary
-ok "门禁自检通过：$pass 个用例判定与预期一致（SELFTEST_VERBOSE=1 看逐条）；本次未跑 $PREFLIGHT_PARTS_NOT_RUN 部分"
+  howto "样本目录空了。至少要有一个该绿的和一个该红的，否则这个自证本身什么也不证明。"; exit 1; }
+[[ $fails -eq 0 ]] || { bad "门禁自证失败：$fails 个用例判错（共 $cases）"; exit 1; }   # gate-lint:summary
+ok "门禁自证通过：$pass 个用例判定与预期一致（SELFTEST_VERBOSE=1 看逐条）；本次未跑 $PREFLIGHT_PARTS_NOT_RUN 部分"
 # 记下这一次的输入指纹：登记的文件与工具链都没变，下一次就不必再跑（文件头的 inputs-changed）。
 # 有一部分本次未跑时 preflight_record_success 不记（preflight.sh），下一次照跑
 preflight_record_success

@@ -1,5 +1,5 @@
 exit=1
-want=kb 正文不许用上下文指代
+want=kb 正文不许用位置指代
 want=> 样本01
 want=> 样本02
 want=> 样本03

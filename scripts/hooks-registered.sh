@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # gate-similar: stage-selftest.sh 它拿 fixtures 下的红绿样本证明 gate.d 的阶段会红；钩子的证据是在 settings.json 里注册着、带 --selftest 自证，输入与协议都不同
-# admission: always 判的是此刻 settings.json 的注册与钩子的自检，两边随时在改
+# admission: always 判的是此刻 settings.json 的注册与钩子的自证，两边随时在改
 # run-condition: command python3
 # 工具层的闸注册着、而且会拒绝。
 #
@@ -11,7 +11,7 @@
 #
 # 判据，对 `.claude/hooks/` 与装进来的 SOP 副本 `scripts/claude-hooks/` 下每个 `*.sh`：
 #   ① `.claude/settings.json` 的 hooks.* 里有一条 command 指向它（按文件名的边界认，见 hook-registrations.py）；
-#   ② 它带 `--selftest` 时，自检要通过（自检本身证明这道闸会拒绝）；
+#   ② 它带 `--selftest` 时，自证要通过（自证本身证明这道闸会拒绝）；
 #   ③ 它文件头写了 `# hook-events: <事件> …` 时，每个事件都有一条注册指向它——
 #      只挂了一部分（比如只挂 Stop、没挂 SubagentStop），没挂上的那一类 agent 那里这道闸不在。
 #      写成 `<事件>:<工具名>` 的（只该在某个工具上触发），那条注册的 matcher 还要认得这个工具名（空 matcher 与 * 认全部）：
@@ -138,13 +138,13 @@ if ((${#unhooked_events[@]})); then
   exit 1
 fi
 if ((${#failed[@]})); then
-  bad "${#failed[@]} 个钩子的自检没过：${failed[*]}"   # gate-lint:summary
-  howto "上面是它自检的输出。修那个钩子，再跑 bash <钩子> --selftest 看它转绿。" \
-        "自检就是这道闸「会拒绝」的证据，自检不过等于闸开着。"
+  bad "${#failed[@]} 个钩子的自证没过：${failed[*]}"   # gate-lint:summary
+  howto "上面是它自证的输出。修那个钩子，再跑 bash <钩子> --selftest 看它转绿。" \
+        "自证就是这道闸「会拒绝」的证据，自证不过等于闸开着。"
   exit 1
 fi
 if ((${#optional_unregistered[@]})); then
-  ok "$checked 个钩子里 $((checked - ${#optional_unregistered[@]})) 个注册着，其中 $selftested 个的自检通过；${#optional_unregistered[@]} 个可选钩子没注册：${optional_unregistered[*]}"
+  ok "$checked 个钩子里 $((checked - ${#optional_unregistered[@]})) 个注册着，其中 $selftested 个的自证通过；${#optional_unregistered[@]} 个可选钩子没注册：${optional_unregistered[*]}"
 else
-  ok "$checked 个钩子都注册着，其中 $selftested 个的自检通过"
+  ok "$checked 个钩子都注册着，其中 $selftested 个的自证通过"
 fi

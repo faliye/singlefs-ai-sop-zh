@@ -1,6 +1,6 @@
 # kb 索引
 
-**规则不放 kb，放 [singlefs-ai-sop/rules/](../singlefs-ai-sop/CLAUDE.md)。**
+**规则不放 kb，放 [singlefs-ai-sop/rules/](../singlefs-ai-sop/rules/)。**
 kb 里只放事实、决策、调研和实测数据。
 
 | 文件 | 内容 |
@@ -10,4 +10,4 @@ kb 里只放事实、决策、调研和实测数据。
 | [invariants.md](invariants.md) | 不变量清单。项目的检查是它的可执行形式 |
 | [prior-art.md](prior-art.md) | 他家方案调研，含来源与口径 |
 | [pitfalls.md](pitfalls.md) | 避坑清单。每做一个设计决定就回来对一遍 |
-| [checks-owed.md](checks-owed.md) | 欠的检查：知道要拦什么、但现在还拦不了的，带前置条件 |
+| [checks-owed.md](checks-owed.md) | 欠账表：知道要拦什么、但现在还拦不了的检查，带前置条件 |

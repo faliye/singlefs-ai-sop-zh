@@ -31,7 +31,7 @@
 #
 # 默认不扫 target/、.git/、.claude/（工具、样本、装进来的 SOP 副本），以及 $ROOT/scripts/fixtures/。
 # 后一条写成相对 ROOT 的前缀：selftest 拿样本目录当 ROOT 跑时，样本照查
-# （写成 */fixtures/* 的话样本永远被跳过，自检就成了摆设——doc-lint 踩过）。
+# （写成 */fixtures/* 的话样本永远被跳过，自证就成了摆设——doc-lint 踩过）。
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 preflight "${BASH_SOURCE[0]}" "$@"; set -- ${PREFLIGHT_ARGUMENTS[@]+"${PREFLIGHT_ARGUMENTS[@]}"}
 
