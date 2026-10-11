@@ -1,21 +1,18 @@
 #!/usr/bin/env bash
 # gate-similar: doc-lint.sh 它判 markdown 里的「编号（简称）」；这一道把同一条判据延到 kb 之外的源码注释与记录。登记标题的解析两边各写了一份，没抽成共用：doc-lint 那份在 awk 里、按 markdown 的结构认，抽出来要先把它从 awk 里拆出来
-# gate-similar: link-targets.py 读 .claude/doc-lint-exclude、找 SOP 副本目录的两个函数，它、这一道与 relay-timing-lint.py 各写了一份，三份已经分叉（候选路径、结尾斜杠的处理不同）；抽成共用要先定哪一份的行为对，没在加查重门禁的这一次动它们
+# gate-similar: link-targets.py 读 .claude/doc-lint-exclude 的函数，它、这一道与 relay-timing-lint.py 各写了一份，三份已经分叉（结尾斜杠的处理不同），抽成共用要先定哪一份的行为对，没在加查重门禁的这一次动它们；SOP 副本目录两边都从 package-family.py 取
 # admission: always 判的是此刻仓里的源码注释与记录，几秒跑完；每一轮门禁都现判
 # run-condition: command python3
 # 编号与简称在 doc-lint 够不到的地方也要一致。
 #
-# `doc-lint.sh` 管的是 kb 里的 markdown。而编号引用还散在 kb 之外的**源码注释（.rs）与记录（.md）**里，
-# 那些地方没有任何东西在看：编号在引用处只剩一个符号，含义能被悄悄改掉而没有一个字别扭
+# doc-lint.sh 只管 kb 里的 markdown；这一道管 kb 之外的源码注释（.rs）与记录（.md）
 # （rules/kb-discipline.md 第 5 条：编号只能做索引，不能做称呼）。
-# 原是使用者项目的一个本地阶段，判据通用，收归这里。
 #
-# 登记位：只读 .claude/kb/experiments/*.md（E 编号）与 .claude/kb/decisions/*.md（D 编号）各文件的首行
-#   `## <编号> <简称> —— <状态>`，与 doc-lint 的「登记标题」同形态。别处登记的编号这一道不认。
-# 射程：默认扫仓根下的 .rs / .md（SCANNED_SUFFIXES；.claude/kb/、装进项目的 SOP 副本、fixtures 与冻结证据除外），
+# 登记位：只读 kb 目录（.claude/kb-directories 登记，没登记就是 .claude/kb）下 experiments/*.md（E 编号）与
+#   decisions/*.md（D 编号）各文件的首行 `## <编号> <简称> —— <状态>`，与 doc-lint 的「登记标题」同形态。别处登记的编号这一道不认。
+# 射程：默认扫仓根下的 .rs / .md（SCANNED_SUFFIXES；kb 目录、装进项目的 SOP 副本、fixtures 与冻结证据除外），
 #   也可以把目录作为参数给，后缀照样只认这两种。
-# 冻结证据按项目根的 .claude/doc-lint-exclude 绕开：那是原样保存的输入，
-# 里面的旧简称是当时写的，要改只能连同重跑一起改（rules/evidence-discipline.md）。
+# 冻结证据按项目根的 .claude/doc-lint-exclude 绕开：原样保存的输入，要改只能连同重跑一起改（rules/evidence-discipline.md）。
 #
 # 用法：
 #   number-name-sync.sh [仓根] [要扫的目录…]
@@ -23,6 +20,8 @@
 set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/preflight.sh"
 preflight "${BASH_SOURCE[0]}" "$@"; set -- ${PREFLIGHT_ARGUMENTS[@]+"${PREFLIGHT_ARGUMENTS[@]}"}
+NUMBER_NAME_PACKAGE_SCRIPTS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export NUMBER_NAME_PACKAGE_SCRIPTS
 ROOT="${1:-.}"
 if ! cd "$ROOT" 2>/dev/null; then
   echo "  ✗ 找不到仓根：$ROOT" >&2
@@ -30,14 +29,52 @@ if ! cd "$ROOT" 2>/dev/null; then
   exit 2
 fi
 shift 2>/dev/null || true
-[[ -d .claude/kb ]] || exit 77
+
+# kb 目录登记（rules/kb-discipline.md）：.claude/kb-directories 一行一条，相对项目根，`#` 后写理由；
+# 没有这份文件时就是默认的 .claude/kb。
+# gate-overlap:copy-kept lib.sh 的 kb_directories 判法相同，这里不调它：这份脚本只声明 run-condition: command python3，
+# source lib.sh 会额外带上它对 GNU awk 的硬要求，给这一道加一个它没声明过的环境依赖。
+KB_DIRS=()
+if [[ -f .claude/kb-directories ]]; then
+  kb_line_number=0
+  while IFS= read -r kb_raw_line || [[ -n "$kb_raw_line" ]]; do
+    kb_line_number=$((kb_line_number + 1))
+    kb_stripped="${kb_raw_line#"${kb_raw_line%%[![:space:]]*}"}"
+    [[ -z "$kb_stripped" || "$kb_stripped" == \#* ]] && continue
+    kb_path="${kb_raw_line%%#*}"; kb_path="${kb_path%"${kb_path##*[![:space:]]}"}"; kb_path="${kb_path#"${kb_path%%[![:space:]]*}"}"
+    kb_reason="${kb_raw_line#*#}"
+    if [[ "$kb_raw_line" != *'#'* || -z "${kb_reason//[[:space:]]/}" || -z "$kb_path" ]]; then
+      echo "  ✗ .claude/kb-directories:$kb_line_number 没写理由，或路径是空的：$kb_raw_line" >&2
+      echo "     → 怎么办：一行一条： <相对项目根的路径>  # 为什么（理由不许省）。" >&2
+      exit 2
+    fi
+    if [[ ! -d "$kb_path" ]]; then
+      echo "  ✗ .claude/kb-directories:$kb_line_number 登记的目录不存在：$kb_path" >&2
+      echo "     → 怎么办：改对路径（相对项目根），或删掉这一行。" >&2
+      exit 2
+    fi
+    KB_DIRS+=("${kb_path%/}")
+  done < .claude/kb-directories
+fi
+if ((${#KB_DIRS[@]})); then KB_SCAN_DIRS=("${KB_DIRS[@]}"); else KB_SCAN_DIRS=(.claude/kb); fi
+kb_any_exists=0
+for kb_scan_dir in "${KB_SCAN_DIRS[@]}"; do [[ -d "$kb_scan_dir" ]] && kb_any_exists=1; done
+((kb_any_exists)) || exit 77
+export NUMBER_NAME_KB_DIRS="${KB_SCAN_DIRS[*]}"
 export NUMBER_NAME_DIRS="$*"
 
 python3 - <<'PY'
 import re, glob, os, sys
+sys.dont_write_bytecode = True
+sys.path.insert(0, os.environ['NUMBER_NAME_PACKAGE_SCRIPTS'])
+from preflight import load_package_module
+PACKAGE_FAMILY = load_package_module('package_family', 'package-family.py')
+
+KB_SCAN_DIRS = [d for d in os.environ.get('NUMBER_NAME_KB_DIRS', '.claude/kb').split() if d]
 
 truth = {}
-for pat, pre in (('.claude/kb/experiments/*.md', 'E'), ('.claude/kb/decisions/*.md', 'D')):
+for kb_dir in KB_SCAN_DIRS:
+  for pat, pre in ((os.path.join(kb_dir, 'experiments', '*.md'), 'E'), (os.path.join(kb_dir, 'decisions', '*.md'), 'D')):
     for f in glob.glob(pat):
         t = open(f, encoding='utf-8').read().split('\n', 1)[0]
         m = re.match(r'## (' + pre + r'\d+) (.+?)\s*——', t)
@@ -61,23 +98,9 @@ def excluded_dirs():
 SKIP_DIRS = {'.git', 'node_modules', 'target'}
 
 
-def package_dir():
-    """装进项目的 SOP 副本不扫：它是上游的文件，判它等于在项目侧判上游。"""
-    for candidate in ('.claude/singlefs-ai-sop/I18N',):
-        try:
-            with open(candidate, encoding='utf-8') as handle:
-                for line in handle:
-                    if line.startswith('family='):
-                        return '.claude/' + line.split('=', 1)[1].strip() + '/'
-        except OSError:
-            pass
-    return '.claude/singlefs-ai-sop/'
-
-
-SKIP_PREFIX = ('.claude/kb/', package_dir()) + excluded_dirs()
-# 默认只看**源码注释与记录**（.rs / .md）。脚本（.sh / .py）里写 `D1（简称）` 多半是
-# 格式说明或样本数据，不是对某条编号的引用——扫它们假红压倒真红（实测于使用者项目）。
-# 项目要扩就把目录作为参数传进来。
+# 装进项目的 SOP 副本不扫：它是上游的文件，判它等于在项目侧判上游。
+SKIP_PREFIX = tuple(d.rstrip('/') + '/' for d in KB_SCAN_DIRS) + (PACKAGE_FAMILY.installed_package_directory(),) + excluded_dirs()
+# 不扫 .sh / .py：脚本里的 `D1（简称）` 多半是格式说明或样本数据，扫它们假红压倒真红（实测）。
 SCANNED_SUFFIXES = ('.rs', '.md')
 given = [d for d in os.environ.get('NUMBER_NAME_DIRS', '').split() if d]
 roots = given or ['.']
@@ -96,9 +119,7 @@ for start in roots:
 bad = []
 for f in sorted(set(targets)):
     for i, line in enumerate(open(f, encoding='utf-8', errors='ignore'), 1):
-        # 简称本身可以含一层全角括号（D14 的「双轨（大小文件 / 持久临时）」）。
-        # naive 的 [^）]* 吃到第一个「）」就停，于是**没有任何写法能让这类引用通过**——
-        # 实测 2026-09-06：records/ 里写对的 D14 引用被判红，只能退回裸编号绕开。
+        # 简称可以含一层全角括号：[^）]* 吃到第一个「）」就停，这类引用怎么写都判红（实测）。
         for num, nm in re.findall(r'([ED]\d+)（((?:[^（）]|（[^（）]*）)*)）', line):
             if num in truth and truth[num] != nm:
                 bad.append((f, i, num, nm, truth[num]))

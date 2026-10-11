@@ -9,11 +9,8 @@
     relay-timing-lint.py --check [仓库根]   # 扫仓根下的顶层目录（SKIP_DIRECTORIES 与点开头的不扫，.claude* 照扫）里的 .rs 与 .py，逐处报「文件:行」与循环头；不给仓库根就判当前目录所在的 git 仓
     relay-timing-lint.py --selftest         # 自证：内嵌红绿样本逐个判、钉死统计数；再另起一个子进程在弱判据下跑自证，它必须判红
 
-为什么要有它：一个实验的来宾程序在 `for line in BufReader::new(child_output).lines()` 里
-先 `started.elapsed()` 给这一行打时间戳、再 `emitter.emit(...)` 把它转打出去，拿行到达时刻之差当分段挂钟。
-虚机里标准输出是串口，转打一次阻塞几毫秒，而子进程写管道不被挡，于是时间戳里混进了前面几行的打印积压：
-产物里连着打出、中间只有几微秒计算的几行，时间戳跨了 21.7–25.8 ms；两次跑 10 轮里 9 轮，外层算出的第二个事务挂钟
-小于子进程自己计的时间，物理上不可能（2026-09-17 实测）。
+为什么：转打一次会阻塞（虚机里标准输出是串口，几毫秒），子进程写管道不被挡，行的时间戳里就混进前面几行的打印积压。
+实测：只隔几微秒计算的几行，时间戳跨了 20 多 ms；外层算出的挂钟小于子进程自己计的时间。
 
 判据（Rust，先把字符串、字符字面量与注释抹成空白，再按花括号配对取循环体）：
   ① 这个循环在读子进程输出：`for … in <表达式>` 的表达式或 `while` 的条件里有 `.lines()`、`.read_line(`、`.read_until(`，
@@ -62,8 +59,7 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 from preflight import preflight  # noqa: E402
 
-# 扫哪几个顶层目录：不给就扫仓根下**所有**目录（跳过 SKIP_DIRECTORIES 那几个）。
-# 项目的源码与装置住在哪由项目定，上游脚本不写死它的目录名。
+# 空着就扫仓根下所有目录（跳过 SKIP_DIRECTORIES）：项目的源码与装置住在哪由项目定，上游不写死目录名。
 SCANNED_TOP_DIRECTORIES = ()
 SKIP_DIRECTORIES = {".git", "node_modules", "target", "fixtures"}
 
@@ -459,7 +455,6 @@ def scan(root: pathlib.Path) -> ScanResult:
     frozen_file_counts = {directory: 0 for directory in frozen_directories}
     unparsable_files = []
     child_output_loops = []
-    # 不给顶层目录就扫仓根下所有目录：项目的源码与装置住在哪由项目定。
     top_directories = SCANNED_TOP_DIRECTORIES or tuple(
         name for name in sorted(os.listdir(root))
         if (root / name).is_dir() and name not in SKIP_DIRECTORIES and not name.startswith(".")

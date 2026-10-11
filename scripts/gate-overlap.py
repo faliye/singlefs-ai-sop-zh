@@ -24,10 +24,11 @@
     （重定向、tee、cp / mv / install / ln 的目标、touch、sed -i、git mv；跟着 cd 走）。
     认不出的写法：路径拼在变量里、python 或别的解释器里写文件。这些由门禁阶段兜底。
 
-「门禁」：本包 gate.sh 里以 $SCRIPTS/<名> 调的脚本；项目的 .claude/gate.d/*.sh。
-「钩子」：本包的 scripts/claude-hooks/*.sh（本包自己的仓里还有 scripts/githooks/*）；项目的 .claude/hooks/*.sh；
+「门禁」：本包 gate.sh 里以 $SCRIPTS/<名> 调的脚本；项目登记的门禁目录下的阶段（默认 .claude/gate.d/），两种形态过渡期并存：
+  扁平的 `*.sh`，嵌套的 `<名>/<名>.sh`（同目录下的 `*.case.sh` 是它的用例，不算门禁，不参与比对）。
+「钩子」：本包的 scripts/claude-hooks/*.sh（本包自己的仓里还有 scripts/githooks/*）；项目登记的钩子目录下的 *.sh（默认 .claude/hooks/*.sh）；
   以及 .claude/settings.json 里注册命令指向的文件，放在哪个目录、什么后缀都算。符号链接按它自己的路径认。
-③ 的对照范围再加上本包 scripts/ 下其余的脚本，以及 .claude/gate.d/、.claude/hooks/ 下的 .py 助手。
+③ 的对照范围再加上本包 scripts/ 下其余的脚本，以及项目登记的门禁目录、钩子目录下的 .py 助手。
 装进项目的 SOP 副本只当对照，不判：它由上游自己的门禁管。注册命令指不到文件的（内联命令）判不了，成功那句逐个列出。
 
 判不了的一半：点名的那一份是不是真的最像、「为什么不并进去」的理由成不成立，靠 review
@@ -41,17 +42,21 @@
 退出码：0 通过；1 有红；2 参数不对；3 判不了（diff 基准算不出、settings.json 读不了、脚本自己出错）；
   77 这一次没有新加或改动门禁与钩子，或不在 git 仓里（无对象可判，不算通过）。
 """
+import ast
 import importlib.util
+import io
 import os
 import re
 import shlex
 import subprocess
 import sys
+import tokenize
 import traceback
 # 开跑之前先判准入与运行条件（rules/preflight-discipline.md）；不写 __pycache__：门禁跑到一半冒出一个未跟踪的目录，「工作区跑的过程中没变」就对不上
 sys.dont_write_bytecode = True
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
-from preflight import preflight  # noqa: E402
+from preflight import preflight, project_gate_directory as registered_gate_directory, \
+    project_hooks_directory as registered_hooks_directory  # noqa: E402
 
 PACKAGE_SCRIPTS_DIRECTORY = os.path.dirname(os.path.realpath(__file__))
 PACKAGE_ROOT = os.path.dirname(PACKAGE_SCRIPTS_DIRECTORY)
@@ -68,8 +73,8 @@ EXIT_NOTHING_TO_JUDGE = 77
 # 6 行开始出现两份各写一遍的排除表解析这类真抄，同时开始混进几行一样的起手式（读共用库的 importlib 那几行）；
 # 8 行以上只剩真抄的整段。取 8，宁可漏一小段，不让起手式把人逼去写豁免。selftest 用 7 行与 8 行两例钉住它。
 CLONE_MINIMUM_LINES = 8
-# 字面上多像就必须点名：同一批门禁与钩子两两算标识符重合（交集 / 并集），6216 对的中位数 0.10，
-# 0.5 以上只有一对（两个判同一类「对抗审查」的阶段，0.74）。标识符太少的小脚本碰巧重合高，不算。
+# 字面上多像就必须点名：同一批门禁与钩子两两算标识符重合（交集 / 并集，不算注释与文档串）。
+# 上游包加一个使用者项目的 51 份、1275 对现量：中位数 0.07，最高 0.34，没有一对到 0.5。标识符太少的小脚本碰巧重合高，不算。
 SIMILARITY_REQUIRING_NAMING = 0.5
 MINIMUM_IDENTIFIERS_FOR_SIMILARITY = 20
 MINIMUM_REASON_CHARACTERS = 8
@@ -107,7 +112,6 @@ class CannotJudge(Exception):
 
 
 def load_package_module(module_name, file_name):
-    # 不写 __pycache__：它会是仓里一个未跟踪的新目录，门禁跑到一半冒出来，「工作区跑的过程中没变」那一项就对不上
     sys.dont_write_bytecode = True
     specification = importlib.util.spec_from_file_location(
         module_name, os.path.join(PACKAGE_SCRIPTS_DIRECTORY, file_name))
@@ -144,6 +148,19 @@ def top_level_files(directory, suffixes):
         full_path = os.path.join(real_directory, name)
         if os.path.isfile(full_path) and (suffixes is None or name.endswith(suffixes)):
             found.append(full_path)
+    return found
+
+
+def nested_gate_stages_in(gate_directory):
+    """新形态门禁阶段：`<gate_directory>/<名>/<名>.sh`，与扁平的 `<gate_directory>/<名>.sh` 过渡期并存。
+    同目录下的用例文件 `*.case.sh` 是喂给阶段的数据，不算门禁，不参与比对。"""
+    if not os.path.isdir(gate_directory):
+        return []
+    found = []
+    for name in sorted(os.listdir(gate_directory)):
+        candidate = os.path.join(gate_directory, name, name + '.sh')
+        if os.path.isfile(candidate):
+            found.append(candidate)
     return found
 
 
@@ -195,8 +212,8 @@ class Inventory:
         package_scripts = top_level_files(PACKAGE_SCRIPTS_DIRECTORY, ('.sh', '.py'))
         package_claude_hooks = top_level_files(os.path.join(PACKAGE_SCRIPTS_DIRECTORY, 'claude-hooks'), ('.sh', '.py'))
         self.git_hooks = top_level_files(os.path.join(PACKAGE_SCRIPTS_DIRECTORY, 'githooks'), None)
-        project_gate_directory = os.path.join(project_root, '.claude', 'gate.d')
-        project_hook_directory = os.path.join(project_root, '.claude', 'hooks')
+        project_gate_directory = os.path.join(project_root, registered_gate_directory(project_root))
+        project_hook_directory = os.path.join(project_root, registered_hooks_directory(project_root))
         registered_hook_files = []
         self.unresolved_commands = []
         for _event_name, _matcher, command in self.registrations:
@@ -205,22 +222,25 @@ class Inventory:
                 registered_hook_files.extend(named_files)
             elif command not in self.unresolved_commands:
                 self.unresolved_commands.append(command)
+        project_nested_gate_stages = nested_gate_stages_in(project_gate_directory)
         self.gate_stages = unique_in_order(
             [path for path in package_scripts if os.path.basename(path) in package_stage_names]
-            + top_level_files(project_gate_directory, ('.sh',)))
-        # .claude/hooks/ 下的 .py 多半是钩子共用的库，不当钩子；真是钩子的 .py 由注册命令指到。
+            + top_level_files(project_gate_directory, ('.sh',)) + project_nested_gate_stages)
+        # 项目钩子目录下的 .py 多半是钩子共用的库，不当钩子；真是钩子的 .py 由注册命令指到。
         self.claude_hooks = unique_in_order(
             package_claude_hooks + top_level_files(project_hook_directory, ('.sh',)) + registered_hook_files)
         self.comparison_files = unique_in_order(
             package_scripts + package_claude_hooks + self.git_hooks
             + top_level_files(project_gate_directory, ('.sh', '.py'))
-            + top_level_files(project_hook_directory, ('.sh', '.py')) + self.claude_hooks)
+            + top_level_files(project_hook_directory, ('.sh', '.py')) + self.claude_hooks
+            + project_nested_gate_stages)
         # 本包的 git 钩子只在本包自己的仓里生效（core.hooksPath 指向它），装进项目之后只当对照。
         if not self.package_is_the_project:
             self.git_hooks = []
         self.objects = unique_in_order(self.gate_stages + self.claude_hooks + self.git_hooks)
-        # 判的范围：项目自己的两个目录与注册命令指到的文件；本包只在门禁的正是本包时才判。
-        self.judged_pathspecs = ['.claude/gate.d', '.claude/hooks']
+        # 判的范围：项目自己的两个目录（项目登记的，没登记就是默认值）与注册命令指到的文件；本包只在门禁的正是本包时才判。
+        self.judged_pathspecs = [os.path.relpath(project_gate_directory, project_root),
+                                  os.path.relpath(project_hook_directory, project_root)]
         for path in registered_hook_files:
             if is_under(path, project_root) and (self.package_is_the_project or not is_under(path, PACKAGE_ROOT)):
                 self.judged_pathspecs.append(os.path.relpath(path, project_root))
@@ -355,8 +375,36 @@ def normalized_lines(path):
     return informative
 
 
+def python_code_text(text):
+    """去掉注释与文档串的 python 正文；解析不了就返回 None，由调用方按 shell 的办法退回只剔整行注释。"""
+    try:
+        tree = ast.parse(text)
+        docstring_line_numbers = set()
+        for node in ast.walk(tree):
+            body = getattr(node, 'body', None)
+            if (isinstance(body, list) and body and isinstance(body[0], ast.Expr)
+                    and isinstance(body[0].value, ast.Constant) and isinstance(body[0].value.value, str)):
+                docstring_line_numbers.update(range(body[0].lineno, body[0].end_lineno + 1))
+        kept = [token.string for token in tokenize.generate_tokens(io.StringIO(text).readline)
+                if token.type != tokenize.COMMENT and token.start[0] not in docstring_line_numbers]
+    except (SyntaxError, tokenize.TokenError, ValueError):
+        return None
+    return ' '.join(kept)
+
+
+def code_text(path):
+    """算标识符重合用的正文：注释写多写少（python 还有文档串）不该让两份门禁变得更像或更不像。
+    shell 只剔整行注释：行尾的 # 分不清是注释还是字符串、$#、${#…} 里的，不剔。"""
+    lines = read_lines(path)
+    if path.endswith('.py'):
+        python_text = python_code_text('\n'.join(lines) + '\n')
+        if python_text is not None:
+            return python_text
+    return '\n'.join(line for line in lines if not line.lstrip().startswith('#'))
+
+
 def identifier_set(path):
-    return set(IDENTIFIER_RE.findall('\n'.join(read_lines(path))))
+    return set(IDENTIFIER_RE.findall(code_text(path)))
 
 
 def similarity_ranking(inventory, new_path):

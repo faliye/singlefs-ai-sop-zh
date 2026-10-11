@@ -2,18 +2,13 @@
 # admission: always 判的是这一次 diff 窗口里的改动，窗口随提交在动
 # run-condition: command git
 # Show me test 阶段：改了 crates 代码就必须带测试（rules/show-me-test.md）。
-# 从 gate.sh 里拆出来，selftest 才能拿样本仓单独喂它（rules/sop-first.md：
-# 门禁脚本自己也要有测试）。
 #
 #   show-me-test.sh <项目根>
 #
 # 退出码：0 = 通过；1 = 拒收，或判不了（改动清单取不全）；3 = 无对象可判（工作区与基准无差异，或差异里没有 crates 代码），
 #   gate.sh 记 NOT_RUN，不算通过。
 #
-# 判据里的三个「不算数」，都是对抗测试实测过的绕法：
-#   1. 注释行里的 #[test] 不算测试标注（一行 `// #[test]` 曾经就能过）
-#   2. tests/ 下只有非代码文件不算测试改动（`echo x > tests/note.txt` 曾经就能过）
-#   3. build.rs 也是代码：编译期执行，改它同样要带测试
+# 下面各处「不算数」都是对抗测试实测过的绕法，逐条写在代码旁。build.rs 编译期执行，算代码。
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 preflight "${BASH_SOURCE[0]}" "$@"; set -- ${PREFLIGHT_ARGUMENTS[@]+"${PREFLIGHT_ARGUMENTS[@]}"}
 
@@ -28,8 +23,7 @@ files="$(changed_files "$ROOT" "$BASE")" || die "取不到相对基准 $BASE 的
   "清单少一截时，这一条会把改了代码判成「无对象可判」，所以取不全就不判。"
 
 if [[ -z "$files" ]]; then
-  # 无变更既不是通过也不是失败——没有可判的对象。判成失败会让「刚装完就有一格红」
-  # 成为常态，而红色一旦成为常态就不再是信号，人会开始习惯性忽略它。
+  # 无变更不判失败：否则「刚装完就有一格红」成了常态，红就不再是信号。
   warn "工作区与基准无差异 —— 本阶段无对象可判（这不是通过）"
   exit 3
 fi
@@ -37,13 +31,10 @@ fi
 code_changed="$(printf '%s\n' "$files" | grep -E '^crates/.*/(src/.*\.rs|build\.rs)$' || true)"
 test_files="$(printf '%s\n' "$files" | grep -E '(^|/)(tests|benches|fuzz)/.*\.rs$' || true)"
 TEST_RE='#\[test\]|#\[cfg\(test\)\]|proptest!|#\[kani|#\[tokio::test\]'
-# 注释里的标注不算数：整行注释、块注释行、以及**行尾注释**（`code // #[test]`
-# 这种走私对抗测试实测过）。先剁掉 // 到行尾，再滤块注释行，剩下的才配匹配。
+# 注释里的标注不算数：整行注释、块注释行、行尾注释（`code // #[test]`）。
 strip_comments() { sed -E 's@//.*@@' | grep -vE '^\+?[[:space:]]*(/\*|\*)' || true; }
-# ⚠️ 只在 **.rs 文件的新增行**里找测试标注。
-# 不按路径过滤的话，`#[test]` 出现在任何被加的行里都算数——在 CLAUDE.md 里写一句
-# 「提交模板：新增测试请写 #[test]」就能让改代码不带测试的提交过闸
-# （对抗测试实测，gate 退出码 0）。同理 Rust 字符串字面量里的也不算。
+# 只在 .rs 文件的新增行里找：不按路径过滤的话，文档里一句「新增测试请写 #[test]」就能让不带测试的改动过闸。
+# Rust 字符串字面量里的也不算。
 added_rs_lines() {
   local root="$1" base="$2" f
   while IFS= read -r f; do
@@ -54,20 +45,18 @@ added_rs_lines() {
 }
 strip_strings() { sed -E 's/"([^"\\]|\\.)*"//g'; }
 test_lines="$(added_rs_lines "$ROOT" "$BASE" | strip_comments | strip_strings | grep -E "$TEST_RE" || true)"
-# 新建的未跟踪文件在 diff 里看不见，内联测试会被漏掉——直接扫文件内容。
-# 对刚起步的项目，新文件是常态，漏掉等于这条门禁形同虚设。
+# 新建的未跟踪文件 diff 里看不见，直接扫文件内容。
 untracked_tests=""
 while IFS= read -r uf; do
   [[ -f "$ROOT/$uf" ]] || continue
-  # 只认真的会被编译的位置：仓库根丢一个 scratch.rs 不算带了测试（对抗测试实测）
+  # 只认会被编译的位置：仓库根丢一个 scratch.rs 不算带了测试
   case "$uf" in crates/*/src/*|crates/*/tests/*|crates/*/benches/*|tests/*|benches/*|fuzz/*) ;; *) continue ;; esac
-  # 不用 `| grep -q`：grep 找到就退出，上游拿 SIGPIPE，pipefail 下整条管道退 141、条件当假——
-  # 文件大过管道缓冲（64 KiB）时，带测试的新文件会被判成没带测试（审计实测：108 KB 的新文件判拒收）。
+  # 不用 `| grep -q`：找到就退出让上游拿 SIGPIPE，pipefail 下条件当假，
+  # 大过管道缓冲（64 KiB）的带测试新文件被判成没带测试（实测 108 KB 的判拒收）。
   if [[ "$(strip_comments < "$ROOT/$uf" | strip_strings | grep -cE "$TEST_RE" || true)" != 0 ]]; then untracked_tests+="$uf"$'\n'; fi
 done < <(git -C "$ROOT" ls-files --others --exclude-standard -- '*.rs' 2>/dev/null || true)
 test_lines="$test_lines$untracked_tests"
-# tests/ 下改了 .rs 还不够，得真的含测试标注——`echo '// 空壳' > tests/t.rs`
-# 这种占位文件对抗测试实测过。内容级证据：改动的测试文件里至少一个匹配 TEST_RE。
+# tests/ 下改了 .rs 还不够，改动的测试文件里至少一个要真含测试标注：`// 空壳` 占位文件不算。
 tests_content_ok=""
 while IFS= read -r tf; do
   [[ -n "$tf" && -f "$ROOT/$tf" ]] || continue

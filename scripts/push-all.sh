@@ -8,28 +8,17 @@
 #   钩子 scripts/githooks/pre-push 拒绝直接 git push master，指回这里（每个语言仓各启用一次：
 #   git config core.hooksPath scripts/githooks）。
 #
-# 为什么先验、后连远端：git push 是先连上远端、再跑 pre-push 钩子的。验证（三个仓的整道门禁）要十几分钟，
-# 放在钩子里跑，那条连接就一直闲着，会被掐断：2026-09-25 推 0.0.57 时 zh 的连接在验完之后 Broken pipe，
-# en、ja 已推、zh 没上去。所以验证放在任何一次连接之前，每个仓的 push 都在验完之后新开连接。
+# 门禁只在本地跑、看不见远端，一个仓一个仓推会让远端上几种语言不是同一版规矩（实测只推了 zh、en / ja 落后两个提交，没人报警）。
+# 先验、后连远端：git push 先连上远端再跑 pre-push，十几分钟的验证会让连接闲到被掐断（实测验完之后 Broken pipe）。
 #
-# 为什么要它（CLAUDE.md：改规则就得把所有已发布的语言版本一起改、一起合并）：
-# 推送是一个仓一个仓推的，门禁只在本地跑、看不见远端。实测（2026-09-11）：0.0.41 只推了 zh，
-# en / ja 各落后两个提交，远端上三种语言说的不是同一版规矩，而没有任何东西报警。
-#
-# 验什么，任何一项不过就拒绝这次推送，一个仓都不推：
-#   1. 每个语言仓都在（兄弟目录，同 i18n-sync.sh 的约定）
-#   2. 每个仓在 master 上、工作区干净——推出去的是提交，门禁验的是工作区，两者得是同一份
-#   3. 每个仓的 VERSION 相同
-#   4. 每个仓的 scripts/gate.sh 全绿
-#   5. 验完到推之间，每个仓的 HEAD 没变、工作区仍干净——推出去的就是验过的那个提交，
-#      推的时候写成 <验过的提交>:refs/heads/master，不推「推的那一刻的 master」
-# 都过了：先推其余语言仓，最后推本仓。每次 push 都带 SOP_PUSH_ALL_INNER=1，钩子看到它就直接放行。
+# 任何一项不过就一个仓都不推：语言仓都在（兄弟目录，同 i18n-sync.sh 的约定）；在 master 上、工作区干净
+# （推的是提交，门禁验的是工作区）；VERSION 相同；scripts/gate.sh 全绿；验完到推之间 HEAD 没变、工作区仍干净。
+# 推的是 <验过的提交>:refs/heads/master，其余语言仓先推、本仓最后；每次 push 带 SOP_PUSH_ALL_INNER=1，钩子见它放行。
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 preflight "${BASH_SOURCE[0]}" "$@"; set -- ${PREFLIGHT_ARGUMENTS[@]+"${PREFLIGHT_ARGUMENTS[@]}"}
 
-# 从 git 钩子、或 git worktree 里带着 GIT_DIR 调本脚本时，GIT_DIR 指向本仓，它压过 `git -C`：
-# 不清掉的话，对其余语言仓的查验和 push 实际都落在本仓上（2026-09-11 实测）。
-# 自测里「带着 GIT_DIR 在 git worktree 里跑」那一例守着这一行。
+# 从 git 钩子或 worktree 里调时 GIT_DIR 指向本仓、压过 `git -C`，不清掉的话对其余语言仓的查验和 push 都落在本仓上
+# （实测；自证「带着 GIT_DIR 在 git worktree 里跑」那一例守着这一行）。
 # shellcheck disable=SC2046
 unset $(git rev-parse --local-env-vars)
 
@@ -125,7 +114,6 @@ if (( failures > 0 )); then
 fi
 ok "${#languages[@]} 个语言仓都验过：同在 master、工作区干净、VERSION 都是 $reference_version、门禁全绿"
 
-# 验完才连远端：每个仓的 push 都在这里新开连接，推的是验过的那个提交。本仓排在最后。
 head1 "各语言仓一起推"
 push_order=()
 for language in "${languages[@]}"; do [[ "$language" == "$this_language" ]] || push_order+=("$language"); done

@@ -4,37 +4,25 @@
 # run-condition: command git python3
 # 本次新增的历史条目有没有撞号。
 #
-# 变更史一份 kb 文件的「## 历史版本」节按日期分组：`### 2026-09-01` 下面挂几个 `#### `子标题，
-# 子标题需要编号时写成「已定项 15（其一）」「（其一）」这类形态，「其 N」按写入次序编号。
-# 兼容尚未搬迁成这个形态的旧文件：日期与编号仍融合在一行的 `### 2026-09-01（其十六）：……`。
+# 「（其 N）」编号先到先得（rules/session-wrapup.md 第 4 条）：同一位置下两条同号，拿它当锚点的引用就指不清。
+# 位置钥匙是「最近的 `## ` 标题 + 最近的 `### 日期` + 点名词（已定项 N / E<n> 这类，没有就用去掉编号的整句）」，
+# 同一把钥匙下 N 撞了才算撞号；钥匙怎么取在 history-ordinal-keys.py。
 #
-# **这个编号是先到先得的公共资源**：并发会话各写各的，取号前不查最大号就会撞
-# （rules/session-wrapup.md 第 4 条：公共编号先到先得）。
-# 撞号的后果不是难看——别处拿「日期（其 N）」或「已定项 N（其 N）」当锚点引用时，
-# 一个位置下有两条同号条目，那个锚点指向哪一条无从判断。
-#
-# 判据：取「最近的 `## ` 标题」+「最近的 `### 日期` 标题」+「子标题里的点名词（已定项 N /
-# 未定项 N / E<n> 这类；没有就用去掉编号之后的整句）」三者拼成一个位置钥匙，同一把钥匙下
-# 「（其 N）」的 N 撞了才算撞号——不同点名词、或不同日期、不同 `## ` 节，各自的编号互不相干。
-#
-# 只判**本次新增**的条目（与这一轮的 diff 基准比，与 Show me test 同一个窗口）：存量撞号只报数，不判红——
-# 那是历史，改它会改坏已经指过去的锚点。基准取 gate.sh 导出的 GATE_DIFF_BASE，单跑时按 lib.sh 的 diff_base 现算：
-# 只和 HEAD 比的话，撞号的条目先提交、再跑门禁，就落在窗口外看不见了。
+# 只判本次新增的（存量撞号只报数：改它会改坏已经指过去的锚点）。基准取 GATE_DIFF_BASE，单跑时按 lib.sh 的 diff_base 现算；
+# 不只和 HEAD 比，否则撞号的条目先提交、再跑门禁就落在窗口外。
 #
 # 用法：
 #   history-ordinal.sh <仓根> [变更史文件…]
-# 不给文件就扫 <仓根>/.claude/kb 下的全部 *.md（含子目录）；没有「## 历史版本」或任何
-# `### 日期` 标题的文件，键提取器对它一个键都不产，扫了也白扫，不用先过滤。
+# 不给文件就扫登记的 kb 目录（.claude/kb-directories，没登记就是 <仓根>/.claude/kb）下的全部 *.md（含子目录），
+# 不先过滤：没有历史节的文件一个键都不产。
 # 一份都没有时退 77（本次无对象可判），不报绿。
 #
-# 判据只认「日期」「其 N」这两个中文编号形态。别的语言的变更史不长这样，那些仓里这一项判不到撞号，
-# 而且目前也没报未实现：键提取器一个键都不产时，照样报「没有撞号」。
+# 只认「日期」「其 N」这两个中文形态。别的语言的仓里判不到撞号，也没报未实现：一个键都不产时照样报「没有撞号」。
 set -uo pipefail
 # lib.sh 要在 cd 之前按绝对路径 source：cd 之后 BASH_SOURCE 的相对路径就指不到了。
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
 preflight "${BASH_SOURCE[0]}" "$@"; set -- ${PREFLIGHT_ARGUMENTS[@]+"${PREFLIGHT_ARGUMENTS[@]}"}
-# lib.sh 带进来的 set -e 要关掉：下面拿 ((...)) 与 grep -c 的返回值做判断，
-# 条件为假时它们返回 1，-e 会在那一行把整个脚本带走（rules/command-safety.md）。
+# 关掉 lib.sh 带进来的 set -e：下面 ((...)) 与 grep -c 条件为假时返回 1，-e 会在那一行退出整个脚本。
 set +e
 # 键提取器同样要在 cd 之前取绝对路径
 KEY_EXTRACTOR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/history-ordinal-keys.py"
@@ -44,12 +32,17 @@ cd "$ROOT" 2>/dev/null || die "找不到仓根：$ROOT" \
   "把仓根作为第一个参数传进来： bash scripts/history-ordinal.sh <仓根> [变更史文件…]"
 shift 2>/dev/null || true
 
+# kb 目录登记（rules/kb-discipline.md，kb_directories 在 lib.sh）：没登记就是默认的 .claude/kb。
+kb_dirs_text="$(kb_directories "$PWD")" || exit 1
+KB_DIRS=(); [[ -n "$kb_dirs_text" ]] && mapfile -t KB_DIRS <<< "$kb_dirs_text"
+if ((${#KB_DIRS[@]})); then KB_SCAN_DIRS=("${KB_DIRS[@]}"); else KB_SCAN_DIRS=("$PWD/.claude/kb"); fi
+KB_RELATIVE_DIRS=(); for kb_scan_dir in "${KB_SCAN_DIRS[@]}"; do KB_RELATIVE_DIRS+=("${kb_scan_dir#"$PWD"/}"); done
 
 shopt -s nullglob
 if (($#)); then
   HIST=("$@")
 else
-  mapfile -t HIST < <(find .claude/kb -type f -name '*.md' 2>/dev/null | sort)
+  mapfile -t HIST < <(for kb_scan_dir in "${KB_SCAN_DIRS[@]}"; do find "$kb_scan_dir" -type f -name '*.md' 2>/dev/null; done | sort)
 fi
 shopt -u nullglob
 
@@ -61,15 +54,13 @@ if [[ "$BASE" != HEAD ]] && ! git rev-parse --verify -q "$BASE^{commit}" >/dev/n
     "外层门禁的 GATE_DIFF_BASE 漏进了别的仓就会这样：单跑时 env -u GATE_DIFF_BASE，或者把 GATE_DIFF_BASE 设成这个仓里的提交。"
 fi
 
-# 键提取器读整份文件内容（要靠上下文找「最近的 ## / ### 日期」），产出「有编号的条目」各一行，
-# 用 \x1f 隔开四段：## 标题、日期、点名词或整句、（其 N）。同一行出现两次以上就是同一把钥匙的两条。
+# 读整份文件，每个有编号的条目出一行，\x1f 隔开四段：## 标题、日期、点名词或整句、（其 N）。
 keys_of_text() { python3 "$KEY_EXTRACTOR"; }
 
-# 基准侧的键池按**整个 .claude/kb 树**汇总，不按文件名对文件名比：一份存量重复的文件改了名
-# （比如按月的文件搬进了新目录），新文件名在基准里不存在，按文件名找基准会把搬过去的存量
-# 重复全部误判成新增（2026-09-12 那次搬 experiments-history/ 就踩过这个坑，selftest.sh 里
-# 「搬进实验史新文件的存量撞号不算新撞号」那条治具专测这个）。
-base_pool_files="$(git ls-tree -r --name-only "$BASE" 2>/dev/null | grep -E '\.claude/kb/.*\.md$' || true)"
+# 基准侧的键池按整个 .claude/kb 树汇总，不按文件名对文件名比：文件改名或搬目录后，按文件名找基准
+# 会把搬过去的存量撞号全判成新增（selftest.sh「搬进实验史新文件的存量撞号不算新撞号」专测这个）。
+kb_prefix_pattern="$(printf '%s|' "${KB_RELATIVE_DIRS[@]}")"; kb_prefix_pattern="${kb_prefix_pattern%|}"
+base_pool_files="$(git ls-tree -r --name-only "$BASE" 2>/dev/null | grep -E "^($kb_prefix_pattern)/.*\.md\$" || true)"
 base_keys_all=""
 while IFS= read -r base_file; do
   [[ -n "$base_file" ]] || continue
@@ -82,7 +73,6 @@ for f in "${HIST[@]}"; do
   checked=$((checked + 1))
   current_keys="$(keys_of_text < "$f")"
   [[ -n "$current_keys" ]] || continue
-  # 现有的重复键（含存量）：这份文件里出现 ≥2 次的键
   mapfile -t dup_keys < <(sort <<<"$current_keys" | uniq -d)
   ((${#dup_keys[@]})) || continue
   for k in "${dup_keys[@]}"; do
@@ -100,7 +90,7 @@ for f in "${HIST[@]}"; do
 done
 
 if ((checked == 0)); then
-  warn "$ROOT/.claude/kb 下没有变更史文件，本阶段无对象可判（这不是通过）"
+  warn "kb 目录（${KB_RELATIVE_DIRS[*]}）下没有变更史文件，本阶段无对象可判（这不是通过）"
   exit 77
 fi
 

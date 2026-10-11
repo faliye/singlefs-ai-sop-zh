@@ -2,16 +2,13 @@
 # admission: always 判的是此刻规范文本与清单对不对得上，一秒跑完
 # run-condition: command sha256sum
 # 规则清单：给译文仓对账用的唯一接口。
+# 译文各自成仓，生成时抄走这份清单，之后比两份清单就知道哪几篇过期了。
 #
 #   manifest.sh            校验清单是否与当前规范文本一致，并查覆盖率（门禁用）
 #   manifest.sh --update   重新生成 MANIFEST.sha256（改了清单覆盖的任何一篇之后跑）
 #
 # 为什么 CLAUDE.md 也在清单里：它是规范正文，且规定了对话语言。
 # 不进清单的话，改了它译本仓不会知道，各语言就会悄悄说不同的话。
-#
-# 为什么要有它：译文不放在本仓（那会让 SOP 随语言数线性膨胀）。
-# 译文各自成仓，生成时抄走这份清单；之后只要比两份清单就知道哪几篇过期了。
-# 本仓因此只多一个小文件，仍然是单语言、薄的。
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 preflight "${BASH_SOURCE[0]}" "$@"; set -- ${PREFLIGHT_ARGUMENTS[@]+"${PREFLIGHT_ARGUMENTS[@]}"}
 
@@ -19,12 +16,11 @@ PKG="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MF="$PKG/MANIFEST.sha256"
 CF="$PKG/I18N"
 
-# 清单只在参照仓里生成与校验。别的语言仓拿到的是原样复制的脚本，
-# 它们那边的对账依据是 SOURCE-MANIFEST.sha256，不是这份。
-# `|| true`：I18N 不在时 sed 退 2，set -e 会当场把脚本带走、一个字都不打（审核实测）。
+# 清单只在参照仓里生成与校验；别的语言仓的对账依据是 SOURCE-MANIFEST.sha256。
+# `|| true`：I18N 不在时 sed 退 2，set -e 会当场把脚本带走、一个字都不打。
 THIS="$(sed -n 's/^this=//p' "$CF" 2>/dev/null || true)"
 REF="$(sed -n 's/^reference=//p' "$CF" 2>/dev/null || true)"
-# 校验：本仓没有清单可判，退 77（gate.sh 记「本次未跑」，不记通过）。--update 是动作不是判定：什么也不做，退 0，bump.sh 照常往下走。
+# 校验退 77（本仓没有清单可判）；--update 是动作不是判定：什么也不做、退 0，bump.sh 照常往下走。
 if [[ -n "$THIS" && -n "$REF" && "$THIS" != "$REF" ]]; then
   head1 "规则清单"
   if [[ "${1:-}" == "--update" ]]; then
@@ -37,14 +33,12 @@ fi
 
 # ── 什么进清单，什么不进 ────────────────────────────────
 # 判据只有一条：**里面有没有面向人的散文。** 有就翻译（进清单），没有就复制。
-# 两张表都要显式列全——不列的那些由下面的覆盖率检查拦下，「忘了纳入」不许静默通过。
+# 两张表都要显式列全，不列的由下面的覆盖率检查拦下。
 #
-# translated_paths：逐篇翻译、逐篇溯源。
-#   skills/ 与 templates/ 曾经走复制，于是日语仓的 skill 正文与项目骨架全是中文，
-#   而 templates/CLAUDE.project.md 会被 install.sh 写成使用者项目根的 CLAUDE.md。
-# `|| true` 不能省：目录不存在时 find 退出码非 0，而 2>/dev/null 只藏消息不藏退出码——
-# 在 set -e + pipefail 下整条 gen 会被带走，`--update` 退出码 1 而**一个字都不打印**
-# （selftest 拿一个没有 agents/ 的样本仓喂进来才露出来）。
+# translated_paths：逐篇翻译、逐篇溯源。skills/ 与 templates/ 也在内：
+#   templates/CLAUDE.project.md 会被 install.sh 写成使用者项目根的 CLAUDE.md。
+# `|| true` 不能省：目录不存在时 find 退出码非 0，2>/dev/null 只藏消息不藏退出码，
+# set -e + pipefail 下 `--update` 会退 1 而一个字都不打印。
 translated_paths() {
   cd "$PKG" || return 1
   echo CLAUDE.md
@@ -63,19 +57,15 @@ translated_paths() {
 not_translated_re='^(README\.md|CHANGELOG\.md|GLOSSARY\.md)$'
 
 # cd 要落在 gen 自己身上：translated_paths 在管道里跑，它的 cd 只在子 shell 里生效，
-# 而 xargs sha256sum 在原来的 cwd 里。从仓根跑时 cwd 恰好就是 PKG，所以看不出来——
-# selftest 拿样本仓一喂就露了（rules/command-safety.md：子 shell 里的赋值传不回父进程）。
-# 排序显式钉成 C：清单的行序就是判据的一部分，locale 一换（lib.sh 那三个 UTF-8 名字都没有时会沿用用户的）
-# 行序就变，各语言仓与副本之间凭空多出「清单不一致」「SOURCE-MANIFEST 落后」的假红。
+# 而 xargs sha256sum 在原来的 cwd 里；从仓根跑时看不出来。
+# 排序显式钉成 C：清单的行序是判据的一部分，locale 一换（lib.sh 那三个 UTF-8 名字都没有时会沿用用户的）
+# 各语言仓与副本之间就凭空多出「清单不一致」「SOURCE-MANIFEST 落后」的假红。
 gen() { cd "$PKG" && translated_paths | LC_ALL=C sort | xargs sha256sum; }
 
 # ── 覆盖率：面向人的文本，两边都不沾就红 ────────────────
-# 这条是「空缺」的可机检形态：新加一份 .md 而忘了决定它翻不翻译，
-# 门禁当场问你要一个答案，而不是让它悄悄留在共享区里说中文。
 coverage() {
   local listed missed
-  # agents/ 已纳入治理但可能还没有内容。空是**状态**，不是通过——
-  # 「没有」和「忘了」在目录里长得一模一样（rules/kb-discipline.md 第 3 条「显式记录「不知道」」）。
+  # agents/ 空着要说出来：「没有」和「忘了」在目录里长得一模一样。
   if [[ -d "$PKG/agents" ]]; then
     local n; n="$(find "$PKG/agents" -maxdepth 1 -name '*.md' -not -name 'INDEX.md' | wc -l)"
     [[ "$n" -eq 0 ]] && warn "本层已纳入治理，当前为空：agents/（约定见 agents/INDEX.md）"
@@ -118,8 +108,7 @@ fi
 [[ $cov -eq 0 ]] || exit 1
 
 bad "MANIFEST.sha256 与规范文本不一致"
-# || true 不能省：diff 有差异时退出码 1 + pipefail 会把脚本在这里带走，
-# 下面的 howto 打不出来（对抗测试实测，崩在真实数据上）
+# || true 不能省：diff 有差异时退出码 1 + pipefail 会把脚本在这里带走，下面的 howto 打不出来
 diff <(gen) "$MF" | grep -E '^[<>]' | sed 's/^/        /' | head -20 || true
 howto "改了规范正文或规则就要更新清单，否则各语言译文无从知道自己过期了：" \
       "bash scripts/manifest.sh --update" \

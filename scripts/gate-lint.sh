@@ -2,74 +2,42 @@
 # admission: always 判的是此刻全仓的文本，几秒跑完；每一轮门禁都现判，上一轮的结论不替这一轮作保
 # run-condition: command gawk
 # 门禁自身的门禁：每一条拒绝，都必须同时给出下一步。
+# 规则：rules/sop-first.md「每一条拒绝都必须给出下一步」，rules/show-me-test.md「门禁不许假装通过」。
 #
-# 为什么要有这个脚本（rules/sop-first.md）：
-#   默认提交者是想通过的。他们被拦下来，多数时候不是不想测，是不知道怎么测。
-#   一条只说「不合格」的失败信息，等于把「怎么做才对」留给人猜——
-#   而人只能靠猜的时候，就会去绕过门禁，或者干脆不提交。
+# 用法：gate-lint.sh [额外要扫的目录…]
+#   GATE_LINT_DIR  要扫的目录（selftest 拿样本喂它用），默认扫本包根；位置参数是额外要扫的目录（gate.sh 拿它传项目登记的门禁目录，默认 .claude/gate.d/）。
 #
-# 查四条：前两条与第四条是拒绝的形态，第三条是「通过」的形态。
+# 查四条：G1、G2、G4 是拒绝的形态，G3 是「通过」的形态。G1–G3 只对 .sh 判，.py 只判 G4。
+#   G1 bad：从它那一行起 HOWTO_WINDOW 个非注释行内要有命令位置上的 howto（命令位置见 lib.sh 的 CMD_POS）；
+#      注释里的 howto 字样不算。行尾写 `# gate-lint:summary` 的汇总行豁免，不按消息文本猜。
+#   G2 die：出路写在第二个参数起（lib.sh 的 die 交给 howto）；只带一句话、或第二个参数是空串的判红。
+#   G3 扫一批对象的脚本，最后一句成功句要带一个在文件里数出来的计数（认哪些写法见 summary_reports_count）；
+#      确实不扫对象的单独写一行注释 `# gate-lint:nocount <理由>`，理由至少 8 个字。
+#   G4 直接打印的拒绝（`echo "  ✗ …"` / python 的 `print('  ✗ …')`）到下一处拒绝之前要出现「→」；
+#      循环里的明细行标 `# gate-lint:detail`，汇总行标 `# gate-lint:summary`，两种都要显式写。
 #
-# 一、bad：从它那一行起 5 个非注释行内必须出现 howto **命令**。
-#   - bad 与 howto 都只认命令位置上的，消息用单引号、双引号还是变量都算。命令位置的定义是 lib.sh 的 CMD_POS：
-#     行首，`;` `&` `|` 括号、花括号、反引号、`!` 之后，then/else/do/if/while/until/sudo/env/xargs/exec/eval/command/time 之后。
-#     注释里的 howto 字样不算（`# TODO: howto` 糊弄不过去）。
-#   - 汇总行豁免只认显式标记：行尾写 `# gate-lint:summary` 的那一行不判，不按消息文本猜。
-#
-# 二、die：它是 bad + exit，同样是拒绝，所以同样要给出路。
-#   die 的出路写在**第二个参数起**（lib.sh 的 die 会把它们交给 howto），
-#   所以判据是「这处 die 有没有第二个参数」。只带一句话的 die 判红。
-#   以前 gate-lint 只认 bad，于是 17 处 die 整体免检——`die "单测失败"`
-#   这种毫无下一步的拒绝就在门禁路径上（本轮审计实测）。
-#
-# 三、扫一批对象的脚本，成功摘要要报出检查了多少项。
-#   「扫到 0 项」不是通过：判据写窄了、对象全被第一步跳过时，末尾照样报绿，
-#   而没有任何人看得出来（使用者项目实测：一个阶段的第 3 项就这样绿着）。
-#   成功摘要是文件里**最后一句**成功句（`ok "…"` 或带 ✓ 的那一行），它要带一个计数：
-#   在文件里累加过的变量（`n=$((n+1))`、`((n++))`、`let n`、`n=$(… | wc -l)` 这类，python 里 `n += …`、`n = len(…)`），
-#   或数组长度 `${#数组[@]}`、算术展开、行内的 `wc -l` / `wc -w` / `grep -c`、python 的 `{len(…)}`。
-#   只对**报了成功**的脚本判；确实不扫对象的单独写一行注释 `# gate-lint:nocount <理由>`，理由至少 8 个字。
-#
-# 四、直接打印的拒绝（`echo "  ✗ …"` / 内嵌 python 的 `print('  ✗ …')`）同样要给出路。
-#   项目本地的阶段多半不 source lib.sh，前两条一条都够不着它们——实测使用者项目的
-#   本地阶段有 46 处这样的拒绝，此前全部免检（本轮审计）。
-#   窗口是「到下一处拒绝之前」，不是 5 行：python 常常先打 ✗、再循环列明细、最后给出路。
-#   循环里的明细行标 `# gate-lint:detail`，汇总行标 `# gate-lint:summary`，两种都要显式写。
-#
-# 认不出参数个数的形态（消息是变量、或引号被转义拆开）**不判**，
-# 交给 lib.sh 的运行期兜底。这里只拦看得明白的那些——机器管得了哪一半要说清楚。
-#
-# GATE_LINT_DIR 可指定要扫的目录（selftest 拿样本喂它用），默认扫本脚本所在目录。
+# 认不出参数个数的形态（消息是变量、或引号被转义拆开）不判，交给 lib.sh 的运行期兜底。
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 preflight "${BASH_SOURCE[0]}" "$@"; set -- ${PREFLIGHT_ARGUMENTS[@]+"${PREFLIGHT_ARGUMENTS[@]}"}
 
 SCRIPTS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# 默认扫**整个包**，不只是 scripts/：install.sh 在仓根，它是使用者跑的第一个脚本，
-# 而它此前不在扫描范围里——本轮刚把「只带一句话的 die 判红」写成规矩，
-# scripts/ 下 17 处全补齐了，仓根那 4 处却一处没查（复核实测）。
-# 样本排除写成**相对本次 SCAN** 的前缀：写死成 */fixtures/* 的话，
-# 拿样本目录当 SCAN 跑时会把样本自己全排除掉，自证当场变成摆设（doc-lint 踩过）。
+# 默认扫整个包，不只是 scripts/：install.sh 在仓根。
+# 样本排除写成相对本次 SCAN 的前缀：写死成 */fixtures/* 的话，
+# 拿样本目录当 SCAN 跑时会把样本自己全排除掉，自证当场变成摆设。
 SCAN="${GATE_LINT_DIR:-$(cd "$SCRIPTS/.." && pwd)}"
-# 位置参数是**额外**要扫的目录（gate.sh 拿它传项目本地阶段目录）。
-# 此前只扫本包：项目扔进 .claude/gate.d/ 的阶段一条都没被查过，
-# 而它们和共享阶段一样会拒绝提交者——一喂就是 7 条没有出路的拒绝（本仓实测）。
 SCANS=("$SCAN")
 for d in "$@"; do [[ -d "$d" ]] && SCANS+=("$(cd "$d" && pwd)"); done
 head1 "门禁自检（每条拒绝都要给出路）"
 
-# HOWTO_WINDOW 是 rules/sop-first.md 写下的那个数（bad 自己那行 + 后面 4 行）。
-# 它是判据的一部分，不是实现细节——fixtures/gate-lint/farhowto 盯着它，
-# 改大改小都会让那个样本变绿，自证当场红。
+# HOWTO_WINDOW 是 rules/sop-first.md 写下的那个数（bad 自己那行 + 后面 4 行），是判据的一部分：
+# fixtures/gate-lint/farhowto 盯着它，改大改小都会让那个样本变绿，自证当场红。
 HOWTO_WINDOW=5
 
-# 命令位置的定义在 lib.sh 的 CMD_POS 一处，两个 lint 共用——
-# 各写一份的时候，这一份漏了括号，`( bad "..." )` 与 `eval bad` 整体漏检（对抗测试实测）。
+# 命令位置的定义在 lib.sh 的 CMD_POS 一处，两个 lint 共用。
 BAD_RE="$CMD_POS"'bad[[:space:]]'
 DIE_RE="$CMD_POS"'die[[:space:]]'
 HOWTO_RE="$CMD_POS"'howto[[:space:]]'
-# 汇总行豁免：以前靠猜消息文本（含「失败：$计数」就免检），于是把拒绝消息写成
-# 「…检查失败：$n 处」就能永久免检（对抗测试实测）。改成**显式标记**——
-# 汇总行在行尾写 `# gate-lint:summary`，猜不着的东西就别猜。
+# 汇总行豁免只认行尾的显式标记：按消息文本猜的话，把拒绝写成「…检查失败：$n 处」就能永久免检。
 SUMMARY_RE='#[[:space:]]*gate-lint:summary[[:space:]]*$'
 
 # 这处 die 只带了一句话（没有第二个参数）吗？
@@ -86,7 +54,7 @@ naked_die() {
   # 只带一句话 → 没给出路
   [[ -z "$body" || "$body" == ';'* || "$body" == '}'* || "$body" == '#'* ]] && return 0
   # 第二个参数是空串也一样：运行期 `$# -gt 0` 成立，兜底那句不打，
-  # 提交者看到的是「→ 怎么办：」后面一片空白（对抗测试实测）。
+  # 提交者看到的是「→ 怎么办：」后面一片空白。
   case "$body" in '""'*|"''"*) return 0 ;; esac
   return 1
 }
@@ -114,42 +82,34 @@ summary_reports_count() { # summary_reports_count <成功句> ；读全局的 L�
 
 fails=0; checked=0; files=0
 for BASE in "${SCANS[@]}"; do
-# 装进项目的 SOP 副本不扫：理由同 shell-lint —— 副本里的样本是故意写坏的，
-# 项目里单跑这个 lint 时会被当成项目自己的违规（审计实测）。
+# 装进项目的 SOP 副本不扫：副本里的样本是故意写坏的，项目里单跑这个 lint 时会被当成项目自己的违规。
 LINT_FAMILY="$(sed -n 's/^family=//p' "$SCRIPTS/../I18N" 2>/dev/null || true)"
-EXCL=(-not -path "$BASE/scripts/fixtures/*" -not -path "$BASE/fixtures/*" -not -path "$BASE/.claude/${LINT_FAMILY:-singlefs-ai-sop}/*")
+EXCL=(-not -path "$BASE/scripts/fixtures/*" -not -path "$BASE/fixtures/*" -not -name "*.case.sh" -not -path "$BASE/.claude/${LINT_FAMILY:-singlefs-ai-sop}/*")
 while IFS= read -r f; do
   rel="${f#"$BASE"/}"
   files=$((files+1))
   mapfile -t L < "$f"
-  # .py 也扫。项目本地的阶段常用 python 写，它们的拒绝一样摆在提交者面前，
-  # 而此前扫描只认 *.sh——实测使用者项目的 .claude/gate.d/lib-*.py 里 13 处 `✗` 一处都没被查过。
-  # 但只有 G4（直接打印的 ✗ 要有 →）对 .py 成立：G1 / G2 认的是 lib.sh 的 bad / die，
-  # G3 认的是 shell 的成功摘要，两条都是 shell 的形态，套到 python 上只会造假红。
+  # .py 也扫（项目本地的阶段常用 python 写），但只判 G4：G1 / G2 认的是 lib.sh 的 bad / die，
+  # G3 认的是 shell 的成功摘要，套到 python 上只会造假红。
   is_shell=0; [[ "$f" == *.sh ]] && is_shell=1
   hd=""
 if [[ $is_shell -eq 1 ]]; then
   for ((i=0; i<${#L[@]}; i++)); do
     line="${L[$i]}"
-    # heredoc 体不是代码：脚本里用 heredoc 生成「故意写坏的样本」是正当写法，
-    # 按代码读会把样本内容当成真实拒绝（对抗测试实测，本仓自己踩过一次）。
+    # heredoc 体不是代码：脚本里用 heredoc 生成「故意写坏的样本」是正当写法，按代码读会把样本内容当成真实拒绝。
     if [[ -n "$hd" ]]; then
       [[ "$line" == "$hd" || "$line" =~ ^[[:space:]]*"$hd"[[:space:]]*$ ]] && hd=""
       continue
     fi
     # 注释行先跳过，再判 heredoc：反过来写的话，注释里一句 `# 用法：python3 - <<PY`
-    # 就把这一行之后的整个文件当成 heredoc 体，一条拒绝都不再检查（审计实测）。
+    # 就把这一行之后的整个文件当成 heredoc 体，一条拒绝都不再检查。
     [[ "$line" =~ ^[[:space:]]*# ]] && continue        # 注释里的拒绝不算
     if [[ "$line" =~ $HEREDOC_RE ]]; then
       hd="${BASH_REMATCH[2]}"
     fi
-    # 算术展开不是命令位置：`bad=$((bad + 1))` 里的 `bad ` 紧跟在 `(` 后面，
-    # 按 CMD_POS 读就成了一处「拒绝」，而它只是个计数（使用者项目的 gate.d 实测两处假红）。
-    #
-    # ⚠️ 配对的 `))` **只在 `$((` 之后**找。在整行里找第一个 `))` 会挂死：
-    # `if ((okc)); then …; pass=$((pass+1)); fi` 这样的行，第一个 `))` 落在 `$((` 前面，
-    # 切完之后剩下的串仍然含 `$((` 而且不变短——真实语料上当场无限循环（写这条时实测）。
-    # 现在每轮删掉一整对 `$(( … ))`，长度严格递减，所以一定停得下来。
+    # 算术展开不是命令位置：`bad=$((bad + 1))` 里的 `bad ` 紧跟在 `(` 后面，按 CMD_POS 读就成了一处「拒绝」。
+    # 配对的 `))` 只在 `$((` 之后找：在整行里找第一个 `))` 的话，`if ((okc)); then …; pass=$((pass+1)); fi`
+    # 切完之后不变短，当场无限循环。每轮删掉一整对 `$(( … ))`，长度严格递减，一定停得下来。
     while :; do
       pre="${line%%'$(('*}"
       [[ "$pre" == "$line" ]] && break              # 没有 $((
@@ -193,22 +153,10 @@ if [[ $is_shell -eq 1 ]]; then
 fi   # ← G1 / G2 到此为止，只对 shell 脚本判
 
   # ── G4 直接打印的拒绝，也要给出路 ───────────────────────
-  # 上面两条只认 lib.sh 的 bad / die。而**项目本地的阶段多半不 source lib.sh**：
-  # 它们直接 `echo "  ✗ …"`，或者在内嵌 python 里 `print('  ✗ …')`。
-  # 这批拒绝一样摆在提交者面前，此前 gate-lint 一条都看不见——
-  # 实测使用者项目的本地阶段：46 处这样的拒绝，全部免检。
-  #
-  # 窗口不用 5 行：python 的拒绝常常先打一句 ✗、再用一个循环逐条列明细、
-  # 最后才给出路，5 行窗口会把它们整批误判。判据改成
-  # **「这一处拒绝到下一处拒绝之间（或到文件末），要出现出路」**。
-  #
-  # heredoc 体默认不当代码读（那是生成样本用的），但**解释器 heredoc 是代码**——
-  # `python3 - <<'PY'` 里的 print 是真的会打给提交者看的。所以这一遍
-  # 只对解释器 heredoc 的体照读，别的 heredoc 仍然跳过。
-  #
-  # 两种豁免都得**显式写出来**，猜不着的东西不猜（同汇总行那条）：
-  #   # gate-lint:summary  汇总行
-  #   # gate-lint:detail   循环里逐条列明细的那种行，出路在它的汇总上
+  # 窗口是「这一处拒绝到下一处拒绝之间（或到文件末）」，不是 5 行：python 的拒绝常常先打一句 ✗、
+  # 再用一个循环逐条列明细、最后才给出路。
+  # heredoc 体默认不当代码读（那是生成样本用的），但解释器 heredoc（`python3 - <<'PY'`）里的 print
+  # 是真的会打给提交者看的：这一遍只对解释器 heredoc 的体照读。
   rej=()
   inhd=""; hdcode=0
   for ((i=0; i<${#L[@]}; i++)); do
@@ -250,13 +198,8 @@ fi   # ← G1 / G2 到此为止，只对 shell 脚本判
 
 if [[ $is_shell -eq 1 ]]; then
   # ── G3 成功摘要要报出检查了多少项 ───────────────────────
-  # 「扫到 0 项」不是通过。实测：一个阶段的第 3 项因为搜索范围写窄，
-  # 每个对象都在第一步 continue，既不算 ok 也不算 bad，末尾照样报绿——
-  # 它这样绿了不知道多久，没有任何人看得出来（使用者项目实测）。
-  # 判据只对扫一批对象的脚本生效；成功摘要里带上计数变量，0 项就自己露出来。
-  # ⚠️ 这里不许用 `… | grep -q`：grep 找到就退出，上游 printf 写不完拿 SIGPIPE，
-  # 在 set -o pipefail 下整个管道退 141，条件当假——文件大过管道缓冲（64 KiB）就静默不判了
-  # （审计实测：同一份没报计数的脚本，4 行判红，撑到 338 KB 变绿）。grep -c 会读完全部输入。
+  # 这里不许用 `… | grep -q`：grep 找到就退出，上游 printf 写不完拿 SIGPIPE，pipefail 下整个管道退 141、
+  # 条件当假——文件大过管道缓冲（64 KiB）就静默不判了。grep -c 会读完全部输入。
   loop_hits="$(printf '%s\n' "${L[@]}" | grep -cE 'while[[:space:]]+.*read|for[[:space:]]+[A-Za-z_]+[[:space:]]+in|find[[:space:]]' || true)"
   # nocount 只认单独一行的注释：写在代码里、字符串里的不算豁免（按子串认的话，一句 echo 里提到它就免检了）。
   nocount_exempt=0
@@ -272,8 +215,7 @@ if [[ $is_shell -eq 1 ]]; then
     fails=$((fails+1))
   done
   if [[ "$loop_hits" -gt 0 && "$nocount_exempt" -eq 0 ]]; then
-    # 判据只对**报了成功**的脚本生效。一个字都不说的脚本是另一类问题，这里不判——
-    # 「认不出」与「通过」要分开（rules/show-me-test.md）。
+    # 只对报了成功的脚本判；一个字都不说的脚本是另一类问题，这里不判。
     # 判的是最后一句成功句：任一句成功句带任一个变量就算报了数的话，前面一句「扫描 $ROOT」就能替没报数的总结句作保。
     # 成功句以反斜杠续行的（printf 的格式串一行、参数下一行），连同续行一起算那一句。
     summary_line_number=0; summary_line=""

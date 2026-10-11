@@ -4,18 +4,13 @@
 # run-condition: command python3
 # 工具层的闸注册着、而且会拒绝。
 #
-# 规则里写一句提醒拦不住手敲的命令，能拦住的是一个当场拒绝执行的钩子
-# （rules/sop-first.md、rules/session-wrapup.md 第 4 条：能在工具层拦就在工具层拦）。
-# 而钩子被人删掉或改坏时，那道闸**静默消失**——同一个坑会再来一次，
-# 只有门禁会在它消失时说话。原是使用者项目的一个本地阶段，判据通用，收归这里。
+# 钩子被删掉或改坏时那道闸静默消失，只有门禁会在它消失时说话（rules/session-wrapup.md 第 4 条：能在工具层拦就在工具层拦）。
 #
-# 判据，对 `.claude/hooks/` 与装进来的 SOP 副本 `scripts/claude-hooks/` 下每个 `*.sh`：
+# 判据，对项目登记的钩子目录（默认 `.claude/hooks/`）与装进来的 SOP 副本 `scripts/claude-hooks/` 下每个 `*.sh`：
 #   ① `.claude/settings.json` 的 hooks.* 里有一条 command 指向它（按文件名的边界认，见 hook-registrations.py）；
 #   ② 它带 `--selftest` 时，自证要通过（自证本身证明这道闸会拒绝）；
-#   ③ 它文件头写了 `# hook-events: <事件> …` 时，每个事件都有一条注册指向它——
-#      只挂了一部分（比如只挂 Stop、没挂 SubagentStop），没挂上的那一类 agent 那里这道闸不在。
-#      写成 `<事件>:<工具名>` 的（只该在某个工具上触发），那条注册的 matcher 还要认得这个工具名（空 matcher 与 * 认全部）：
-#      挂在别的 matcher 上，钩子一次都不会为那个工具触发，而注册看着是齐的。
+#   ③ 它文件头写了 `# hook-events: <事件> …` 时，每个事件都有一条注册指向它；
+#      写成 `<事件>:<工具名>` 的，那条注册的 matcher 还要认得这个工具名（空 matcher 与 * 认全部）。
 # 例外：副本里的钩子文件头写了 `# hook-registration: optional <理由>`，项目可以不注册它，
 #   成功那句逐个列出没注册的可选钩子；注册了就照 ②③ 判。项目自己的钩子写这一行不算数：不用就连文件删掉。
 # 一个钩子都没有时退 77（本次无对象可判），不报绿。有钩子却没有 settings.json 判红：那等于每一个都没注册。
@@ -30,17 +25,19 @@ set +e
 ROOT="$(cd "${1:-.}" && pwd)"
 SETTINGS="$ROOT/.claude/settings.json"
 PKG_HOOKS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/claude-hooks"
+HOOKS_REL="$(project_hooks_dir "$ROOT")" || exit 1
+HOOKS_DIR="$ROOT/$HOOKS_REL"
 
 hooks=()
-for directory in "$ROOT/.claude/hooks" "$PKG_HOOKS"; do
+for directory in "$HOOKS_DIR" "$PKG_HOOKS"; do
   [[ -d "$directory" ]] || continue
   while IFS= read -r one; do [[ -n "$one" ]] && hooks+=("$one"); done < <(find "$directory" -maxdepth 1 -name '*.sh' -type f | sort)
 done
-((${#hooks[@]})) || { warn "项目的 .claude/hooks/ 与装进来的副本里一个钩子都没有，本阶段无对象可判（这不是通过）"; exit 77; }
+((${#hooks[@]})) || { warn "项目的 $HOOKS_DIR 与装进来的副本里一个钩子都没有，本阶段无对象可判（这不是通过）"; exit 77; }
 if [[ ! -f "$SETTINGS" ]]; then
-  bad "没有 $SETTINGS，而 .claude/hooks/ 与装进来的副本里共有 ${#hooks[@]} 个钩子：它们一个都没注册"
+  bad "没有 $SETTINGS，而 $HOOKS_DIR 与装进来的副本里共有 ${#hooks[@]} 个钩子：它们一个都没注册"
   howto "建 .claude/settings.json，在 hooks.<事件> 里把它们注册上，写法见各钩子文件头的「怎么注册」：" \
-        '{"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/<名>.sh"}]}]}}' \
+        "{\"hooks\": {\"PreToolUse\": [{\"matcher\": \"Bash\", \"hooks\": [{\"type\": \"command\", \"command\": \"bash \\\"\$CLAUDE_PROJECT_DIR\\\"/$HOOKS_REL/<名>.sh\"}]}]}}" \
         "装进来的副本里的钩子归上游管，不删，只注册。"
   exit 1
 fi
@@ -55,9 +52,9 @@ if ! all_registrations="$(python3 "$REGISTRATIONS_READER" "$SETTINGS" 2>&1)"; th
   exit 1
 fi
 if [[ -z "$all_registrations" ]]; then
-  bad "$SETTINGS 里一条钩子都没注册，而 .claude/hooks/ 与装进来的副本里共有 ${#hooks[@]} 个"
+  bad "$SETTINGS 里一条钩子都没注册，而 $HOOKS_DIR 与装进来的副本里共有 ${#hooks[@]} 个"
   howto "在 settings.json 的 hooks.<事件> 里把它们注册回去：" \
-        '{"matcher": "Bash", "hooks": [{"type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/<名>.sh"}]}' \
+        "{\"matcher\": \"Bash\", \"hooks\": [{\"type\": \"command\", \"command\": \"bash \\\"\$CLAUDE_PROJECT_DIR\\\"/$HOOKS_REL/<名>.sh\"}]}" \
         "每个钩子要挂哪几个事件，看它文件头的 # hook-events: 与「怎么注册」。"
   exit 1
 fi

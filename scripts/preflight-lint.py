@@ -8,8 +8,11 @@
 
 判哪些脚本（.sh、.py、.rs，以及没有后缀、首行是 #! 的）：
   - 本包自己（仓根就是本包时）：install.sh、scripts/、scripts/claude-hooks/、scripts/githooks/ 下的；
-  - 项目：.claude/gate.d/ 下的，以及 .claude/preflight-dirs 登记的目录下的（.claude/scripts/、.claude/hooks/ 这类轻脚本不判）。
-  每个目录只看它自己这一层；子目录要判就另登记一行。装进项目的规范副本不判：它由上游自己的门禁管。
+  - 项目：项目登记的门禁目录下的（默认 .claude/gate.d/），以及 .claude/preflight-dirs 登记的目录下的
+    （项目登记的钩子目录、.claude/scripts/ 这类轻脚本不判，钩子目录默认 .claude/hooks/）。
+    门禁目录下的阶段两种形态过渡期并存：扁平的 `<名>.sh`，嵌套的 `<名>/<名>.sh`；
+    嵌套阶段同目录下的用例文件 `*.case.sh` 是喂给阶段的数据，不判。
+  每个目录只看它自己这一层；子目录要判就另登记一行（嵌套阶段是这一条唯一的例外）。装进项目的规范副本不判：它由上游自己的门禁管。
   只 exec 共享脚本的包装（install.sh 铺的那种）不另判，由被转发的那个共享脚本判。
 不判哪些：本包的排除写在 PACKAGE_EXCLUDED；项目的写在 .claude/preflight-exclude（一行一条，`<路径>  # 理由`，理由不许省）。
   排除表与登记表指向不存在的路径、排除项一个脚本都没排到，都判红。
@@ -53,10 +56,12 @@ PACKAGE_EXCLUDED = {
     'scripts/lib.sh': '被 shell 脚本 source 的函数库，不单独调；它 source preflight.sh，preflight 函数在那里',
     'scripts/claude-hook-lib.sh': '被钩子 source 的函数库，只定义函数，不单独调',
     'scripts/session-transcript.py': '被 gate-overlap.py 与 handback-scratch.py import 的库，没有自己的入口',
+    'scripts/package-family.py': '被 link-targets.py、preflight-lint.py 与 number-name-sync.sh 载入的库，没有自己的入口',
     'scripts/preflight.py': '它就是判条件的那一个：自己再判一遍自己，会把要转给被判脚本的 --force 吃掉',
     'scripts/preflight.sh': '被 lib.sh 与钩子 source 的函数库（preflight、preflight_record_success），不单独调',
 }
-PROJECT_DIRECTORIES = ('.claude/gate.d',)   # 项目的 .claude/scripts/、.claude/hooks/ 不判：轻脚本不写准入（rules/preflight-discipline.md）；要判的目录项目自己登记
+# 项目要判的目录：项目登记的门禁目录（PREFLIGHT.project_gate_directory，默认 .claude/gate.d），加上 .claude/preflight-dirs 登记的那几处；
+# 项目登记的钩子目录（PREFLIGHT.project_hooks_directory，默认 .claude/hooks）与 .claude/scripts/ 不判：轻脚本不写准入（rules/preflight-discipline.md）。
 PROJECT_REGISTERED_DIRECTORIES_FILE = '.claude/preflight-dirs'
 PROJECT_EXCLUDE_FILE = '.claude/preflight-exclude'
 SCRIPT_SUFFIXES = ('.sh', '.py', '.rs')
@@ -98,6 +103,7 @@ def load_preflight_module():
 
 
 PREFLIGHT = load_preflight_module()
+PACKAGE_FAMILY = PREFLIGHT.load_package_module('package_family', 'package-family.py')
 
 
 class Finding:
@@ -111,6 +117,9 @@ class Finding:
 def is_script(path):
     # 符号链接跟着走：gate.sh 照样跑链接形式的本地阶段，它的条件就得判；判的是链接指向的那一份的内容
     if not os.path.isfile(path):
+        return False
+    # 新形态门禁阶段的用例文件（<用例名>.case.sh）是喂给阶段的数据，不是可调的脚本，不写准入与运行条件
+    if path.endswith('.case.sh'):
         return False
     if path.endswith(SCRIPT_SUFFIXES):
         return True
@@ -127,6 +136,18 @@ def scripts_in(directory):
     if not os.path.isdir(directory):
         return []
     return sorted(os.path.join(directory, name) for name in os.listdir(directory) if is_script(os.path.join(directory, name)))
+
+
+def nested_gate_stages_in(gate_directory):
+    """新形态门禁阶段：`<gate_directory>/<名>/<名>.sh`，与扁平的 `<gate_directory>/<名>.sh` 过渡期并存。"""
+    if not os.path.isdir(gate_directory):
+        return []
+    found = []
+    for name in sorted(os.listdir(gate_directory)):
+        candidate = os.path.join(gate_directory, name, name + '.sh')
+        if is_script(candidate):
+            found.append(candidate)
+    return found
 
 
 def read_table(root, relative_file, findings):
@@ -400,10 +421,10 @@ def check_script(path, shown, findings):
                                 '成功跑完、退出之前调一次 preflight_record_success'))
 
 
-def category_of(relative):
-    if relative.startswith('.claude/gate.d/'):
+def category_of(relative, gate_dir, hooks_dir):
+    if relative.startswith(gate_dir + '/'):
         return '门禁阶段'
-    if '/claude-hooks/' in relative or '/githooks/' in relative or relative.startswith('.claude/hooks/'):
+    if '/claude-hooks/' in relative or '/githooks/' in relative or relative.startswith(hooks_dir + '/'):
         return '钩子'
     return '脚本'
 
@@ -418,12 +439,9 @@ def main():
         print(f'  ✗ 仓根不存在：{root}', file=sys.stderr)
         print('     → 怎么办： 把项目根作为参数传进来： preflight-lint.py <仓根>', file=sys.stderr)
         return EXIT_USAGE
-    family = 'singlefs-ai-sop'
-    try:
-        with open(os.path.join(PACKAGE_ROOT, 'I18N'), encoding='utf-8') as handle:
-            family = next((line.split('=', 1)[1].strip() for line in handle if line.startswith('family=')), family)
-    except OSError:
-        pass
+    family = PACKAGE_FAMILY.package_family()
+    gate_dir = PREFLIGHT.project_gate_directory(root)
+    hooks_dir = PREFLIGHT.project_hooks_directory(root)
 
     findings = []
     targets = {}  # 绝对路径 → 类别（门禁阶段 / 钩子 / 脚本 / 登记目录）
@@ -435,7 +453,7 @@ def main():
                 targets[os.path.join(root, relative)] = '脚本'
         for relative_directory in PACKAGE_DIRECTORIES:
             for path in scripts_in(os.path.join(root, relative_directory)):
-                targets[path] = category_of(os.path.relpath(path, root))
+                targets[path] = category_of(os.path.relpath(path, root), gate_dir, hooks_dir)
         for relative, reason in PACKAGE_EXCLUDED.items():
             absolute = os.path.join(root, relative)
             if absolute not in targets:
@@ -444,9 +462,10 @@ def main():
                 continue
             del targets[absolute]
             excluded.append((relative, reason))
-    for relative_directory in PROJECT_DIRECTORIES:
-        for path in scripts_in(os.path.join(root, relative_directory)):
-            targets[path] = category_of(os.path.relpath(path, root))
+    for path in scripts_in(os.path.join(root, gate_dir)):
+        targets[path] = category_of(os.path.relpath(path, root), gate_dir, hooks_dir)
+    for path in nested_gate_stages_in(os.path.join(root, gate_dir)):
+        targets[path] = '门禁阶段'
     registered = read_table(root, PROJECT_REGISTERED_DIRECTORIES_FILE, findings)
     for line_number, relative_directory, _ in registered:
         directory = os.path.join(root, relative_directory)

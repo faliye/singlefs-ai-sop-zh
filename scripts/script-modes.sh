@@ -4,26 +4,22 @@
 # run-condition: command git
 # 脚本的执行位在暂存区里没有丢，射程里也没有 git 存不下的空目录。
 #
-# 手工只暂存「这一轮的」时，`git update-index --cacheinfo` 要自己写模式；写死 100644 就把
-# 可执行位丢在暂存区里，而工作区那份还是可执行的——在工作区上跑的门禁一声不吭，
-# 丢掉的执行位就这样进了历史，下一次别人 clone 出来的脚本跑不起来。
-# 原是使用者项目的一个本地阶段，判据通用（git 模式位与文件系统无关），收归这里。
+# 手工暂存时 `git update-index --cacheinfo` 写死 100644，执行位就丢在暂存区里；工作区那份仍可执行，
+# 在工作区上跑的门禁看不见，丢掉的执行位就进了历史。
 #
-# 判据（只看已跟踪的 .sh 与 .py，fixtures/ 下的不看——样本故意不可执行）：
+# 判据（只看已跟踪的 .sh 与 .py，fixtures/ 下的不看：样本故意不可执行）：
 #   ① `.sh` 在暂存区里必须是 100755；
 #   ② 暂存区里的模式与工作区的执行位一致（100755 ⇔ 工作区可执行）。
 #   符号链接（120000）判它在暂存区里指向的那一份：那一份也要在暂存区里，.sh 的要是 100755；
-#   ③ 射程里没有空目录（.git 与被 .gitignore 挡着的不算）：git 只记文件，空目录进不了提交，
-#      工作区里靠它过的样本，到了提交与 gate.sh --staged 的临时树里就没有那个目录。要留空目录就放一个 .keep。
-#      这一条只在工作区上看得见：--staged 的临时树里空目录本来就不存在。
+#   ③ 射程里没有空目录（.git 与被 .gitignore 挡着的不算）：空目录进不了提交，工作区里靠它过的样本
+#      到了提交与 --staged 的临时树里就没有那个目录。这一条只在工作区上看得见。
 #
 # 用法：
 #   script-modes.sh [目录…]        不给目录就扫本包的 scripts/
 #
-# 扫到 0 个脚本判红：射程写窄了会让这一条什么也没验，而末尾照样报绿
-# （rules/show-me-test.md：扫到 0 项也不是通过）。
-# 射程里有的目录判不了（不存在、不在 git 仓里、里面一个已跟踪的 .sh / .py 都没有，比如被 .gitignore 挡着的规范副本），
-# 逐个用 report_not_run 报出来：只要别的目录查到了东西就不吭声的话，那几处从来没人查，而成功那句看不出来。
+# 扫到 0 个脚本判红（rules/show-me-test.md：扫到 0 项也不是通过）。
+# 判不了的目录（不存在、不在 git 仓里、一个已跟踪的 .sh / .py 都没有，比如被 .gitignore 挡着的规范副本）
+# 逐个 report_not_run：别的目录查到了东西时，成功那句看不出那几处没人查。
 set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 preflight "${BASH_SOURCE[0]}" "$@"; set -- ${PREFLIGHT_ARGUMENTS[@]+"${PREFLIGHT_ARGUMENTS[@]}"}
@@ -32,10 +28,8 @@ SCRIPTS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DIRS=("$@")
 ((${#DIRS[@]})) || DIRS=("$SCRIPTS")
 
-# ⚠️ **每个目录用它自己的仓根解。** 射程里的目录可能分属**不同的 git 仓**：
-# `gate.sh --staged` 把项目摊在临时 worktree 里，而装进来的 SOP 副本仍在真仓。
-# 拿第一个目录的仓根去 `ls-files` 另一个仓里的路径，git 直接 fatal、输出为空，
-# 于是这一条报「一个都没查到」——正好是它自己要防的那种失效（0.0.56 实测，下游会话报的）。
+# 每个目录用它自己的仓根解：`gate.sh --staged` 下项目在临时 worktree 里，装进来的 SOP 副本仍在真仓；
+# 拿别的仓根 `ls-files` 会 fatal、输出为空，报成「一个都没查到」（实测）。
 checked=0; wrong=0; in_repo=0; unjudged_directories=()
 for dir in "${DIRS[@]}"; do
   if [[ ! -d "$dir" ]]; then unjudged_directories+=("$dir（不存在）"); continue; fi
@@ -43,8 +37,7 @@ for dir in "${DIRS[@]}"; do
   if [[ -z "$dir_root" ]]; then unjudged_directories+=("$dir（不在 git 仓里）"); continue; fi
   in_repo=1
   checked_before_this_directory=$checked
-  # git ls-files 的输出先整份读进来再逐行判：管道里逐行读时，循环体里的计数留在子 shell
-  # 里出不来（rules/command-safety.md：子 shell 里的赋值传不回父进程）。
+  # 整份读进来再逐行判：接管道的话，循环体里的计数留在子 shell 里出不来。
   entries="$(git -C "$dir_root" ls-files -s -z -- "$dir" | tr '\0' '\n' || true)"
   while IFS= read -r entry; do
     [[ -n "$entry" ]] || continue

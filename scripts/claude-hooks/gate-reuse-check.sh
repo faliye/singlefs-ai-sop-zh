@@ -12,13 +12,10 @@
 # 主 agent 收工触发 Stop，子 agent 收工触发 SubagentStop。注册是可选的；注册就两个都挂。
 # 判定全在 scripts/gate-overlap.py 的 --touched-by：只看这个会话开始以来、它自己写过的门禁与钩子。
 # 新建的没写 `# gate-similar:` / `# hook-events:`、同一触发点上或字面上很像的已有门禁与钩子没点名、
-# 或整段抄了已有的一份，就拦下收工，把判定输出交给 agent（该点名的、最像的几份、查全表的命令都在里面）。
-# agent 要做的：能并进已有的就并进去；非单独加不可，在新文件里逐个写
-#   # gate-similar: <已有的文件名> <为什么不并进它>
-# 写完再收工就放行（rules/sop-first.md「加门禁或钩子之前，先找已有的」）。
+# 或整段抄了已有的一份，就拦下收工，把判定输出交给 agent。怎么改见 rules/sop-first.md「加门禁或钩子之前，先找已有的」。
 #
-# 不死循环：拦下时把判定输出的指纹记在状态目录里（按 session_id 与 agent_id 分开），续跑里同一份红不连拦两次；
-#   放行条件在 scripts/claude-hook-lib.sh 的 stop_hook_already_shown。没改的由门禁阶段「门禁查重」在提交前判红。
+# 不死循环：续跑里同一份红不连拦两次，判法在 scripts/claude-hook-lib.sh 的 stop_hook_already_shown（状态按 session_id 与 agent_id 分开）。
+#   没改的由门禁阶段「门禁查重」在提交前判红。
 # 会话记录取 agent_transcript_path（子 agent 自己的那份），没有就取 transcript_path；两个都没有、或那份文件不在，判不了（退 1，放行）。
 # 项目根取 CLAUDE_PROJECT_DIR，没有就取输入里的 cwd；都没有或不是目录，同样判不了（退 1，放行）。
 # 状态目录默认 ${TMPDIR:-/tmp}/gate-reuse-check，GATE_REUSE_CHECK_STATE_DIRECTORY 可改。

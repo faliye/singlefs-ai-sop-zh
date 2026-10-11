@@ -3,6 +3,51 @@
 规则与门禁的版本历史。`CLAUDE.md` 与 `rules/*.md` 不留历史节（design-doc-discipline），
 历史一律记在这里；逐条改动细节见 `git log`，提交信息即变更说明。
 
+## 0.0.64 — 2026-10-11
+
+**入口脚本不带参数改成剪枝跑全部项、`--full` 才是不复用的全量，日常不拿抽样代替剪枝、每次提交在剪枝跑与全量里选一种、三种跑法都能逐项点名；阳性对照按单元钉、登记逐格写对照由哪一跑担；每个测试目标都归进一档；判定复用不设时限；副本不共用编译目录、拷贝不留修改时刻；注释不引别的文件的行号；转述的数标量的还是推的；归档删证据前查登记表点名；共用工作树认工作区锁；「先找已有的」的射程从门禁与钩子扩到验证装置与测试入口；副本目录名只在 `package-family.py` 一处算；门禁查重不再拿注释与文档串算像不像；约三十个脚本的注释删去论证与经过；门禁目录与钩子目录改成项目可登记，默认值不变；项目本地门禁阶段新增嵌套形态（一道阶段一个目录、用例是同目录下的 `.case.sh`），旧的扁平形态与 `fixtures/` 样本目录过渡期并存；kb 目录也改成项目可登记（`.claude/kb-directories`），doc-lint、历史条目编号、编号简称一致这三道都认它**
+
+规则：
+- `test-script-discipline.md`：小节「入口脚本：不带参数就是全量」改名「入口脚本：不带参数就是剪枝跑全部项」。不带参数是剪枝跑（全部项，照「判定可复用：按输入存，按前缀剪」只剪键相同、已判过的与等价的）；新加 `--full` 是全量（全部项，不读判定库、全部现判，现判的照样按键写回判定库）；`--item` 与 `--full` 合用时那几项不读判定库。剪枝跑与全量判同一个域，剪枝跑里出的红按全量的红办；抽样两样都不算。什么时候跑哪一种：每次改完跑快档，日常要跑慢档或整套时跑剪枝跑、不拿抽样代替，每次提交在剪枝跑与全量里选一种并写进产物，三种跑法都能 `--item` 逐项点名；对拍同样照这一条。慢档「什么时候跑」、完成标记、钉回快档、门禁管哪一半跟着改：剪枝跑与全量的完成标记都不认缩过规模的那一趟，两种跑法出的红都钉回快档；门禁能判的加「认 `--full`」「产物写没写这一趟是剪枝跑还是全量」，靠 review 的加「抽样有没有冒充剪枝跑」「提交那一趟跑的是不是剪枝跑或全量」。
+- `sop-first.md`：新加小节「立验证装置或测试入口之前，同样先找已有的」。射程是验证装置、测试入口与跑它们的门禁阶段和快慢两档：先列已有的各判什么；判同一件事、同一批对象的，新的并进已有的那一套（换算法、上加速硬件、加流、加域都写成它的加速路径或新项，不另起名字、不另立阶段、不另分一套快档与全量）；部分重叠的重叠那部分并进去；仓里已经并存两套的先合成一套再跑，合之前不跑两套各自的全量；非单独立不可的在新入口文件头写 `# gate-similar:`。这一小节门禁还不判。
+- `test-script-discipline.md` 另补三条：被测代码的每个测试目标（含可执行文件里的内联测试）都归进一档、跟着那一档的时机跑到，哪档都不归的列项时点名报；判定复用只看键、不设时限；几份仓副本不共用编译目录、拷源文件不保留修改时刻，拿副本编的脚本在编译输出里核改过的包都重编了，没有就判红。
+- `test-discipline.md`「阳性对照必须对**每一条**被测的臂都跑」：对照按单元（档、族、域这类切分的每一格）钉期望集、不取并集判；跑前登记按格写出每条判据的对照由哪一跑担，担不起就补一跑或那一格不判；登记、单测单元表、复跑登记三处的正式跑逐条对得上。
+- `code-discipline.md`：注释里指别的文件的位置写函数名、标题或唯一的锚串，不写行号。
+- `evidence-discipline.md`「进结论的每个数，先问它是量的还是拍的」：转述给别的会话或 agent 的数逐个标「量的」或「推的」并写明是哪个量；收到的一方现查过才记，没标的按推的办。
+- `evidence-discipline.md`「原样保存的证据不许事后改」：归档删上一次留下的证据之前，查被检查读的登记表（门禁登记表、钉表、变异清单这类）点名的路径，点到的不删或同一次提交改登记。
+- `session-wrapup.md` 第 4 条：往同一棵工作树打补丁、合入或起编译与重活之前先认工作区锁，被占着就排队并报谁占着，自己合入时持锁。
+- `GLOSSARY.md`：「全量」改成带 `--full` 跑的、不读判定库；新加「剪枝跑」；「慢档」「钉回快档」跟着改。
+- `preflight-discipline.md`：项目要把门禁阶段或钩子挪出 `.claude/` 时，各登记一个文件——门禁目录登记在项目根 `.claude/gate-directory`、钩子目录登记在 `.claude/hooks-directory`，一行一条、相对项目根、不存在就是默认值 `.claude/gate.d/`、`.claude/hooks/`。正文里管这几处的射程跟着改成「项目登记的门禁目录 / 钩子目录」。
+- `show-me-test.md`、`test-discipline.md`：「门禁管哪一半」与最终判据这两处的 `.claude/gate.d/` 改写成「项目登记的门禁目录（默认 `.claude/gate.d/`）」。
+- `test-script-discipline.md`：「门禁管哪一半」同上改写；「自证用……红绿样本目录」改写成「红绿用例」，补上单文件形态的写法。
+- `kb-discipline.md`：开篇补一句——项目把 kb 文本挪出 `.claude/kb/` 时登记项目根的 `.claude/kb-directories`（一行一条，相对项目根，`#` 后写理由，可以登记多条），没登记就还是 `.claude/kb/`；`doc-lint.sh`、`history-ordinal.sh`、`number-name-sync.sh` 认的是同一份登记。
+
+脚本：
+- `lib.sh` 新加 `project_gate_dir` / `project_hooks_dir`，`preflight.py` 新加 `project_gate_directory` / `project_hooks_directory`：读项目根的 `.claude/gate-directory` / `.claude/hooks-directory`，没有就是默认值；登记了但一行有效路径都没有判红。
+- `gate.sh`：算一次 `GATE_D`（调 `project_gate_dir`），本地阶段、脚本执行位、门禁自检、本地阶段判别力这几处都改用它，不再写死 `.claude/gate.d`。
+- `hooks-registered.sh`：钩子目录改读 `project_hooks_dir`，拒绝信息里的示例路径跟着改。
+- `preflight-lint.py`：`PROJECT_DIRECTORIES` 常量换成现判 `PREFLIGHT.project_gate_directory`；`category_of` 改成收门禁目录与钩子目录两个参数，不再写死判别字符串。
+- `gate-overlap.py`：`Inventory` 里的门禁目录与钩子目录改读 `project_gate_directory` / `project_hooks_directory`，`judged_pathspecs` 跟着算。
+- `link-targets.py`：跳过的 `fixtures/` 路径改成项目登记的门禁目录下的那一个，不再写死 `.claude/gate.d/fixtures/`。
+- `stage-selftest.sh`：没给阶段目录时的默认值改读 `project_gate_dir`；新增嵌套形态 `<门禁目录>/<名>/<名>.sh` 与它同目录下的用例 `*.case.sh`（头部 `# expect-exit:`、`# expect-want:`，正文是建场景的脚本），与旧的扁平形态 `<门禁目录>/<名>.sh` 加 `fixtures/<名>.sh/{red,green,…}/{setup.sh,expect}` 过渡期并存，二者各判各的；`--list-items`、`--item` 两种形态统一按阶段名点名。
+- `gate.sh`：「项目本地阶段」除了扁平的 `*.sh`，也认嵌套的 `<名>/<名>.sh`，两种按阶段名合并排序后逐个跑。
+- `preflight-lint.py`、`gate-overlap.py`：门禁目录下新加 `nested_gate_stages_in`，认嵌套形态的阶段脚本；`*.case.sh` 当成用例的数据，不算要判条件的脚本、不参与门禁查重的比对。
+- `gate-lint.sh`、`shell-lint.sh`：用法注释里的示例路径改成「项目登记的门禁目录，默认 `.claude/gate.d/`」；扫描排除表新增 `*.case.sh`（用例的建场景正文可能故意带不安全写法）。
+- `selftest.sh`：补「登记了自定义门禁目录 / 钩子目录就扫那里」「登记写坏了判红」这几组样本，覆盖 `preflight-lint.py`、`hooks-registered.sh`、`gate-overlap.py`、`link-targets.py`、`gate.sh` 五处；另补嵌套阶段配用例判得对、新旧形态过渡期并存、用例没写 `# expect-exit:` 判错这几组。
+- `lib.sh` 新加 `kb_directories`：读项目根的 `.claude/kb-directories`（一行一条，相对项目根，`#` 后写理由），没有这份文件什么都不打印，调用方按各自的默认值处理；一行有理由但没写路径的，或登记的目录不存在的，判红。新加 `die_to_stderr`：同 `die`，但写 stderr——`project_gate_dir`、`project_hooks_dir`、`kb_directories` 这三个函数设计成 `X="$(fn ...)"` 取值，拒绝时若走写 stdout 的 `bad`/`howto`，消息会被命令替换吃掉、终端上只剩一个退出码，所以拒绝都改走它。
+- `doc-lint.sh`：新加 `is_kb_path`、`is_kb_markdown`、`kb_markdown_files` 三个判据，读 `kb_directories` 的登记；原来写死 `*/kb/*` 的几处（rule-definition 与 history-registry 两张牌的归类、D 段的 kb/规范正文判别、C 段的历史节判据、E 段的编号定义扫描）都改用它们。
+- `history-ordinal.sh`：没给文件名时的默认扫描目录、与 `git ls-tree` 比对存量键池的路径前缀，都改读登记的 kb 目录，没登记就是 `.claude/kb`。
+- `number-name-sync.sh`：kb 目录登记的读取没有调 `lib.sh` 的 `kb_directories`（这份脚本只声明 `run-condition: command python3`，source `lib.sh` 会带上它对 GNU awk 的硬要求），单写了一份判法，文件头 `# gate-overlap:copy-kept` 写明原因；登记位扫描（E/D 编号）、`SKIP_PREFIX`、准入判据都跟着改用登记的目录。
+- 新加 `package-family.py`：本包的 family 名读本包自己的 `I18N`，读不到取本包目录名；副本在项目里的目录 `.claude/<family>/` 只在这里算。`link-targets.py`、`number-name-sync.sh`、`preflight-lint.py` 改用它，不再各写一份、也不再写死 `.claude/singlefs-ai-sop/`；`preflight-lint.py` 把它登记为被载入的库。
+- `gate-overlap.py`：算标识符重合时去掉注释（python 还去掉文档串），只在注释或文档串里像的不再算「字面上很像」；shell 只剔整行注释。
+- 约三十个脚本的注释与文档串照 `rules-discipline.md` 删去论证、日期与经过，只留判据与指向；行为不变。
+- `selftest.sh`：补「没有 I18N 时按副本的目录名认包装」「副本按 I18N 的 family 认、不扫」「只在注释里像的不算字面上很像」「只在文档串里像的不算字面上很像」这几格。
+
+**升级要做的**：
+- 项目自己的测试入口照新约定对一遍：不带参数是剪枝跑、`--full` 是全量；不认 `--full` 的、不带参数时不复用判定的，记进欠账表或改掉。
+- 引了旧小节名「入口脚本：不带参数就是全量」的，改成「入口脚本：不带参数就是剪枝跑全部项」。
+- 仓里并存两套判同一件事的验证装置的，照 `sop-first.md` 新小节记进欠账表，排在下一次跑全量之前合并。
+
 ## 0.0.63 — 2026-10-01
 
 **新规则 test-script-discipline：测试用例与测试脚本怎么写（原子用例、不带参数跑全量、快慢两档、判定复用、硬件加速、全量的红钉回快档、测试脚本自己要有自证）；全仓统一叫「自证」；一轮知识腐烂清理；kb 的历史节按登记判；删掉死掉的「使用者名字」检查与 `dmsetup` 硬依赖**

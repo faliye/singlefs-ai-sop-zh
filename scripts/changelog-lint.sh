@@ -3,14 +3,11 @@
 # run-condition: command git gawk
 # CHANGELOG 连续性：每一版都有自己的一节，最新一节就是 VERSION。
 #
-# 版本纪律（version-discipline.sh）只管「改了规范本体就抬 VERSION」，不管 CHANGELOG 跟没跟上。
-# 实测（0.0.39）：VERSION 从 0.0.35 抬到 0.0.39，CHANGELOG 只写了 0.0.37–0.0.39，
-# 0.0.36 的两处规则改动没有任何一节记着——zh / en / ja 三仓一起跳号，全部门禁照绿，
-# 是逐段对 diff 才看出来的。
+# version-discipline.sh 只管抬没抬 VERSION，不管 CHANGELOG 跟没跟上（实测过三仓一起跳号、全部门禁照绿）。
 #
 #   changelog-lint.sh <SOP 仓根>
 #
-# 判的是**整份文件**，不是 diff 窗口：历史本来就连续，不用去猜「上次抬到了哪」。查五条：
+# 判整份文件，不是 diff 窗口：历史本来就连续，不用猜「上次抬到了哪」。查五条：
 #   1. 二级标题只许是版本节 `## x.y.z — YYYY-MM-DD`；最后一节可以是不带日期的收尾
 #      （「0.0.21 及更早」——各语言仓措辞不同，所以只认「版本号后面跟着别的字、没有日期」）
 #   2. 最新一节 = VERSION
@@ -51,8 +48,7 @@ successor_of() { # successor_of <旧> <新> → 新是旧的紧后一版则返�
   return 1
 }
 
-# 缺版本的消息要报**几版、哪几版**，而且只报列得全的：跨了主/次版本时中间有哪些版本
-# 推不出来，照实说列不全，不报一个错的数（rules/verify-before-claiming.md：说出口的不许比核过的宽）。
+# 缺版本只报列得全的：跨了主/次版本时中间有哪些版本推不出来，照实说列不全，不报一个错的数。
 between() { # between <旧> <新> → 打印严格夹在中间的版本（空格分隔）；列不全时返回 1
   local o1 o2 o3 n1 n2 n3 k
   IFS=. read -r o1 o2 o3 <<< "$1"
@@ -96,7 +92,7 @@ mapfile -t HEADS < <(awk '
 ' "$CL")
 
 fails=0; n=0; top=""; top_ln=""; prev=""; prev_ln=""
-# 日期的下界：这个仓第一个提交往前宽限几天。起点算一次就够，别在循环里每节算一遍。
+# 日期的下界：这个仓第一个提交往前宽限几天。
 CHANGELOG_START_DATE="$(project_start_date "$(dirname "$CL")")"; CHANGELOG_START_DATE="${CHANGELOG_START_DATE:-$SOP_START_DATE}"
 require_date_arithmetic
 last=$(( ${#HEADS[@]} - 1 ))
@@ -104,8 +100,7 @@ for idx in "${!HEADS[@]}"; do
   read -r ln kind v <<< "${HEADS[$idx]}"
   case "$kind" in
     dated)
-      # 日期不许是编的：比这个仓第一个提交早出宽限、或者比最晚时区的今天还晚，都不可能是真发生过的事。
-      # 判据在 lib.sh 的 date_out_of_range 一处，doc-lint 用的是同一个（实测踩过：样本里写着 2026-01-01）。
+      # 判据在 lib.sh 的 date_out_of_range 一处，doc-lint 用同一个。
       section_date="$(sed -n "${ln}p" "$CL" | grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2}' || true)"
       section_date="${section_date%%$'\n'*}"
       if [[ -n "$section_date" ]] && section_why="$(date_out_of_range "$section_date" "$CHANGELOG_START_DATE")"; then

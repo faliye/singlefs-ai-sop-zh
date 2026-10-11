@@ -10,10 +10,8 @@
 #                                          顺手把本仓 MANIFEST.sha256 抄成它的 SOURCE-MANIFEST.sha256
 #   i18n-sync.sh --stamp <语言> <篇>...    给已重译好的那几篇盖上溯源标记
 #
-# --stamp 要求把篇目一个个写出来，不提供「全部盖章」。
-# 说清楚它的边界：一个 for 循环照样能把所有篇目刷绿（对抗测试实测），
-# 盖章本质上是盖的人的承诺，这里只抬高「顺手全刷」的成本、并逼你把篇目名打一遍。
-# 机器管不了「真的重译了没」——所以盖完的 warn 不是客套，是这道检查的全部余量。
+# --stamp 要求把篇目一个个写出来，不提供「全部盖章」。一个 for 循环照样能把所有篇目刷绿：
+# 盖章是盖的人的承诺，这里只抬高「顺手全刷」的成本；机器管不了「真的重译了没」，盖完的 warn 是这道检查的全部余量。
 #
 # 检查什么：对 LANGUAGES 里声明的每种语言，
 #   1. 那个语言的仓在不在  —— 不在则「无法检查」，按失败处理，不静默放过
@@ -22,19 +20,11 @@
 #   4. 共享部分（install.sh、scripts/、GLOSSARY.md）与本仓逐字节一致
 #   5. SKILL.md 与 agents 定义的第 1 行没被溯源标记压住 —— frontmatter 的 `---` 必须还在第 1 行
 #   6. 清单里每一篇在那个仓里有没有对应文件
-#   7. 每一篇译文首行的 generated-from 哈希是不是当前源文 —— 只比清单会漏掉
-#      「抄了清单却没重译」：门禁绿，而用那种语言的人拿到的是旧规则
+#   7. 每一篇译文首行的 generated-from 哈希是不是当前源文 —— 只比清单会漏掉「抄了清单却没重译」
+#   已声明的语言缺文件或落后，都判失败。
 #
-# 共享部分为什么要复制而不是只放一份：项目安装时只 clone 自己那一种语言的仓，
-# 那个仓里没有门禁脚本就等于装不了。复制是**生成**的，不是手抄的——
-# 手抄的重复会分叉，生成的不会（rules/machine-first.md）。
-#
-# 什么该进共享、什么该进清单，判据只有一条：**里面有没有面向人的散文**。
-# 有就翻译（进清单），没有就复制（进 SHARED）。谁都不沾的文本文件由
-# scripts/manifest.sh 的覆盖率检查拦下——「忘了纳入」不许静默通过。
-#
-# 判据（按 kb-discipline「矛盾比空白更糟」定，但对已声明的语言收紧）：
-#   已声明的语言缺文件或落后 —— 都失败。声明了却不跟，等于给人一份过期的规则。
+# 共享部分复制而不是只放一份：项目安装时只 clone 自己那一种语言的仓，那个仓里没有门禁脚本就等于装不了。
+# 什么进共享、什么进清单，判据见 scripts/manifest.sh「什么进清单，什么不进」。
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 preflight "${BASH_SOURCE[0]}" "$@"; set -- ${PREFLIGHT_ARGUMENTS[@]+"${PREFLIGHT_ARGUMENTS[@]}"}
 
@@ -69,8 +59,7 @@ stamp_at() { # stamp_at <文件> → 标记应当在的行号
        END { if (!found) print 1 }' "$1"
 }
 # 从一份译文里读出溯源标记的路径与哈希（读不到就什么都不打印）。
-# 用 awk 不用 sed：sed 的 BRE 里 \| 会跟分隔符撞车——
-# 写成 sed 时它静默匹配不上，是靠盖章后的回读断言才抓出来的（写这段时实测）。
+# 用 awk 不用 sed：sed 的 BRE 里 \| 会跟分隔符撞车，静默匹配不上。
 stamp_read() { # stamp_read <文件>
   local ln; ln="$(stamp_at "$1")"
   awk -v L="$ln" 'NR==L {
@@ -90,8 +79,7 @@ stale_articles() { # stale_articles <译本仓>
   while read -r hash path; do
     tf="$repo/$path"
     [[ -f "$tf" ]] || { printf '缺: %s\n' "$path"; continue; }
-    # 没有标记时 stamp_read 无输出，read 返回非 0 —— set -e 会让脚本在这里静默退出，
-    # 而「静默退出」正是本门禁要拦的那种失败。所以吃掉退出码，靠 $gh 空不空判。
+    # 没有标记时 stamp_read 无输出，read 返回非 0，set -e 会让脚本在这里静默退出；吃掉退出码，靠 $gh 空不空判。
     gp=''; gh=''
     read -r gp gh < <(stamp_read "$tf") || true
     if [[ -z "$gh" ]]; then
@@ -104,15 +92,8 @@ stale_articles() { # stale_articles <译本仓>
   done < "$MF"
 }
 
-# 原样复制到各语言仓的部分：**只有不含面向人的散文的东西**——脚本与配置。
-# 别的一律走清单逐篇翻译。
-#
-# skills/ 与 templates/ 曾经在这里，于是日语仓里的 skill 正文和项目骨架全是中文，
-# 而 templates/CLAUDE.project.md 会被 install.sh 写成使用者项目根的 CLAUDE.md——
-# 与「用日文的不必读中文」直接冲突。现在它们在清单里，逐篇翻译、逐篇溯源。
-#
-# GLOSSARY.md 留在这里：它本身就是各语言并列的一张对照表，翻译它等于把同一张表
-# 抄成 N 份，而那正是它要防的事。它的说明列自带三语，所以不翻译也没有语言缺口。
+# 原样复制到各语言仓的部分：只有不含面向人的散文的东西（脚本与配置），别的一律走清单逐篇翻译。
+# GLOSSARY.md 例外留在这里：它本身就是各语言并列的一张对照表，说明列自带三语。
 SHARED=(install.sh scripts GLOSSARY.md)
 
 # gate.sh 当阶段跑时它已打过同名标题，别打两遍（GATE_IN_STAGE 由 run_stage 设）
@@ -145,9 +126,7 @@ if [[ "$THIS" != "$REF" ]]; then
 fi
 [[ -f "$MF" ]] || { bad "缺 MANIFEST.sha256"; howto "跑： bash scripts/manifest.sh --update"; exit 1; }
 
-# 清单必须是新鲜的：本脚本所有对账都以 MANIFEST 为基准，清单陈旧时
-# 「译文与清单一致」是对着旧账本回声——实测出过「规则改了、清单没更新、
-# 各语言同步照样全绿」的假绿。先让 manifest.sh 验一遍，陈旧即无法判定。
+# 所有对账都以 MANIFEST 为基准：清单陈旧时「规则改了、清单没更新、各语言同步照样全绿」。先让 manifest.sh 验一遍，陈旧即无法判定。
 if [[ -z "$STAMP_LANG" ]] && ! GATE_IN_STAGE=1 bash "$(dirname "${BASH_SOURCE[0]}")/manifest.sh" >/dev/null 2>&1; then
   bad "MANIFEST.sha256 陈旧，译文新旧无法判定"
   howto "先跑 bash scripts/manifest.sh 看哪几篇对不上，改完跑 --update 刷新清单，" \
@@ -206,12 +185,10 @@ for lang in $LANGS; do
     fails=$((fails+1)); continue
   fi
   sm="$repo/SOURCE-MANIFEST.sha256"
-  # --update 顺手替译本仓刷新 SOURCE-MANIFEST，但只在逐篇溯源全都对上时。
-  # 以前这一步靠人手抄，漏抄时 --update 整个被下面的「落后」拒掉，共享部分一份都没同步过去
-  # （2026-09-11 发 0.0.42 时实测卡在这里）。不能无条件抄：抄了清单却没重译，译本仓就被说成跟上了。
+  # --update 顺手替译本仓刷新 SOURCE-MANIFEST（不抄的话，下面的「落后」会把整个 --update 拒掉），
+  # 但只在逐篇溯源全都对上时：抄了清单却没重译，译本仓就被说成跟上了。
   if [[ $UPDATE -eq 1 ]] && ! cmp -s "$MF" "$sm"; then
-    # `.git` 也可以是文件：git worktree 里它是一个指路的文件（lib.sh 的 project_root 早就这么判了）。
-    # 只认目录的话，在 worktree 上做译文同步会被拒，理由还写成「不是 git 仓」（审计实测的口径不一致）。
+    # `.git` 也可以是文件（git worktree），与 lib.sh 的 project_root 同判。
     [[ -e "$repo/.git" ]] || { bad "$lang  $repo 不是 git 仓，拒绝往里写 SOURCE-MANIFEST"
       howto "只往 git 仓里写——写错地方无从回退。" \
             "确认路径，或用 bash scripts/i18n-sync.sh --update /path/to/repos 指定。"
@@ -237,17 +214,13 @@ for lang in $LANGS; do
   fi
   if ! diff -q "$MF" "$sm" >/dev/null 2>&1; then
     bad "$lang  落后：与清单不一致"
-    # ⚠️ 尾部 || true 不能省：diff 有差异时退出码是 1，set -e + pipefail 会把整个
-    # 脚本在这里带走——howto 打不出来、后面的语言也不查了（对抗测试实测，
-    # 崩在真实数据上）。诊断管道只活在失败分支里，正是样本从没跑过的那条路。
-    # 不截断：截断的话，重译的人照着列表做完仍然红，而他看不出还差哪几篇
-    # （本轮实测：20 篇里只显示了 10 篇）。
+    # 尾部 || true 不能省：diff 有差异时退 1，set -e + pipefail 会把脚本在这里带走，howto 打不出来、后面的语言也不查了。
+    # 不截断：截断的话，重译的人照着列表做完仍然红，看不出还差哪几篇。
     diff "$MF" "$sm" | grep '^<' | awk '{print $3}' | sed 's/^/        待重译: /' || true
     howto "把上面这几篇在该语言仓里重译并盖章（--stamp），再跑 bash scripts/i18n-sync.sh --update，它逐篇对上后自己抄 SOURCE-MANIFEST。" \
           "只抄清单不重译拦得住：下一项逐篇比对译文首行的 generated-from 哈希。"
     fails=$((fails+1)); continue
   fi
-  # 版本必须完全一致：一个升级三个升级
   tv="$(cat "$repo/VERSION" 2>/dev/null || echo '')"
   bv="$(cat "$PKG/VERSION" 2>/dev/null || echo '')"
   if [[ "$tv" != "$bv" ]]; then
@@ -287,9 +260,8 @@ for lang in $LANGS; do
     fails=$((fails+1)); continue
   fi
 
-  # 溯源标记不许压住文件本身的头：SKILL.md 的 frontmatter 必须从第 1 行起，
-  # SKILL.md 与 agents 定义的第 1 行必须是 frontmatter 的 `---`。被压住不报错——skill 安静地装不上（实测过）。
-  # 位置由 stamp_at 决定，这里查的是结果：这类文件的第 1 行还是不是它该有的样子。
+  # SKILL.md 与 agents 定义的第 1 行必须是 frontmatter 的 `---`：被溯源标记压住不报错，skill 安静地装不上。
+  # 位置由 stamp_at 决定，这里查的是结果。
   headbad=0
   while read -r _h path; do
     tf="$repo/$path"
@@ -310,9 +282,7 @@ for lang in $LANGS; do
     fails=$((fails+1)); continue
   fi
 
-  # 逐篇溯源：译文首行记着它译自源文的哪个版本。
-  # 只比两份清单的话，「抄了清单却没重译」会绿——那是最危险的一种绿：
-  # 版本号、清单、门禁三样都说「最新」，而那一篇正文还是旧的。
+  # 逐篇溯源：只比两份清单的话，「抄了清单却没重译」会绿。
   articles="$(stale_articles "$repo")"
   [[ -z "$articles" ]] || sed 's/^/        /' <<< "$articles"
   miss="$(grep -c '^缺: ' <<< "$articles" || true)"

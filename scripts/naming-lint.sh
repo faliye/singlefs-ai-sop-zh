@@ -5,33 +5,24 @@
 #
 #   naming-lint.sh <项目根>
 #
-# 扫项目里每个 .rs 文件，只看**我们自己声明的名字**：文件名、函数、参数、let / for / match /
-# 闭包里的绑定、类型、字段、枚举成员、常量、模块、泛型参数、生命周期、标签、use-as 别名、
-# 宏与宏变量。判两条：
-#   N1 单字母：整个名字是一个字母，或者拆开后有一段是单个字母（后面跟数字也算）
-#              —— i、T、'a、x_offset、t0。名字中间的 a 是英语冠词（is_not_a_directory），不判；
-#              打头或结尾的 a 照判（a_levels、side_a），那是代号
-#   N2 缩写：拆开后有一段在下面的缩写词表里，而项目没登记它 —— cnt、blk_hdr、CRC32Table
-# 名字按下划线和大小写边界拆段：BlkHdr → blk、hdr；HTTPServer → http、server。
-# 查词表时去掉尾部数字（crc32 按 crc 查），复数也认（args 按 arg 查）。
+# 退出码：0 通过；1 判红（配置不合规或名字违规）；3 没有 .rs 可查（与 show-me-test 同约定，gate.sh 记本次未跑）。
 #
-# 不判的，说清楚：
-#   - 名字起得好不好、一个概念是不是全仓一个名字：语义，靠 review
-#   - 外部定下的名字：trait 实现里的方法名、关联类型、关联常量（impl Display 里的 fmt），
-#     extern 块里的整块声明，以及 Cargo 定的文件名 lib.rs、main.rs、mod.rs、build.rs。trait 实现的参数和函数体照查——那些名字是我们起的
-#   - Rust 关键字与基本类型当一段出现（as_mut、to_u64）：语言规范就是它们那一处权威定义
-#   - 认不出的形态（跨行的 let 模式、宏展开出来的名字、写在一行里的 trait 实现、
-#     一行写完的 macro_rules）：认不出不等于通过，交给 review
-#
+# 扫每个 .rs 里我们自己声明的名字：文件名、函数、参数、let / for / match / 闭包里的绑定、类型、字段、枚举成员、
+# 常量、模块、泛型参数、生命周期、标签、use-as 别名、宏与宏变量。判两条：
+#   N1 单字母：整个名字或拆开后的一段是单个字母（后面跟数字也算）。名字中间的 a 是英语冠词（is_not_a_directory）不判，
+#      打头或结尾的 a 是代号照判（a_levels、side_a）。
+#   N2 缩写：拆开后有一段在 ABBR_TABLE 里而项目没登记。按下划线和大小写边界拆段（HTTPServer → http、server），
+#      去掉尾部数字再查（crc32 按 crc 查），复数也认。
+# 不判：外部定的名字（trait 实现里的方法名、关联类型与关联常量，extern 块，Cargo 定的 lib.rs、main.rs、mod.rs、build.rs；
+#   trait 实现的参数和函数体照查）；当一段出现的 Rust 关键字与基本类型（as_mut、to_u64），语言规范是它们的定义。
+#   语义（名字起得好不好、一个概念是不是全仓一个名字）与认不出的形态（跨行的 let 模式、宏展开出来的名字、
+#   写在一行里的 trait 实现、一行写完的 macro_rules）判不了，不等于通过，靠 review。
 # 项目侧两份配置，一行一条，`#` 后面写理由，理由不许省：
 #   .claude/abbreviations         登记过的领域缩写：<缩写>  # <全称与含义>
-#                                 项目自己的编号：<字母><数字>  # <登记在哪张表>（e<数字> 让 e57_x 合法）
+#                                 项目自己的编号：<字母><数字>  # <登记在哪张表>（登记 e<数字> 之后 e12_x 合法）
 #   .claude/naming-lint-exclude   不扫的目录或单个 .rs：<相对路径>  # 为什么（回扫旧代码时按文件列，改完删行）
 # 行内豁免：那一行写 `// naming-lint:external <为什么这个名字不归我们定>`，理由同样不许省。
 #
-# 默认不扫 target/、.git/、.claude/（工具、样本、装进来的 SOP 副本），以及 $ROOT/scripts/fixtures/。
-# 后一条写成相对 ROOT 的前缀：selftest 拿样本目录当 ROOT 跑时，样本照查
-# （写成 */fixtures/* 的话样本永远被跳过，自证就成了摆设——doc-lint 踩过）。
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 preflight "${BASH_SOURCE[0]}" "$@"; set -- ${PREFLIGHT_ARGUMENTS[@]+"${PREFLIGHT_ARGUMENTS[@]}"}
 
@@ -47,9 +38,9 @@ trim() { local text="$1"; text="${text#"${text%%[![:space:]]*}"}"; printf '%s' "
 fails=0
 
 # ── 不扫的目录 ──────────────────────────────────────────
-# 排除一个目录，那里面的名字就没人管了，所以每条都要写明为什么，而且一律报出来：
-# 静悄悄少扫一批文件，和这道检查没实现长得一模一样。判法与 doc-lint 的排除表同一套。
-# 默认那几处（target/、.git/、.claude/、scripts/fixtures/）在 lib.sh 的 rust_source_files 里，与「构建与单测」共用；这里只追加排除表里的
+# 排除的目录里名字没人管，所以每条要写理由、一律报出来：静悄悄少扫一批文件，和这道检查没实现长得一样。
+# 默认那几处（target/、.git/、.claude/、$ROOT/scripts/fixtures/）在 lib.sh 的 rust_source_files 里，与「构建与单测」共用；这里只追加排除表里的。
+# 样本目录写成相对 ROOT 的前缀：写成 */fixtures/* 的话 selftest 拿样本目录当 ROOT 跑时样本全被跳过，自证成了摆设。
 EXCL=()
 EXFILE="$ROOT/.claude/naming-lint-exclude"
 expaths=(); exwhys=(); exns=()
@@ -77,8 +68,7 @@ if [[ -f "$EXFILE" ]]; then
             "不收 . 、绝对路径、含 .. 的路径——那些一行就能把整棵树排掉。"
       fails=$((fails+1)); continue
     fi
-    # 一条排除可以是目录，也可以是单个 .rs 文件。后者用来回扫旧代码：还没改完的文件逐个列进来，
-    # 改完一个删一行，新文件照查——排除的范围只缩不涨。
+    # 一条排除可以是单个 .rs：回扫旧代码时没改完的文件逐个列进来，改完一个删一行，排除只缩不涨。
     if [[ -f "$ROOT/$expath" && "$expath" == *.rs ]]; then
       EXCL+=(-not -path "$ROOT/$expath")
       expaths+=("$expath"); exwhys+=("$exwhy"); exns+=(1)
@@ -102,8 +92,7 @@ if [[ -f "$EXFILE" ]]; then
 fi
 
 # ── 缩写登记表 ──────────────────────────────────────────
-# 登记表就是这个缩写唯一的权威定义（rules/kb-discipline.md：同一个事实只许有一处）。
-# 所以不写含义的、单字母的、登记两遍的，都判红：它们让「这个缩写指什么」答不上来。
+# 登记表是缩写唯一的权威定义：不写含义的、单字母的、登记两遍的都判红，它们让「这个缩写指什么」答不上来。
 ABFILE="$ROOT/.claude/abbreviations"
 declare -A REGISTERED=()
 declare -A NUMBERED=()
@@ -125,8 +114,7 @@ if [[ -f "$ABFILE" ]]; then
       howto "在 # 后面写全称，以及它在这个项目里指什么。"
       fails=$((fails+1)); continue
     fi
-    # 项目自己的编号（kb 里登记的 E57、D22 这类）：登记的是「这个字母加数字」这一整类，
-    # 权威定义在登记它的那张表里。登记之后 e57_field_authority 里的 e57 不再算单字母。
+    # 项目自己的编号：登记的是「这个字母加数字」一整类，权威定义在登记它的那张表里；登记之后 e12_x 里的 e12 不算单字母。
     if [[ "$token" =~ $numbered_re ]]; then
       letter="${BASH_REMATCH[1]}"
       if [[ -n "${NUMBERED[$letter]:-}" ]]; then
@@ -171,16 +159,13 @@ if [[ $fails -gt 0 ]]; then
 fi
 if [[ ${#files[@]} -eq 0 ]]; then
   ok "没有要查的 .rs 文件（${#files[@]} 个），本阶段无对象可判"
-  # 退 3 = 无对象可判，与 show-me-test 同一个约定，gate.sh 把它记成「本次未跑」。
-  # 退 0 会在汇总里与「判过了」长得一模一样，而这一轮其实一个名字都没看
-  # （rules/show-me-test.md「门禁不许假装通过」）。
+  # 退 3 而不退 0：退 0 在汇总里与「判过了」分不出，而这一轮一个名字都没看（rules/show-me-test.md「门禁不许假装通过」）。
   exit 3
 fi
 
 # ── 缩写词表：<缩写> <该写成什么> ─────────────────────────
-# 只列最常见的那些。**词表外的缩写照样违规**，只是这道检查看不见（rules/code-discipline.md）。
-# 不收 Rust 关键字（mut、fn、ref、impl、mod、dyn、str……）：语言规范是它们那一处定义。
-# 不收本身就是英语单词的（off、opt、mid）：turn_off、opt_in 会被误拒，门禁一误拒人就绕过它。
+# 只列最常见的那些，词表外的缩写照样违规，只是这道检查看不见（rules/code-discipline.md）。
+# 不收 Rust 关键字（mut、fn、ref、impl……）；不收本身是英语单词的（off、opt、mid），turn_off、opt_in 会被误拒，门禁一误拒人就绕过它。
 ABBR_TABLE="$(cat <<'TABLE'
 acc accumulator / account
 ack acknowledgement
@@ -329,9 +314,7 @@ TABLE
 )"
 
 # ── 扫描程序 ────────────────────────────────────────────
-# 一行一行读，先剥掉注释、字符串、字符字面量（生命周期留着），再在剩下的代码里认声明处。
-# 代码块用一个栈记着「现在在哪种块里」：字段只在 struct 体里认，枚举成员只在 enum 体里认，
-# trait 实现里的方法名不判，extern 块整块不判。
+# 逐行剥掉注释、字符串、字符字面量（生命周期留着）再认声明处；块栈记着在哪种块里：字段只在 struct 体、枚举成员只在 enum 体里认，trait 实现里的方法名与 extern 块不判。
 # 输出一行一条：V 违规 / M 标记缺理由 / X 被行内豁免的行 / S 声明总数。
 NAMING_AWK="$(cat <<'AWK'
 BEGIN {
@@ -491,7 +474,6 @@ function declarations(code, ctx,    work, rest, m, g, line) {
   # 上一行的函数签名还没收尾（参数分几行写）
   if (sig) scan_params(code)
 
-  # 函数名、它的泛型参数、它的参数
   work = code
   while (match(work, /(^|[^A-Za-z0-9_])fn[ \t]+([A-Za-z_][A-Za-z0-9_]*)/, m)) {
     if (ctx != "trait_impl") judge(m[2], "函数")
@@ -502,7 +484,6 @@ function declarations(code, ctx,    work, rest, m, g, line) {
     work = rest
   }
 
-  # 类型：struct / enum / union / trait / type，以及它们的泛型参数
   work = code
   while (match(work, /(^|[^A-Za-z0-9_])(struct|enum|union|trait|type)[ \t]+([A-Za-z_][A-Za-z0-9_]*)/, m)) {
     rest = substr(work, RSTART + RLENGTH)
@@ -514,7 +495,6 @@ function declarations(code, ctx,    work, rest, m, g, line) {
   }
   if (match(code, /(^|[^A-Za-z0-9_])impl[ \t]*</)) { g = angle(substr(code, RSTART + RLENGTH - 1)); judge_generics(g) }
 
-  # 常量、模块、宏
   if (match(code, /^[ \t]*(pub(\([^)]*\))?[ \t]+)?(const|static)[ \t]+(mut[ \t]+)?([A-Za-z_][A-Za-z0-9_]*)[ \t]*:/, m))
     if (ctx != "trait_impl") judge(m[5], "常量")
   if (match(code, /^[ \t]*(pub(\([^)]*\))?[ \t]+)?mod[ \t]+([A-Za-z_][A-Za-z0-9_]*)/, m)) judge(m[3], "模块")
@@ -528,11 +508,9 @@ function declarations(code, ctx,    work, rest, m, g, line) {
     if (code ~ /;/) inuse = 0
   }
 
-  # 标签
   work = code
   while (match(work, /'([A-Za-z_][A-Za-z0-9_]*):[ \t]*(loop|while|for|\{)/, m)) { judge("'" m[1], "标签"); work = substr(work, RSTART + RLENGTH) }
 
-  # let / if let / while let
   work = code
   while (match(work, /(^|[^A-Za-z0-9_])let[ \t]+/)) {
     rest = substr(work, RSTART + RLENGTH)
@@ -540,7 +518,6 @@ function declarations(code, ctx,    work, rest, m, g, line) {
     work = rest
   }
 
-  # for <模式> in
   work = code
   while (match(work, /(^|[^A-Za-z0-9_])for[ \t]+/)) {
     rest = substr(work, RSTART + RLENGTH)
@@ -554,7 +531,6 @@ function declarations(code, ctx,    work, rest, m, g, line) {
   closures(code)
   if (code !~ /macro_rules!/) match_arms(code)
 
-  # 字段与枚举成员：只在 struct / enum 体里认
   if (ctx == "struct" || ctx == "fields") { line = code; sub(/^[ \t]*(#\[[^]]*\][ \t]*)+/, "", line); same_line_fields(line) }
   if (ctx == "enum") { line = code; sub(/^[ \t]*(#\[[^]]*\][ \t]*)+/, "", line); variant_item(line) }
 }

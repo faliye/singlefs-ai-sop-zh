@@ -4,9 +4,14 @@
 **每个脚本在开头写明什么时候该调它、什么时候不能调它，开跑之前先判：条件不满足就拒绝执行，带 `--force` 才照跑。**
 
 管这几处：本包的 `install.sh` 与 `scripts/`（含 `scripts/claude-hooks/`、`scripts/githooks/`），
-项目的 `.claude/gate.d/`，以及项目在 `.claude/preflight-dirs` 里登记的目录——登记的是重型的、要按输入判要不要重跑的那几处：
-实验脚本、实验二进制的源文件放在哪，就登记哪。项目的 `.claude/scripts/`、`.claude/hooks/` 与别的轻脚本不写准入与运行条件。每个目录只算它自己那一层，子目录另登记一行。
+项目登记的门禁目录（默认 `.claude/gate.d/`），以及项目在 `.claude/preflight-dirs` 里登记的目录——登记的是重型的、要按输入判要不要重跑的那几处：
+实验脚本、实验二进制的源文件放在哪，就登记哪。项目登记的钩子目录（默认 `.claude/hooks/`）、`.claude/scripts/` 与别的轻脚本不写准入与运行条件。每个目录只算它自己那一层，子目录另登记一行。
 `.claude/preflight-dirs` 一行一条 `<目录>  # 放的是什么`；没有实验的项目也建这个文件，写一行注释说明。
+
+项目要把门禁阶段或钩子挪出 `.claude/` 时，各登记一个文件：门禁目录登记在项目根 `.claude/gate-directory`，
+钩子目录登记在 `.claude/hooks-directory`；每个文件一行，相对项目根的路径，去掉结尾的 `/`，可以带 `# 理由`；
+不存在就是默认值。`lib.sh` 的 `project_gate_dir` / `project_hooks_dir` 与 `preflight.py` 的
+`project_gate_directory` / `project_hooks_directory` 读的是同一份登记。
 
 不判的三类：被 source 或 import 的库、样本、只 exec 共享脚本的包装（install.sh 铺的那几行，夹了别的逻辑就照普通脚本判）。
 库与样本逐个登记进排除表：本包的在 `scripts/preflight-lint.py` 的 `PACKAGE_EXCLUDED`，项目的在 `.claude/preflight-exclude`，

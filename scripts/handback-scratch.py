@@ -78,7 +78,6 @@ CONTENT_FIELD_NAMES = {'content', 'old_string', 'new_string', 'new_source', 'edi
 
 
 def load_package_module(module_name, file_name):
-    # 不写 __pycache__：它会是仓里一个未跟踪的新目录
     sys.dont_write_bytecode = True
     specification = importlib.util.spec_from_file_location(
         module_name, os.path.join(PACKAGE_SCRIPTS_DIRECTORY, file_name))

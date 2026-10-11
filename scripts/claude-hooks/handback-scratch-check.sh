@@ -15,7 +15,7 @@
 #     <主 agent 的会话记录去掉 .jsonl>/subagents/agent-<agent_id>.jsonl 找；找不到不判，退 1。
 #   SubagentStop：没有交回工具、或者没经交回工具就收工时兜底。送达了的交回报告里写了的算说明（被拒掉的那次不算）；
 #     拦下时记下时刻，之后回复里的文字与工具调用的输入里写了的也算（只 du、ls、Read 一下不算）。
-# 说明的写法：一行里同时有全路径与「没删」「保留」「留给」「kept」这类词（handback-scratch.py 的 EXPLANATION_KEYWORDS），只当出处引一下路径不算。
+# 说明的写法：一行里同时有全路径与「没删」「保留」这类词（判法在 handback-scratch.py 的 EXPLANATION_KEYWORDS），只当出处引一下路径不算。
 #
 # 只判子 agent：主 agent 在多轮之间有意留着编译目录（Stop 上与主 agent 自己的工具调用都不判）。
 # SubagentStop 的输入里没有 agent_transcript_path 时认不出是哪个子 agent，不判，退 1：拿主 agent 的会话记录去认，会把主 agent 建的算到子 agent 头上。
@@ -30,13 +30,8 @@
 #   "SubagentStop": [{"hooks": [{"type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR\"/.claude/singlefs-ai-sop/scripts/claude-hooks/handback-scratch-check.sh"}]}]
 #
 #   handback-scratch-check.sh             从 stdin 读钩子的 JSON
-#   handback-scratch-check.sh --selftest  造一个临时目录与带时刻的会话记录，核各种建法拦得下（绝对路径、跟着 cd / pushd / -C 的相对路径、
-#                                         NAME=相对路径、~、换行之后的 cd、自己建的上级下面的、读过的文件所在的、喂给解释器的 heredoc、
-#                                         mktemp 的输出、后台命令在结果之后建的与没收到完成通知的）、开工之前与两次调用之间别人建的不拦、
-#                                         派出去的子 agent 建的不拦、写进文件的内容与共用目录不连带、项目里的与符号链接不拦、
-#                                         交回之前拦而交回报告里写了全路径就放行（前缀相同的别的路径不算）、收工时交回过的报告与
-#                                         拦下之后的回复里写了就放行（只 du、Read 一下与拦下之前写的不算，删了重建的要重新说明）、
-#                                         Stop 与主 agent 不判、判不了时不拦
+#   handback-scratch-check.sh --selftest  造一个临时目录与带时刻的会话记录，核各种建法拦得下、别人建的不拦、写了说明就放行、
+#                                         Stop 与主 agent 不判、判不了时不拦（逐种情形见自证里各段的注释）
 set -uo pipefail
 HOOK_DIRECTORY="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PACKAGE_ROOT="$(cd "$HOOK_DIRECTORY/../.." && pwd)"

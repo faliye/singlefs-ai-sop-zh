@@ -3,10 +3,8 @@
 # run-condition: check test -d /proc :: 没有 /proc：proc.py 只在 Linux 上用
 """找进程、按 pid 等进程、按 pid 停进程：替掉 `pgrep -f` / `pkill -f` / `killall`。
 
-为什么：`pgrep -f` / `pkill -f` 拿模式串去比整条命令行，而发出这条命令的 shell 自己的命令行里就带着那个模式串——
-拿它当等待条件的循环永远不退出，拿它杀进程会连自己一起杀（使用者项目两次实测；
-rules/command-safety.md 禁用这几种写法，脚本里由 scripts/shell-lint.sh 的 S2、S3 判，会话里手敲的命令由
-scripts/claude-hooks/pattern-process-guard.sh 在执行前拒绝）。这里三件事都按 pid 办：
+`pgrep -f` / `pkill -f` 拿模式串比整条命令行，发出命令的 shell 自己也带着那个模式串：等待循环永远不退出，
+杀进程会连自己一起杀（实测；rules/command-safety.md）。这里三件事都按 pid 办：
 
     proc.py find 可执行文件名 [--argument 参数]   # 列出进程：可执行文件名（argv[0] 或 /proc/<pid>/exe 的文件名）逐字相等，
                                                   # 给了 --argument 时还要有一个参数逐字等于它（或文件名等于它的文件名）；
@@ -15,9 +13,7 @@ scripts/claude-hooks/pattern-process-guard.sh 在执行前拒绝）。这里三�
     proc.py stop 进程号 [--grace 秒]               # 先 TERM，过 grace 秒还在就 KILL；自己与祖先拒绝停
     proc.py --selftest                           # 起几个 sleep 走一遍；PROC_BREAK=ancestors|timeout|stopself 时必须判红
 
-等自己起的进程，最省事的仍是起的时候 `process_id=$!` 记下来、`wait "$process_id"`；要会话在它跑完时叫醒调度的一方，
-就放后台起（Claude Code 的 run_in_background）、等完成通知。这个脚本给的是「进程不是自己起的、或 pid 没记下来」时的写法：
-先 `find` 拿到 pid，再 `wait` / `stop` 那个 pid。
+自己起的进程用 `$!` 记下、`wait` 等；这个脚本给「进程不是自己起的、或 pid 没记下来」时用：先 `find` 拿 pid，再 `wait` / `stop`。
 
 退出码：0 成；1 自证不过；2 参数错或拒绝（停自己、停祖先、进程号不存在）；3 等超时。
 """
@@ -116,8 +112,7 @@ def stop(process_id, grace_seconds):
 
 def selftest():
     failures = []
-    # sleep 的参数：只有这一份自证起的 sleep 带它。带上本进程号：几份自证同时跑时（三个语言仓并行跑 selftest），
-    # 参数写死的话 find 会把别的那份起的 sleep 也列出来，两份一起判红（2026-09-19 实测）
+    # 参数带本进程号：几份自证同时跑时（几个语言仓并行跑 selftest），写死的话 find 会列出别的那份起的 sleep，两份一起判红（实测）
     marker = f"4242.{os.getpid()}"
     sleepers = [subprocess.Popen(["sleep", marker]) for _ in range(2)]
     try:
@@ -141,8 +136,8 @@ def selftest():
             failures.append(f"stop 应当停掉 sleep，实际 {outcome}")
         if wait([sleepers[0].pid], 2, 0.05) != []:
             failures.append("停掉之后 wait 应当立刻返回")
-        # 拒绝停祖先：在一次性的 bash 里让 proc.py 去停这个 bash（它的父进程）。拒绝时 bash 接着打出退出码；
-        # 破坏开关打开时被停掉的只是这个一次性的 bash，不是跑自证的那一支（使用者项目实测：拿真的 getppid 试，把调用它的 shell 一起停了）
+        # 拒绝停祖先：让 proc.py 去停一次性的 bash（它的父进程）。破坏开关打开时停掉的只是这个 bash，
+        # 不是跑自证的那一支（实测：拿真的 getppid 试，把调用它的 shell 一起停了）
         refusal = subprocess.run(["bash", "-c", f'"{sys.executable}" "{os.path.abspath(__file__)}" stop $$ --grace 1; echo "exit=$?"'],
                                  capture_output=True, text=True, timeout=30)
         if "exit=2" not in refusal.stdout:

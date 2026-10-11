@@ -1,7 +1,9 @@
 <!-- doc-lint:rule-definition -->
 # 知识文档铁律
 
-**管的是**：`kb/*.md`，也就是**给模型检索的东西**。
+**管的是**：`kb/*.md`，也就是**给模型检索的东西**。项目把 kb 文本挪出 `.claude/kb/`（比如和某个 crate 放在一起）时，
+登记项目根的 `.claude/kb-directories`（一行一条，相对项目根，`#` 后写理由；可以登记多条）；没登记就还是 `.claude/kb/`。
+`doc-lint.sh`、`history-ordinal.sh`、`number-name-sync.sh` 认的是同一份登记。
 
 kb 按「**一条一条被单独取出来**」来写，不按「从头读到尾」来写。**目标只有一个：让模型别瞎编。** 好读不是目标。
 

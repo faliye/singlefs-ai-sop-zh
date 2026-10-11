@@ -4,11 +4,8 @@
 # run-condition: command python3 grep
 # Claude Code 的 PreToolUse 钩子（Bash 工具）：命令里有按模式找进程的写法（pgrep 或 pkill 带 -f / --full，或 killall），执行前拒绝。
 #
-# 为什么（rules/command-safety.md「`pkill -f` / `killall` 一律禁用」那一节）：
-#   模式串会命中发出这条命令的 shell 自己的命令行：拿它杀进程会连自己一起杀，拿它当等待条件的循环永远不退出，
-#   而且不报错，外面看到的只是「还在等」。scripts/shell-lint.sh 的 S2、S3 只扫脚本文件，会话里手敲的命令它看不见，
-#   规则里的一句提醒又拦不住手敲的命令（使用者项目两次实测：子 agent 拿 pgrep -f 当等待条件，
-#   在后台空转到调度的一方查进度才发现）。所以在执行之前拒绝。
+# 规则：rules/command-safety.md「`pkill -f` / `killall` 一律禁用」。scripts/shell-lint.sh 的 S2、S3 只扫脚本文件，
+#   会话里手敲的命令归这个钩子；拿 pgrep -f 当等待条件的循环不报错、只是一直空转，所以在执行之前拒绝。
 #
 # 判据在哪：scripts/lib.sh 的 PATTERN_KILL_RE、PATTERN_PGREP_RE，与 shell-lint 的 S2、S3 是同一份；
 #   只认命令位置（lib.sh 的 CMD_POS），写在 grep 参数、echo 字符串里当数据的不判。
@@ -19,14 +16,13 @@
 #   - bash / sh / dash / zsh / ksh 的 -c 字符串参数（-lc、-ec 这类合并写法也算）与 <<< 字符串，当成额外几行代码；
 #   以 # 开头的注释行跳过。
 # 退出码：命中 2（Claude Code 拦下这条命令，把 stderr 交给模型）；没命中、或输入里没有命令 0；
-#   输入不是 JSON 对象 1，准入与运行条件不满足（缺 python3、grep，preflight 报的原话在 stderr）78：
-#   这两种都是「没判」，Claude Code 照常执行命令（只有 2 才拦），stderr 只在详细模式里给人看——「没判」不记成「判过」。
+#   输入不是 JSON 对象、或 lib.sh 找不到 gawk 1；准入与运行条件不满足（缺 python3、GNU grep）78。
+#   1 与 78 都是「没判」：Claude Code 照常执行命令（只有 2 才拦），stderr 只在详细模式里给人看。
 #
 # 怎么注册：在项目的 .claude/settings.json 里给 hooks.PreToolUse 加一项
 #   {"matcher": "Bash", "hooks": [{"type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR\"/.claude/singlefs-ai-sop/scripts/claude-hooks/pattern-process-guard.sh"}]}
 # 没注册的会话里，这一条仍然只靠 rules/command-safety.md 的文字。
 # 手喂一条看效果： printf '%s' '{"tool_name":"Bash","tool_input":{"command":"…"}}' | bash 本文件
-# 依赖：python3、GNU grep（缺了按准入与运行条件不满足退 78，命令照常执行），以及 lib.sh 要的 gawk（lib.sh 找不到 gawk 就报错退出 1，命令照常执行）。
 #
 # 管不到的（实测；判别力样本在 scripts/fixtures/pattern-process-guard/）：
 #   漏判——前缀不在 CMD_POS 里的：timeout 5 …、nohup …、nice -n 19 …、watch '…'、ssh 主机 '…' 后面跟着的那条命令；

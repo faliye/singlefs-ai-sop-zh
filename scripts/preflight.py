@@ -247,6 +247,38 @@ def git_common_directory(directory):
     return os.path.normpath(os.path.join(directory, completed.stdout.strip()))
 
 
+# 项目登记的门禁目录与钩子目录（rules/sop-first.md）：与 lib.sh 的 project_gate_dir / project_hooks_dir 同一份登记，
+# 两边的文件名、默认值与解析规则必须一致，改一处要跟着改另一处。
+GATE_DIRECTORY_REGISTRATION_FILE = '.claude/gate-directory'
+GATE_DIRECTORY_DEFAULT = '.claude/gate.d'
+HOOKS_DIRECTORY_REGISTRATION_FILE = '.claude/hooks-directory'
+HOOKS_DIRECTORY_DEFAULT = '.claude/hooks'
+
+
+def _project_registered_directory(toplevel, registration_file, default):
+    path = os.path.join(toplevel, registration_file)
+    if not os.path.isfile(path):
+        return default
+    with open(path, encoding='utf-8') as handle:
+        lines = [cleaned for line in handle
+                 if (stripped := line.strip()) and not stripped.startswith('#')
+                 and (cleaned := stripped.split('#', 1)[0].strip())]
+    if not lines:
+        print(f'  ✗ {path} 登记了但一行有效路径都没有', file=sys.stderr)
+        print(f'     → 怎么办： 写一行相对项目根的路径（比如 scripts/gates），或者删掉这个文件改用默认值 {default}。',
+              file=sys.stderr)
+        sys.exit(1)
+    return lines[0].rstrip('/')
+
+
+def project_gate_directory(toplevel):
+    return _project_registered_directory(toplevel, GATE_DIRECTORY_REGISTRATION_FILE, GATE_DIRECTORY_DEFAULT)
+
+
+def project_hooks_directory(toplevel):
+    return _project_registered_directory(toplevel, HOOKS_DIRECTORY_REGISTRATION_FILE, HOOKS_DIRECTORY_DEFAULT)
+
+
 def resolve_input_path(script_path, toplevel, declared_path):
     if declared_path.startswith('./') or declared_path.startswith('../') or declared_path in ('.', '..'):
         return os.path.normpath(os.path.join(os.path.dirname(script_path), declared_path))
