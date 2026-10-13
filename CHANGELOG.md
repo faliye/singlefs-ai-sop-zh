@@ -3,6 +3,34 @@
 规则与门禁的版本历史。`CLAUDE.md` 与 `rules/*.md` 不留历史节（design-doc-discipline），
 历史一律记在这里；逐条改动细节见 `git log`，提交信息即变更说明。
 
+## 0.0.65 — 2026-10-13
+
+**名字与注释纪律的射程扩到全部代码与文本（不分语言、不分目录，文档也算）；新加「不拿序号、位置当名字」「注释里不写缩写，不用代号指东西」两条，并照它们把本仓的脚本与三语文档统一改了一遍；调度的一方不响应时，报告的一方可以终止卡住的进程或子 agent；只改 `.rs` 注释的改动不算改了代码；规则里继续删论证与经过**
+
+规则：
+- `code-discipline.md`：射程句改成「全部代码与文本，不分语言、不分目录」，文档列明在内；例子用 Rust 写，别的语言照同一条判据换成那门语言的写法；文档照「名字」一节起名字、照「注释里不写缩写，不用代号指东西」那一条写文字。
+- `code-discipline.md`「名字」：新加一行「不拿序号、位置当名字」——`layer0`、`stream_0`、`step2`、`phase_1`、`first_item` 这类只说第几个的名字不许用，写成它做什么、管什么；几个实例确实只差位置的，放进一个集合、用带类型的下标区分。
+- `code-discipline.md`「注释、断言、常量、重复」：新加「注释里不写缩写，不用代号指东西」——缩写写全（登记过的领域缩写除外），不用 `a`、`b`、`c`、`layer0`、「层 0」「第一项」这类代称，也不把几样东西略写成一列。「门禁管哪一半」把这两条记为靠 review，`.rs` 以外的代码与文档里的名字、缩写、代称记为还没做成检查。
+- `writing-discipline.md`：新加小节「不写缩写，不用代号指东西」，指向 `code-discipline.md` 那两处。
+- `command-safety.md`：小节「起了后台任务和子 agent，就要定时复检，不强制结束」改名「……调度的一方不响应才终止」。检出卡住与空转的工具照旧只记录、只报告，不杀进程、不停子 agent，只有调度的一方不响应时例外：同一件事连报几次都没处置、也没确认，报告的一方（人、agent 或检出的工具）可以终止它（进程用 `scripts/proc.py stop 进程号`，子 agent 用停止它的工具），终止了要报出来。
+- `show-me-test.md`：只改了 `.rs` 里的注释的改动不算改了代码，不要求带测试；判法是去掉注释与空白之后代码与改前逐个相同，会编成 doctest 的代码块、文档注释与 `// SAFETY:` 注释的增删照代码算（`scripts/comment-only-change.py`）。
+- 三语文档照新两条统一改：「曾经 X / 现在 Y」这类单字母占位改成「<旧做法> / <新做法>」这类说明它是什么的写法；「第 N 条」后面补上那一条的标题；示例里的 `rc`、`d`、`cmd`、`A`、`B` 改成写全的名字；「单测」写全为「单元测试」；英文的 `i.e.`、`repo`、`spec`、`docs`、`config`、`VM` 写全。
+- `CLAUDE.md`、`agents/INDEX.md`、`machine-first.md`、`sop-first.md`、`show-me-test.md`、`evidence-discipline.md`、`verify-before-claiming.md`、`writing-discipline.md`、`skills/decide`、`skills/gate`、`templates/CLAUDE.project.md`：继续删论证与经过，只留判据；`evidence-discipline.md` 小节「一个假设要能被观测否掉，否则它不是假设」改名「假设要写得出能否掉它的观测」。
+
+脚本：
+- 全部脚本的名字照新规矩改：单字母、缩写与带序号的名字改成说清作用的名字，注释里的缩写与代号写全。对外接口不改名：脚本文件名、命令行选项、退出码、环境变量、`lib.sh` / `preflight.sh` / `claude-hook-lib.sh` / `preflight.py` 的顶层名字、被规则点名的名字。没改的逐条登记在 `.claude/naming-sweep-exclude`。
+- `comment-only-change.py` 的 `rust_code_tokens_and_doc_code` 改名 `rust_code_tokens_and_documentation_code`。它与 `SAFETY_TAG` 被使用者项目的门禁库直接 import，从这一版起按对外接口对待，再改名先通知下游。
+- `gate.sh` 里调阶段的变量 `SCRIPTS` 改名 `SCRIPTS_DIRECTORY`，`gate-overlap.py` 认本包阶段的正则跟着改；`selftest.sh` 新加用例「gate-overlap/--list 认得出本包 gate.sh 调的阶段」，两边对不上就红。
+- `doc-lint.sh` 历史陈述的说明文字与出路里的占位改成「（原为 <旧值>）」「曾经 <旧做法> / 现在 <新做法> / 改动依据：<为什么改>」这类写法，样本的断言跟着改。
+- 新加 `comment-only-change.py`：判一批 `.rs` 改动里哪些只改了注释，`show-me-test.sh` 调它把只改注释的文件摘出去并逐个报出；弄坏开关 `SHOW_ME_TEST_BREAK=comments-count-as-code`。
+- `rules-lint.sh` 的词法说明新加两种：「否则」「不然」后面跟后果（跟动作的是条件分支，照留），以及「病根」「早晚」「第一次记」「用户原话」这类论证与来历的固定说法。
+- `doc-lint.sh`：agent 定义只认项目的 `.claude/agents/<名>.md` 与本包的 `agents/<名>.md`，别的目录叫 `agents/` 的不按定义判。
+- `shell-lint.sh`：S5 只在 `rm` 自己那一段里找没守卫的变量路径，同一行别的命令里的不算；S7 不判 `… || grep -q` 这种「或」链。
+- `doc-lint-fix-names.py`：`--registry-root` 可以给几次；不给时读 `.claude/kb-directories`；不补 `not-numbers` 声明过的术语，也不补页内自己定义的编号。
+- `manifest.sh`：装进项目的副本不带 `CLAUDE.md`，校验时两边都不比这一行。
+
+本仓配置：新建 `.claude/abbreviations`（本仓用到的 18 个领域缩写）与 `.claude/naming-sweep-exclude`（这一轮没改的部分与理由）。
+
 ## 0.0.64 — 2026-10-11
 
 **入口脚本不带参数改成剪枝跑全部项、`--full` 才是不复用的全量，日常不拿抽样代替剪枝、每次提交在剪枝跑与全量里选一种、三种跑法都能逐项点名；阳性对照按单元钉、登记逐格写对照由哪一跑担；每个测试目标都归进一档；判定复用不设时限；副本不共用编译目录、拷贝不留修改时刻；注释不引别的文件的行号；转述的数标量的还是推的；归档删证据前查登记表点名；共用工作树认工作区锁；「先找已有的」的射程从门禁与钩子扩到验证装置与测试入口；副本目录名只在 `package-family.py` 一处算；门禁查重不再拿注释与文档串算像不像；约三十个脚本的注释删去论证与经过；门禁目录与钩子目录改成项目可登记，默认值不变；项目本地门禁阶段新增嵌套形态（一道阶段一个目录、用例是同目录下的 `.case.sh`），旧的扁平形态与 `fixtures/` 样本目录过渡期并存；kb 目录也改成项目可登记（`.claude/kb-directories`），doc-lint、历史条目编号、编号简称一致这三道都认它**

@@ -6,12 +6,12 @@ set -euo pipefail
 
 # 字符数不许随 locale 变：C locale 下 awk 的 length() 按字节算，「24 字」会变成 8 个汉字。
 # 前段的输出先落到变量再判：pipefail 下 `… | grep -q` 一命中就退出，前段吃 SIGPIPE、
-# 管道返回 141，而 `if` 把它读成「没命中」（shell-lint 的 S7 判这一条）。
-_locales="$(locale -a 2>/dev/null || true)"
-for _loc in C.UTF-8 C.utf8 en_US.UTF-8; do
-  if grep -qix "$_loc" <<<"$_locales"; then export LC_ALL="$_loc"; break; fi
+# 管道返回 141，而 `if` 把它读成「没命中」（shell-lint 的 S7「pipefail 下以 grep -q 收尾的管道」判这一条）。
+_installed_locales="$(locale -a 2>/dev/null || true)"
+for _locale_candidate in C.UTF-8 C.utf8 en_US.UTF-8; do
+  if grep -qix "$_locale_candidate" <<<"$_installed_locales"; then export LC_ALL="$_locale_candidate"; break; fi
 done
-unset _loc _locales
+unset _locale_candidate _installed_locales
 
 if [[ -t 1 ]]; then
   C_RED=$'\033[31m'; C_GRN=$'\033[32m'; C_YEL=$'\033[33m'
@@ -37,7 +37,8 @@ warn()  { printf '%s  !%s %s\n' "$C_YEL" "$C_RST" "$*"; }
 
 # 拒绝时说清下一步做什么（rules/sop-first.md「每一条拒绝都必须给出下一步」）；bad 之后的 howto 由 scripts/gate-lint.sh 判。
 howto() { printf '%s     → 怎么办：%s %s\n' "$C_YEL" "$C_RST" "$1"; shift
-          for l in "$@"; do printf '                %s\n' "$l"; done; }
+          local continuation_line
+          for continuation_line in "$@"; do printf '                %s\n' "$continuation_line"; done; }
 
 # die <消息> <出路…>：bad + howto + exit 1。少了出路时这里兜一句，静态那半由 scripts/gate-lint.sh 判调用点的参数个数。
 die()   { bad "$1"; shift
@@ -60,11 +61,11 @@ CMD_POS='(^[[:space:]]*|[;&|(){}`!][[:space:]]*|(then|else|do|if|while|until|sud
 # shell-lint（S2、S3，判脚本）与 claude-hooks/pattern-process-guard.sh（判手敲的命令）共用；
 # 为什么禁用、换成什么写法，见 rules/command-safety.md「`pkill -f` / `killall` 一律禁用」。
 # 命令名认任意路径前缀（/usr/bin/pkill 也是 pkill）；选项认「有没有全模式匹配那一位」（-f / --full / 合并写法 -af），
-# 不按拼写枚举：写死 `-f` 时 `pkill --full X`、`pkill -af X`、`/usr/bin/killall X` 都漏检。
+# 不按拼写枚举：写死 `-f` 时 `pkill --full 模式`、`pkill -af 模式`、`/usr/bin/killall 进程名` 都漏检。
 COMMAND_PATH_PREFIX_RE='([A-Za-z0-9_/.-]*/)?'
 # S2：pkill 带全模式匹配，或 killall。
 PATTERN_KILL_RE="$CMD_POS$COMMAND_PATH_PREFIX_RE"'(pkill([[:space:]]+-[[:alnum:]-]*)*[[:space:]]+(-[[:alnum:]]*f[[:alnum:]]*|--full)|killall)([[:space:]]|$)'
-# S3：pgrep -f 在命令位置上出现就红，不看同一行有没有 kill / while：`pids=$(pgrep -f X)` 下一行再 kill、
+# S3：pgrep -f 在命令位置上出现就红，不看同一行有没有 kill / while：`pids=$(pgrep -f 模式)` 下一行再 kill、
 # 循环与 pgrep -f 分两行写，都会漏；按子串找 if 又会把 `pgrep -f notify` 判成等待循环。
 PATTERN_PGREP_RE="$CMD_POS$COMMAND_PATH_PREFIX_RE"'pgrep([[:space:]]+-[[:alnum:]-]*)*[[:space:]]+(-[[:alnum:]]*f[[:alnum:]]*|--full)'
 
@@ -84,13 +85,13 @@ SOP_START_DATE=2026-08-26
 # 不拿 CHANGELOG 最早那一节兜底：它不是从第一版起逐节记的，比真起点晚，会把真日期判成不可能。
 # 拿不到就返回空，由调用方决定退到哪。
 project_start_date() { # project_start_date <目录> → YYYY-MM-DD 或空
-  local dir toplevel
-  dir="$(cd "$1" 2>/dev/null && pwd -P)" || return 0
-  toplevel="$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null || true)"
-  [[ -n "$toplevel" && "$(cd "$toplevel" && pwd -P)" == "$dir" ]] || return 0
+  local checked_directory toplevel
+  checked_directory="$(cd "$1" 2>/dev/null && pwd -P)" || return 0
+  toplevel="$(git -C "$checked_directory" rev-parse --show-toplevel 2>/dev/null || true)"
+  [[ -n "$toplevel" && "$(cd "$toplevel" && pwd -P)" == "$checked_directory" ]] || return 0
   # 浅克隆里「第一个提交」是截断处，不是项目的起点，这时也返回空。
-  [[ "$(git -C "$dir" rev-parse --is-shallow-repository 2>/dev/null || true)" != true ]] || return 0
-  git -C "$dir" log --reverse --format=%ad --date=short 2>/dev/null | head -1 || true
+  [[ "$(git -C "$checked_directory" rev-parse --is-shallow-repository 2>/dev/null || true)" != true ]] || return 0
+  git -C "$checked_directory" log --reverse --format=%ad --date=short 2>/dev/null | head -1 || true
 }
 # 下界从第一个提交往前放宽 DATE_GRACE_DAYS 天：git init 之前做的工作，会带着当时的日期进第一个提交（实测早一天）。
 # 宽得越多，放过的编造日期越多。
@@ -125,10 +126,10 @@ date_out_of_range() { # date_out_of_range <YYYY-MM-DD> [项目起点]
 # 找不到要说出来：调用方写成 ROOT="${1:-$(project_root)}"，set -e 下静默返回 1 门禁就一句话都没有地退出了。
 # 说明写到 stderr，stdout 只留路径。
 project_root() {
-  local d="${1:-$PWD}"
-  while [[ "$d" != "/" ]]; do
-    [[ -f "$d/.singlefs-ai-sop-version" || -e "$d/.git" ]] && { printf '%s' "$d"; return 0; }
-    d="$(dirname "$d")"
+  local candidate_directory="${1:-$PWD}"
+  while [[ "$candidate_directory" != "/" ]]; do
+    [[ -f "$candidate_directory/.singlefs-ai-sop-version" || -e "$candidate_directory/.git" ]] && { printf '%s' "$candidate_directory"; return 0; }
+    candidate_directory="$(dirname "$candidate_directory")"
   done
   { bad "从 ${1:-$PWD} 往上找不到项目根（含 .singlefs-ai-sop-version 或 .git 的目录）"
     howto "在项目目录里跑，或者把项目根作为第一个参数传进来。"; } >&2
@@ -153,34 +154,34 @@ diff_base() {
     fi
     printf '%s' "$GATE_BASE"; return 0
   fi
-  local def
-  for def in master main; do
-    if git -C "$root" rev-parse --verify -q "$def" >/dev/null; then
-      local mb
-      if mb="$(git -C "$root" merge-base HEAD "$def" 2>/dev/null)" && [[ -n "$mb" ]]; then
+  local default_branch
+  for default_branch in master main; do
+    if git -C "$root" rev-parse --verify -q "$default_branch" >/dev/null; then
+      local merge_base
+      if merge_base="$(git -C "$root" merge-base HEAD "$default_branch" 2>/dev/null)" && [[ -n "$merge_base" ]]; then
         # 在默认分支上时 merge-base 等于 HEAD，得往回退。只退 HEAD~1 不够：分两次提交就绕过去了
-        # （先改代码不带测试、再只改文档，基准落在第一次上，「本次无 crates 改动」）。
+        # （先改代码不带测试、再只改文档，基准落在改代码的那次提交上，「本次无 crates 改动」）。
         # 所以退到已经过闸的点，本地还没推的提交全部纳入判定。
-        if [[ "$mb" == "$(git -C "$root" rev-parse HEAD 2>/dev/null)" ]]; then
-          local up p1
+        if [[ "$merge_base" == "$(git -C "$root" rev-parse HEAD 2>/dev/null)" ]]; then
+          local upstream_merge_base parent_of_head
           # 优先级：上游 > 门禁上次通过的位置 > HEAD~1。
           # 取与上游的 merge-base，不是上游的 tip：fetch 了没 merge、或本地与上游分叉时，
           # 上游 tip 上有本地没有的提交，拿它当基准就是把别人的改动算进这一轮。
-          if up="$(git -C "$root" merge-base HEAD "@{upstream}" 2>/dev/null)" \
-             && [[ -n "$up" && "$up" != "$(git -C "$root" rev-parse HEAD)" ]]; then
-            printf '%s' "$up"; return 0
+          if upstream_merge_base="$(git -C "$root" merge-base HEAD "@{upstream}" 2>/dev/null)" \
+             && [[ -n "$upstream_merge_base" && "$upstream_merge_base" != "$(git -C "$root" rev-parse HEAD)" ]]; then
+            printf '%s' "$upstream_merge_base"; return 0
           fi
-          local ok
-          if ok="$(git -C "$root" rev-parse -q --verify refs/sop/gate-ok 2>/dev/null)" \
-             && [[ -n "$ok" && "$ok" != "$(git -C "$root" rev-parse HEAD)" ]] \
-             && git -C "$root" merge-base --is-ancestor "$ok" HEAD 2>/dev/null; then
-            printf '%s' "$ok"; return 0
+          local gate_ok_commit
+          if gate_ok_commit="$(git -C "$root" rev-parse -q --verify refs/sop/gate-ok 2>/dev/null)" \
+             && [[ -n "$gate_ok_commit" && "$gate_ok_commit" != "$(git -C "$root" rev-parse HEAD)" ]] \
+             && git -C "$root" merge-base --is-ancestor "$gate_ok_commit" HEAD 2>/dev/null; then
+            printf '%s' "$gate_ok_commit"; return 0
           fi
-          if p1="$(git -C "$root" rev-parse -q --verify HEAD~1 2>/dev/null)"; then
-            printf '%s' "$p1"; return 0
+          if parent_of_head="$(git -C "$root" rev-parse -q --verify HEAD~1 2>/dev/null)"; then
+            printf '%s' "$parent_of_head"; return 0
           fi
         fi
-        printf '%s' "$mb"; return 0
+        printf '%s' "$merge_base"; return 0
       fi
     fi
   done
@@ -217,12 +218,12 @@ GATE_DIRECTORY_DEFAULT=.claude/gate.d
 HOOKS_DIRECTORY_REGISTRATION_FILE=.claude/hooks-directory
 HOOKS_DIRECTORY_DEFAULT=.claude/hooks
 
-# bad / howto / die 都写 stdout；这几个读登记的函数设计成 X="$(fn ...)" 来用，拒绝时若也走 bad/howto，
-# 消息会被命令替换吃进 $X，终端上什么都看不见，只剩一个解释不出来的非零退出码。拒绝一律走这个，直写 stderr。
+# bad / howto / die 都写 stdout；这几个读登记的函数设计成 变量="$(函数 ...)" 来用，拒绝时若也走 bad/howto，
+# 消息会被命令替换吃进那个变量，终端上什么都看不见，只剩一个解释不出来的非零退出码。拒绝一律走这个，直写 stderr。
 die_to_stderr() { # die_to_stderr <消息> <出路…>：同 die，但写 stderr，给要用命令替换取值的函数用
   printf '%s  ✗%s %s\n' "$C_RED" "$C_RST" "$1" >&2; shift
   printf '%s     → 怎么办：%s %s\n' "$C_YEL" "$C_RST" "$1" >&2; shift
-  local l; for l in "$@"; do printf '                %s\n' "$l" >&2; done
+  local continuation_line; for continuation_line in "$@"; do printf '                %s\n' "$continuation_line" >&2; done
   return 1
 }
 
@@ -255,7 +256,7 @@ project_hooks_dir() { _project_registered_directory "$1" "$HOOKS_DIRECTORY_REGIS
 # 没有这份文件时什么都不打印，调用方按各自的默认值（多半是 .claude/kb 或 */kb/*）处理。
 KB_DIRECTORIES_FILE=.claude/kb-directories
 kb_directories() { # kb_directories <项目根> → 登记的目录，一行一个绝对路径；没登记什么都不打印
-  local root="$1" line_number=0 raw_line stripped path reason abs
+  local root="$1" line_number=0 raw_line stripped path reason absolute_directory
   local file="$root/$KB_DIRECTORIES_FILE"
   [[ -f "$file" ]] || return 0
   while IFS= read -r raw_line || [[ -n "$raw_line" ]]; do
@@ -269,13 +270,13 @@ kb_directories() { # kb_directories <项目根> → 登记的目录，一行一�
         "一行一条： <相对项目根的路径>  # 为什么（理由不许省）。"
       return 1
     fi
-    abs="$root/${path%/}"
-    if [[ ! -d "$abs" ]]; then
+    absolute_directory="$root/${path%/}"
+    if [[ ! -d "$absolute_directory" ]]; then
       die_to_stderr "$file:$line_number 登记的目录不存在：$path" \
         "改对路径（相对项目根 $root），或删掉这一行。"
       return 1
     fi
-    printf '%s\n' "$(cd "$abs" && pwd)"
+    printf '%s\n' "$(cd "$absolute_directory" && pwd)"
   done < "$file"
 }
 
@@ -304,12 +305,12 @@ report_not_run() { # report_not_run <哪一部分没跑：为什么、怎么补>
 # 指纹按 git 仓算，不按项目根：项目根是外层仓的一个子目录时，外层别处的改动也算「变了」。
 # 代价：没进过对象库的内容会被写成松散对象，由 git gc 收掉。
 worktree_fingerprint() { # worktree_fingerprint <目录> → 树哈希或空
-  local root="$1" git_dir fingerprint_dir
-  git_dir="$(git -C "$root" rev-parse --absolute-git-dir 2>/dev/null)" || return 0
-  fingerprint_dir="$(mktemp -d)"
-  cp "$git_dir/index" "$fingerprint_dir/index" 2>/dev/null || true
-  if GIT_INDEX_FILE="$fingerprint_dir/index" git -C "$root" add -A >/dev/null 2>&1; then
-    GIT_INDEX_FILE="$fingerprint_dir/index" git -C "$root" write-tree 2>/dev/null || true
+  local root="$1" git_directory fingerprint_directory
+  git_directory="$(git -C "$root" rev-parse --absolute-git-dir 2>/dev/null)" || return 0
+  fingerprint_directory="$(mktemp -d)"
+  cp "$git_directory/index" "$fingerprint_directory/index" 2>/dev/null || true
+  if GIT_INDEX_FILE="$fingerprint_directory/index" git -C "$root" add -A >/dev/null 2>&1; then
+    GIT_INDEX_FILE="$fingerprint_directory/index" git -C "$root" write-tree 2>/dev/null || true
   fi
-  rm -rf "${fingerprint_dir:?}"
+  rm -rf "${fingerprint_directory:?}"
 }

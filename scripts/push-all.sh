@@ -22,18 +22,18 @@ preflight "${BASH_SOURCE[0]}" "$@"; set -- ${PREFLIGHT_ARGUMENTS[@]+"${PREFLIGHT
 # shellcheck disable=SC2046
 unset $(git rev-parse --local-env-vars)
 
-PKG="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-repositories_parent="${1:-$(dirname "$PKG")}"
+PACKAGE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+repositories_parent="${1:-$(dirname "$PACKAGE_ROOT")}"
 
 # `|| true`：I18N 不在时 sed 退 2，在 set -e 下会把脚本带走，下面那句带出路的 die 就永远打不出来。
-i18n_value() { sed -n "s/^$1=//p" "$PKG/I18N" 2>/dev/null || true; }
+i18n_value() { sed -n "s/^$1=//p" "$PACKAGE_ROOT/I18N" 2>/dev/null || true; }
 family="$(i18n_value family)"; this_language="$(i18n_value this)"
 read -r -a languages <<< "$(i18n_value languages)"
-[[ -n "$family" && ${#languages[@]} -gt 0 ]] || die "读不出 $PKG/I18N 里的 family 或 languages" \
+[[ -n "$family" && ${#languages[@]} -gt 0 ]] || die "读不出 $PACKAGE_ROOT/I18N 里的 family 或 languages" \
   "I18N 要有 family=<仓名前缀> 与 languages=<语言…> 两行，写法见 i18n-sync.sh"
 
 repository_of() { # 本仓就用本仓自己的路径，不要求它也在兄弟目录里
-  if [[ "$1" == "$this_language" ]]; then printf '%s' "$PKG"
+  if [[ "$1" == "$this_language" ]]; then printf '%s' "$PACKAGE_ROOT"
   else printf '%s' "$repositories_parent/$family-$1"; fi
 }
 

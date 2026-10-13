@@ -7,3 +7,7 @@ d="$(mktemp -d)"
 rm -rf "${d:?}/work"
 rm -rf "$d"
 rm -rf build/tmp
+# 4. 同一行里 rm 前后别的命令带变量路径，rm 自己的参数守卫过或没跟路径
+[[ -n "$d" && "$d" == "$d"/sub* ]] && rm -rf -- "${d:?}"
+rm -rf "$d" && mkdir -p "$d/work"
+cp -a "$d/." build/ || { rm -rf build/tmp; }

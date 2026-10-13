@@ -22,9 +22,9 @@ source "$(dirname "${BASH_SOURCE[0]}")/preflight.sh"
 preflight "${BASH_SOURCE[0]}" "$@"; set -- ${PREFLIGHT_ARGUMENTS[@]+"${PREFLIGHT_ARGUMENTS[@]}"}
 NUMBER_NAME_PACKAGE_SCRIPTS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export NUMBER_NAME_PACKAGE_SCRIPTS
-ROOT="${1:-.}"
-if ! cd "$ROOT" 2>/dev/null; then
-  echo "  ✗ 找不到仓根：$ROOT" >&2
+REPOSITORY_ROOT="${1:-.}"
+if ! cd "$REPOSITORY_ROOT" 2>/dev/null; then
+  echo "  ✗ 找不到仓根：$REPOSITORY_ROOT" >&2
   echo "     → 怎么办：把仓根作为第一个参数传进来： bash scripts/number-name-sync.sh <仓根> [要扫的目录…]" >&2
   exit 2
 fi
@@ -34,7 +34,7 @@ shift 2>/dev/null || true
 # 没有这份文件时就是默认的 .claude/kb。
 # gate-overlap:copy-kept lib.sh 的 kb_directories 判法相同，这里不调它：这份脚本只声明 run-condition: command python3，
 # source lib.sh 会额外带上它对 GNU awk 的硬要求，给这一道加一个它没声明过的环境依赖。
-KB_DIRS=()
+KB_DIRECTORIES=()
 if [[ -f .claude/kb-directories ]]; then
   kb_line_number=0
   while IFS= read -r kb_raw_line || [[ -n "$kb_raw_line" ]]; do
@@ -53,14 +53,14 @@ if [[ -f .claude/kb-directories ]]; then
       echo "     → 怎么办：改对路径（相对项目根），或删掉这一行。" >&2
       exit 2
     fi
-    KB_DIRS+=("${kb_path%/}")
+    KB_DIRECTORIES+=("${kb_path%/}")
   done < .claude/kb-directories
 fi
-if ((${#KB_DIRS[@]})); then KB_SCAN_DIRS=("${KB_DIRS[@]}"); else KB_SCAN_DIRS=(.claude/kb); fi
+if ((${#KB_DIRECTORIES[@]})); then KB_SCAN_DIRECTORIES=("${KB_DIRECTORIES[@]}"); else KB_SCAN_DIRECTORIES=(.claude/kb); fi
 kb_any_exists=0
-for kb_scan_dir in "${KB_SCAN_DIRS[@]}"; do [[ -d "$kb_scan_dir" ]] && kb_any_exists=1; done
+for kb_scan_directory in "${KB_SCAN_DIRECTORIES[@]}"; do [[ -d "$kb_scan_directory" ]] && kb_any_exists=1; done
 ((kb_any_exists)) || exit 77
-export NUMBER_NAME_KB_DIRS="${KB_SCAN_DIRS[*]}"
+export NUMBER_NAME_KB_DIRS="${KB_SCAN_DIRECTORIES[*]}"
 export NUMBER_NAME_DIRS="$*"
 
 python3 - <<'PY'
@@ -70,73 +70,73 @@ sys.path.insert(0, os.environ['NUMBER_NAME_PACKAGE_SCRIPTS'])
 from preflight import load_package_module
 PACKAGE_FAMILY = load_package_module('package_family', 'package-family.py')
 
-KB_SCAN_DIRS = [d for d in os.environ.get('NUMBER_NAME_KB_DIRS', '.claude/kb').split() if d]
+KB_SCAN_DIRECTORIES = [directory for directory in os.environ.get('NUMBER_NAME_KB_DIRS', '.claude/kb').split() if directory]
 
-truth = {}
-for kb_dir in KB_SCAN_DIRS:
-  for pat, pre in ((os.path.join(kb_dir, 'experiments', '*.md'), 'E'), (os.path.join(kb_dir, 'decisions', '*.md'), 'D')):
-    for f in glob.glob(pat):
-        t = open(f, encoding='utf-8').read().split('\n', 1)[0]
-        m = re.match(r'## (' + pre + r'\d+) (.+?)\s*——', t)
-        if m:
-            truth[m.group(1)] = m.group(2).strip()
+registered_short_name_by_number = {}
+for kb_directory in KB_SCAN_DIRECTORIES:
+  for registry_glob, number_prefix in ((os.path.join(kb_directory, 'experiments', '*.md'), 'E'), (os.path.join(kb_directory, 'decisions', '*.md'), 'D')):
+    for registry_file in glob.glob(registry_glob):
+        first_line = open(registry_file, encoding='utf-8').read().split('\n', 1)[0]
+        heading_match = re.match(r'## (' + number_prefix + r'\d+) (.+?)\s*——', first_line)
+        if heading_match:
+            registered_short_name_by_number[heading_match.group(1)] = heading_match.group(2).strip()
 
-def excluded_dirs():
+def excluded_directories():
     """冻结证据的清单与 doc-lint 共用一份（rules/evidence-discipline.md）。"""
-    out = []
+    excluded_prefixes = []
     try:
         with open('.claude/doc-lint-exclude', encoding='utf-8') as handle:
             for line in handle:
                 line = line.split('#')[0].strip()
                 if line:
-                    out.append(line.rstrip('/') + '/')
+                    excluded_prefixes.append(line.rstrip('/') + '/')
     except OSError:
         pass
-    return tuple(out)
+    return tuple(excluded_prefixes)
 
 
-SKIP_DIRS = {'.git', 'node_modules', 'target'}
+SKIPPED_DIRECTORY_NAMES = {'.git', 'node_modules', 'target'}
 
 
 # 装进项目的 SOP 副本不扫：它是上游的文件，判它等于在项目侧判上游。
-SKIP_PREFIX = tuple(d.rstrip('/') + '/' for d in KB_SCAN_DIRS) + (PACKAGE_FAMILY.installed_package_directory(),) + excluded_dirs()
+SKIPPED_PATH_PREFIXES = tuple(directory.rstrip('/') + '/' for directory in KB_SCAN_DIRECTORIES) + (PACKAGE_FAMILY.installed_package_directory(),) + excluded_directories()
 # 不扫 .sh / .py：脚本里的 `D1（简称）` 多半是格式说明或样本数据，扫它们假红压倒真红（实测）。
 SCANNED_SUFFIXES = ('.rs', '.md')
-given = [d for d in os.environ.get('NUMBER_NAME_DIRS', '').split() if d]
-roots = given or ['.']
-targets = []
-for start in roots:
-    for directory, subdirectories, files in os.walk(start):
-        subdirectories[:] = [d for d in subdirectories if d not in SKIP_DIRS and d != 'fixtures']
-        for name in files:
+given_directories = [directory for directory in os.environ.get('NUMBER_NAME_DIRS', '').split() if directory]
+scan_roots = given_directories or ['.']
+scanned_files = []
+for scan_root in scan_roots:
+    for directory, subdirectories, file_names in os.walk(scan_root):
+        subdirectories[:] = [subdirectory for subdirectory in subdirectories if subdirectory not in SKIPPED_DIRECTORY_NAMES and subdirectory != 'fixtures']
+        for name in file_names:
             if not name.endswith(SCANNED_SUFFIXES):
                 continue
             path = os.path.normpath(os.path.join(directory, name))
-            if any(path.startswith(prefix) for prefix in SKIP_PREFIX):
+            if any(path.startswith(prefix) for prefix in SKIPPED_PATH_PREFIXES):
                 continue
-            targets.append(path)
+            scanned_files.append(path)
 
-bad = []
-for f in sorted(set(targets)):
-    for i, line in enumerate(open(f, encoding='utf-8', errors='ignore'), 1):
+mismatches = []
+for scanned_file in sorted(set(scanned_files)):
+    for line_number, line in enumerate(open(scanned_file, encoding='utf-8', errors='ignore'), 1):
         # 简称可以含一层全角括号：[^）]* 吃到第一个「）」就停，这类引用怎么写都判红（实测）。
-        for num, nm in re.findall(r'([ED]\d+)（((?:[^（）]|（[^（）]*）)*)）', line):
-            if num in truth and truth[num] != nm:
-                bad.append((f, i, num, nm, truth[num]))
+        for number, written_short_name in re.findall(r'([ED]\d+)（((?:[^（）]|（[^（）]*）)*)）', line):
+            if number in registered_short_name_by_number and registered_short_name_by_number[number] != written_short_name:
+                mismatches.append((scanned_file, line_number, number, written_short_name, registered_short_name_by_number[number]))
 
-if bad:
+if mismatches:
     print('  ✗ 编号的简称与登记位不符：')
-    for f, i, num, nm, want in bad[:15]:
-        print(f'     {f}:{i}  {num} 写的「{nm[:24]}」，登记处是「{want[:24]}」')
-    if len(bad) > 15:
-        print(f'     …… 另有 {len(bad)-15} 处')
+    for scanned_file, line_number, number, written_short_name, registered_short_name in mismatches[:15]:
+        print(f'     {scanned_file}:{line_number}  {number} 写的「{written_short_name[:24]}」，登记处是「{registered_short_name[:24]}」')
+    if len(mismatches) > 15:
+        print(f'     …… 另有 {len(mismatches)-15} 处')
     print('     → 简称照登记位抄（各正文首行 `## D<n> 简称 —— 状态`）。')
     print('     → 若是「）」写成了半角「)」，括注不闭合，正则会一路吃到下一个右括号。')
     print('     → 冻结证据目录不在扫描范围：那是原样保存的输入，改它等于让产物对不上输入。')
     sys.exit(1)
 
-n = len(set(targets))
-if n == 0:
+scanned_file_count = len(set(scanned_files))
+if scanned_file_count == 0:
     sys.exit(77)
-print(f'  ✓ 编号与简称一致（扫 {n} 个文件，冻结证据按证据链原样保留）')
+print(f'  ✓ 编号与简称一致（扫 {scanned_file_count} 个文件，冻结证据按证据链原样保留）')
 PY

@@ -11,7 +11,7 @@ description: 跑本项目的准入门禁。提交代码前、判断一个改动�
 
 ```bash
 bash .claude/scripts/gate.sh          # 全套，提交前必跑
-bash .claude/scripts/check.sh         # 只跑格式/lint/构建/单测，快速反馈
+bash .claude/scripts/check.sh         # 只跑格式/lint/构建/单元测试，快速反馈
 bash .claude/scripts/env.sh           # 只做环境自检
 GATE_BASE=<commit> bash .claude/scripts/gate.sh   # 指定 diff 基准
 bash .claude/scripts/gate.sh --staged # 只拿 HEAD + 暂存区跑：几个会话共写一个仓时用，红的就是这次提交带进来的
@@ -29,12 +29,12 @@ bash .claude/scripts/gate.sh --staged # 只拿 HEAD + 暂存区跑：几个会�
 | shell 纪律 | 脚本里有 `pkill -f` / `killall` / `pgrep -f`、靠子 shell 的赋值往外带值、git 的撤销命令、`rm -rf` 作用在没守卫的变量路径上、不带参数的 `wait`，或者设了 `pipefail` 的脚本里以 `grep -q` 收尾的管道。见 `rules/command-safety.md` |
 | 脚本执行位 | 暂存区里有 `.sh` 不是 `100755`，或者暂存区里的模式与工作区的执行位不一致（手工暂存时写死了 `100644`）。用 `git update-index --chmod=+x <路径>`（或 `-x`）改暂存区里的模式。射程里有空目录也判红：git 存不下空目录，要留的放一个 `.keep` 再 `git add` |
 | 本地阶段判别力 | `.claude/gate.d/fixtures/<阶段>/` 下有样本判错：退出码不对，或者输出里找不到 `want=` 那一句。先判是阶段坏了还是样本写错了，再修那一边；没配样本的阶段记「本次未跑」 |
-| 链接指向 | 文档里的相对链接指到不存在的路径，或者「第 N 节」超出了目标文档的 `##` 节数、目标读不出来。相对路径按链接所在文件的目录算；「第 N 节」改成指小节标题。原样保存的证据目录登记进 `.claude/doc-lint-exclude` 绕开 |
-| 历史条目编号 | 这一次新增的历史条目在同一个「`##` 节 + 日期 + 点名词」下撞了「（其 N）」的号。查那一块已用到的最大号，把自己这条改成下一个没被占的号，不改别人已提交的那条。见 `rules/session-wrapup.md` 第 4 条 |
+| 链接指向 | 文档里的相对链接指到不存在的路径，或者「第 <数字> 节」超出了目标文档的 `##` 节数、目标读不出来。相对路径按链接所在文件的目录算；「第 <数字> 节」改成指小节标题。原样保存的证据目录登记进 `.claude/doc-lint-exclude` 绕开 |
+| 历史条目编号 | 这一次新增的历史条目在同一个「`##` 节 + 日期 + 点名词」下撞了「（其 <序号>）」的号。查那一块已用到的最大号，把自己这条改成下一个没被占的号，不改别人已提交的那条。见 `rules/session-wrapup.md` 第 4 条「同一个仓里有没有别的会话在飞？」 |
 | 工具层的闸 | `.claude/hooks/` 或副本 `scripts/claude-hooks/` 里有钩子没在 `.claude/settings.json` 注册、带 `--selftest` 的自证没过、`hook-events` 里的事件没挂全，或者写了工具名的没挂在认得它的 matcher 上。照钩子文件头的写法注册；见 `rules/sop-first.md`「加门禁或钩子之前，先找已有的」 |
 | 门禁查重 | 这一次新加或改动的门禁与钩子没写 `gate-similar` / `hook-events`、该点名的已有门禁或钩子没点全、理由太短，或者加进来的行与已有的一份整段相同。先跑 `python3 .claude/singlefs-ai-sop/scripts/gate-overlap.py --list` 找管同一件事的，能并就并；见 `rules/sop-first.md`「加门禁或钩子之前，先找已有的」 |
 | 转发计时 | `research/`、`crates/` 下有读子进程输出的循环一边给行打时间戳、一边把行转打出去。改成在被测进程里计时、把数写进结果行，或者先把输出整份读完再转打，见 `rules/test-discipline.md`「分段计时在被测进程里计，不在转发输出的循环里计」；时间戳确实不进计时结论的，在循环头写 `// relay-timing-lint:allow <理由>`（Python 写 `#`） |
-| 编号与简称 | 源码注释、脚本、记录里引的「编号（简称）」与 kb 登记位的简称对不上。照登记位（各正文首行 `## D<n> 简称 —— 状态`）抄简称；见 `rules/kb-discipline.md` 第 5 条 |
+| 编号与简称 | 源码注释、脚本、记录里引的「编号（简称）」与 kb 登记位的简称对不上。照登记位（各正文首行 `## D<序号> 简称 —— 状态`）抄简称；见 `rules/kb-discipline.md` 第 5 条「编号只能做索引，不能做称呼」 |
 | 文档铁律 | 正文里混了历史陈述，kb 里引用编号没带简称，或者 CLAUDE.md 没把规则一条条 @ 进来。见 `rules/writing-discipline.md` |
 | 文档铁律的未实现清单 | `doc-lint.sh --not-impl` 跑失败了，汇总末尾的未实现清单会少掉它那几条。单跑 `bash .claude/singlefs-ai-sop/scripts/doc-lint.sh --not-impl` 看原因（退 78 是它的准入与运行条件不满足） |
 | 规则纪律（项目本地） | 项目的 `.claude/rules/`（没有这个目录时是 `.claude/agents/`）、项目 `CLAUDE.md`、agent 定义或 skill 正文里有记录小节、论证小节、带日期的行、解释性段落与半句、词法说明，或者没带劝阻句的历史链接。照 `rules/rules-discipline.md` 改；还没回扫的文件逐个登记进 `.claude/rules-lint-exclude` |
@@ -55,17 +55,17 @@ bash .claude/scripts/gate.sh --staged # 只拿 HEAD + 暂存区跑：几个会�
 
 「规则清单」两边都跑，但问的不是一件事：在 SOP 仓里它问「清单跟规则同不同步」，
 在项目里它比对的是**你装的那份副本**——副本被改过或者没拷全，这一项就红。
-装的是 en / ja 副本时这一项退 77，汇总记「本次未跑」：清单只在参照仓（zh）里维护，译本仓跟没跟上由 zh 仓的「各语言同步」判。
+装的是英文、日文副本时这一项退 77，汇总记「本次未跑」：清单只在参照仓（中文仓）里维护，译本仓跟没跟上由中文仓的「各语言同步」判。
 
 ## 未实现的阶段
 
 `gate.sh` 每次都会列出共享门禁**没实现**的验证手段：最终判据、shell 脚本的命名纪律，以及项目自己登记在项目根 `.claude/gate-not-implemented.tsv` 里的那几项（一行一条：键、缺的是什么、覆盖之后仍要提醒的话）。
 最终判据与项目登记的那几项只能由项目在 `.claude/gate.d/` 里接：接上的阶段在头部写 `# gate-covers: <那一项>`，这一轮跑了且通过，那一项才换到「由项目本地阶段覆盖」下面。
 
-**这不是提示噪音，是判读结果的必要前提**：门禁全绿只说明「文档合规 + 有测试 + 单测过」，
+**判读结果时带上这份清单**：门禁全绿只说明「文档合规 + 有测试 + 单元测试过」，
 外加「由项目本地阶段覆盖」那一栏里各阶段各自验到的范围。
-项目登记的手段没有阶段覆盖时，任何「那一样验证过了」的说法都是假的；
-有阶段覆盖，也只说到那个阶段自己验到的范围为止（登记表第三列写的提醒句，`gate.sh` 在收尾照打）。
+项目登记的手段没有阶段覆盖时，不说「那一样验证过了」；
+有阶段覆盖，也只说到那个阶段自己验到的范围为止（登记表里「覆盖之后仍要提醒的话」那一列，`gate.sh` 在收尾照打）。
 
 ## 常见假失败
 
@@ -84,19 +84,17 @@ bash .claude/scripts/gate.sh --staged # 只拿 HEAD + 暂存区跑：几个会�
 
 ```bash
 # 造一个该被拦的样本，喂给 doc-lint，确认它真的红：kb 文档缺了收尾的历史节（结构检查，哪种语言的仓都判）
-d=$(mktemp -d); mkdir -p "$d/kb"
-printf '# 决策\n\n节点大小 16K。\n' > "$d/kb/decisions.md"
-bash .claude/singlefs-ai-sop/scripts/doc-lint.sh "$d"; echo "退出码 $? —— 应为 1"
-rm -rf "$d"
+sample_directory=$(mktemp -d); mkdir -p "$sample_directory/kb"
+printf '# 决策\n\n节点大小 16K。\n' > "$sample_directory/kb/decisions.md"
+bash .claude/singlefs-ai-sop/scripts/doc-lint.sh "$sample_directory"; echo "退出码 $? —— 应为 1"
+rm -rf "$sample_directory"
 ```
 
 ⚠️ **样本要另建一个目录，别往真的 kb 文件尾巴上 `>>`。**
-`>>` 追加的内容落在「## 历史版本」后面，而正文扫描在历史节那一行就停了。
-退出码是 0，看着像「检查没做事」，其实是样本造错了地方。
 
 改完检查还要跑一遍 `bash .claude/singlefs-ai-sop/scripts/selftest.sh`。
 它拿 `scripts/fixtures/` 下的样本证明每条检查现在还红得起来。
 **加一条检查就配一个样本**，`want=` 要写这条检查自己的消息。
-写成几条检查共用的片段，等于没盯住（见 `rules/show-me-test.md`）。
+不写成几条检查共用的片段（见 `rules/show-me-test.md`）。
 
 按 `rules/show-me-test.md`：证明不了会红的检查，等于没写。

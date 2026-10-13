@@ -35,7 +35,7 @@
 set -uo pipefail
 HOOK_DIRECTORY="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PACKAGE_ROOT="$(cd "$HOOK_DIRECTORY/../.." && pwd)"
-HANDBACK_SCRATCH="$PACKAGE_ROOT/scripts/handback-scratch.py"
+HANDBACK_SCRATCH_SCRIPT="$PACKAGE_ROOT/scripts/handback-scratch.py"
 STATE_DIRECTORY="${HANDBACK_SCRATCH_CHECK_STATE_DIRECTORY:-${TMPDIR:-/tmp}/handback-scratch-check}"
 HANDBACK_TOOL_NAME=SubagentHandback
 source "$PACKAGE_ROOT/scripts/claude-hook-lib.sh"
@@ -78,13 +78,13 @@ judge_handback() { # judge_handback（钩子 JSON 在 stdin）→ 退出码 0 �
   fi
   state_file="$STATE_DIRECTORY/$session_id-$agent_id"
   if [[ "$hook_event_name" == SubagentStop && -f "$state_file" ]]; then judge_options=(--explained-after "$(cat "$state_file")"); fi
-  judgement="$(printf '%s' "$hook_json" | python3 "$HANDBACK_SCRATCH" "$agent_transcript" "$project_root" ${judge_options[@]+"${judge_options[@]}"} 2>&1)"
+  judgement="$(printf '%s' "$hook_json" | python3 "$HANDBACK_SCRATCH_SCRIPT" "$agent_transcript" "$project_root" ${judge_options[@]+"${judge_options[@]}"} 2>&1)"
   judgement_exit_code=$?
   case "$judgement_exit_code" in
     0) return 0 ;;
     1) ;;
     *)
-      printf '%s\n' "! handback-scratch-check：判定脚本 $HANDBACK_SCRATCH 退出码 $judgement_exit_code（判不了），这一次没判（放行）。它的输出：" \
+      printf '%s\n' "! handback-scratch-check：判定脚本 $HANDBACK_SCRATCH_SCRIPT 退出码 $judgement_exit_code（判不了），这一次没判（放行）。它的输出：" \
         "$judgement" >&2
       return 1 ;;
   esac
@@ -114,29 +114,29 @@ IFS= read -r -d '' TRANSCRIPT_WRITER_PROGRAM <<'PY' || true
 import json, sys
 kind, transcript_path = sys.argv[1], sys.argv[2]
 arguments = sys.argv[3:]
-def assistant(at, blocks): return {"type": "assistant", "timestamp": at, "message": {"role": "assistant", "content": blocks}}
-def result(at, call_id, text): return {"type": "user", "timestamp": at, "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": call_id, "content": text}]}}
+def assistant_entry(timestamp, blocks): return {"type": "assistant", "timestamp": timestamp, "message": {"role": "assistant", "content": blocks}}
+def tool_result_entry(timestamp, call_id, text): return {"type": "user", "timestamp": timestamp, "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": call_id, "content": text}]}}
 if kind == "prompt":
     entries = [{"type": "user", "timestamp": arguments[0], "message": {"role": "user", "content": "开工"}}]
 elif kind == "text":
-    entries = [assistant(arguments[0], [{"type": "text", "text": arguments[1]}])]
+    entries = [assistant_entry(arguments[0], [{"type": "text", "text": arguments[1]}])]
 elif kind == "call":
     call_id, started, ended, name, tool_input = arguments[:5]
     result_text = arguments[5] if len(arguments) > 5 else "ok"
-    entries = [assistant(started, [{"type": "tool_use", "id": call_id, "name": name, "input": json.loads(tool_input)}]),
-               result(ended, call_id, result_text)]
+    entries = [assistant_entry(started, [{"type": "tool_use", "id": call_id, "name": name, "input": json.loads(tool_input)}]),
+               tool_result_entry(ended, call_id, result_text)]
 elif kind == "background":
     call_id, started, notified, name, tool_input = arguments[:5]
     tool_input = dict(json.loads(tool_input), run_in_background=True)
-    entries = [assistant(started, [{"type": "tool_use", "id": call_id, "name": name, "input": tool_input}]),
-               result(started, call_id, "running in background")]
+    entries = [assistant_entry(started, [{"type": "tool_use", "id": call_id, "name": name, "input": tool_input}]),
+               tool_result_entry(started, call_id, "running in background")]
     if notified:
         entries.append({"type": "attachment", "timestamp": notified, "attachment": {"type": "queued_command",
                         "prompt": "<task-notification>\n<tool-use-id>" + call_id + "</tool-use-id>\n<status>completed</status>\n</task-notification>"}})
 elif kind == "rejected":
-    call_id, at, name, tool_input = arguments[:4]
-    entries = [assistant(at, [{"type": "tool_use", "id": call_id, "name": name, "input": json.loads(tool_input)}]),
-               {"type": "user", "timestamp": at, "message": {"role": "user", "content": [
+    call_id, timestamp, name, tool_input = arguments[:4]
+    entries = [assistant_entry(timestamp, [{"type": "tool_use", "id": call_id, "name": name, "input": json.loads(tool_input)}]),
+               {"type": "user", "timestamp": timestamp, "message": {"role": "user", "content": [
                    {"type": "tool_result", "tool_use_id": call_id, "content": "PreToolUse hook blocked", "is_error": True}]}}]
 else:
     entries = [json.loads(arguments[0])]
@@ -146,21 +146,21 @@ with open(transcript_path, "a", encoding="utf-8") as transcript_file:
 PY
 
 run_selftest() {
-  local scratch project temporary_root claude_directory own_area other_area session_scratchpad fake_home passed=0 failed=0
+  local scratch_directory selftest_project temporary_root claude_directory own_area other_area session_scratchpad fake_home passed_case_count=0 failed_case_count=0
   local main_transcript transcript prompt_at window_start window_end gap_call_at background_start background_notified
   local dispatch_start dispatch_notified read_after_dispatch_at unnotified_start first_handback_at resumed_at read_after_resume_at open_start
-  scratch="$(mktemp -d)"
-  project="$scratch/project"
+  scratch_directory="$(mktemp -d)"
+  selftest_project="$scratch_directory/project"
   # 钩子只判临时目录之下的：把 TMPDIR 指到这里；claude-<uid> 与它下面按项目、按会话分的几层是大家共用的
-  temporary_root="$scratch/temporary"
+  temporary_root="$scratch_directory/temporary"
   claude_directory="$temporary_root/claude-$(id -u)"
   own_area="$claude_directory/implementer"
   other_area="$claude_directory/verifier"
   session_scratchpad="$claude_directory/-home-someone-project/0b7c6d2e-session/scratchpad"
   fake_home="$temporary_root/home"
   # 主 agent 的会话记录；子 agent 的在 <它去掉 .jsonl>/subagents/agent-<agent_id>.jsonl，PreToolUse 按这个找
-  main_transcript="$scratch/session.jsonl"
-  transcript="$scratch/session/subagents/agent-implementer.jsonl"
+  main_transcript="$scratch_directory/session.jsonl"
+  transcript="$scratch_directory/session/subagents/agent-implementer.jsonl"
   now_iso() { date -u +%Y-%m-%dT%H:%M:%S.%3NZ; }
   make_build_directory() { mkdir -p "$1"; printf 'Signature: 8a477f597d28d172789f06886806bc55\n# cargo\n' > "$1/CACHEDIR.TAG"; }
   write_transcript() { python3 -c "$TRANSCRIPT_WRITER_PROGRAM" "$@"; }
@@ -169,7 +169,7 @@ run_selftest() {
   pause() { sleep 0.4; }
 
   # 开工之前就在的：草稿目录、别人的仓、家目录，还有前任留下的仓副本与编译目录（这一轮也提到了它们）
-  mkdir -p "$project/crates" "$own_area" "$other_area/work/.git" "$own_area/predecessor-work/.git" "$fake_home" "$(dirname "$transcript")"
+  mkdir -p "$selftest_project/crates" "$own_area" "$other_area/work/.git" "$own_area/predecessor-work/.git" "$fake_home" "$(dirname "$transcript")"
   printf 'ref: refs/heads/master\n' > "$other_area/work/.git/HEAD"
   make_build_directory "$own_area/predecessor-target"
   pause
@@ -186,12 +186,12 @@ run_selftest() {
   make_build_directory "$fake_home/tilde-target"
   mkdir -p "$own_area/pushd-copy/.git" "$own_area/gitc-copy/.git" "$own_area/py-copy/.git" "$own_area/newline-copy/.git" \
     "$temporary_root/tmp.selftest-mktemp/repo/.git"
-  mkdir -p "$own_area/wt-copy"; printf 'gitdir: %s/.git/worktrees/wt-copy\n' "$project" > "$own_area/wt-copy/.git"
-  make_build_directory "$project/target"
+  mkdir -p "$own_area/wt-copy"; printf 'gitdir: %s/.git/worktrees/wt-copy\n' "$selftest_project" > "$own_area/wt-copy/.git"
+  make_build_directory "$selftest_project/target"
   # 它建的仓副本里套着另一个项目的根：那个项目的上级不许算成要删的副本
   mkdir -p "$own_area/wrapper/.git" "$own_area/wrapper/project2"
   # 它自己建的上级里，一个名叫 target、指到项目 target 的符号链接：链过去的那一份不是在这里建的，它的上级也不因此算工程副本
-  mkdir -p "$own_area/linkparent"; ln -s "$project/target" "$own_area/linkparent/target"; ln -s "$other_area/work" "$own_area/linkparent/work-link"; ln -s "$other_area/work" "$own_area/linkparent/work-link"
+  mkdir -p "$own_area/linkparent"; ln -s "$selftest_project/target" "$own_area/linkparent/target"; ln -s "$other_area/work" "$own_area/linkparent/work-link"; ln -s "$other_area/work" "$own_area/linkparent/work-link"
   # ── 同一时间别人建的：只在写进文件的内容里提到、只在会话的 scratchpad 这一层下面、开工前就在的目录下面 ──
   mkdir -p "$other_area/copy-after-start/.git" "$other_area/written-about/.git" "$session_scratchpad/sibling-copy/.git" \
     "$other_area/sibling-in-window/.git"
@@ -249,9 +249,9 @@ run_selftest() {
   bash_call "CARGO_TARGET_DIR=$own_area/unit-target cargo test -p core"
   # 建好之后、拦下之前又写了一句像说明的话：也不算说明
   write_transcript text "$transcript" "$window_end" "编好了 $own_area/unit-target，先保留着"
-  bash_call "cd $own_area && cp -a $project nested/work3 && cd nested/work3 && cargo build"
+  bash_call "cd $own_area && cp -a $selftest_project nested/work3 && cd nested/work3 && cargo build"
   bash_call "mkdir $own_area/runner && cd $own_area/runner && python3 run-mutations.py"
-  bash_call "cd $own_area && rsync -a --exclude .git $project/ rsync-copy/ && cd rsync-copy && cargo build"
+  bash_call "cd $own_area && rsync -a --exclude .git $selftest_project/ rsync-copy/ && cd rsync-copy && cargo build"
   bash_call "cd $own_area && CARGO_TARGET_DIR=relative-target cargo test"
   bash_call "CARGO_TARGET_DIR=~/tilde-target cargo build"
   bash_call "pushd $own_area && git clone -q src pushd-copy && popd"
@@ -266,7 +266,7 @@ EOF"
   bash_call "git worktree add $own_area/wt-copy HEAD"
   bash_call "mkdir $own_area/linkparent && ls $own_area/linkparent"
   bash_call "ls $own_area/predecessor-work $own_area/predecessor-target $session_scratchpad $other_area && cat $other_area/work/.git/HEAD"
-  bash_call "du -sh $project/target && cat > $own_area/report.md <<'EOF'
+  bash_call "du -sh $selftest_project/target && cat > $own_area/report.md <<'EOF'
 没动 $other_area/copy-after-start
 EOF"
   # shellcheck disable=SC2016  # $W 就是要原样留在命令里：路径只在变量里，判定认不出，要靠之后读过它里面的文件
@@ -289,15 +289,15 @@ EOF"
     "$(json_of command "CARGO_TARGET_DIR=$own_area/open-background-target cargo build")"
   write_transcript prompt "$main_transcript" "$prompt_at"
   write_transcript call "$main_transcript" m1 "$window_start" "$window_end" Bash "$(json_of command "CARGO_TARGET_DIR=$own_area/unit-target cargo test")"
-  write_transcript prompt "$scratch/wrapper.jsonl" "$prompt_at"
-  write_transcript call "$scratch/wrapper.jsonl" w1 "$window_start" "$window_end" Bash "$(json_of command "ls $own_area/wrapper")"
-  mkdir -p "$scratch/reads-only/subagents"
-  write_transcript prompt "$scratch/reads-only/subagents/agent-reader.jsonl" "$prompt_at"
-  write_transcript call "$scratch/reads-only/subagents/agent-reader.jsonl" r1 "$window_start" "$window_end" Bash "$(json_of command "ls $own_area")"
+  write_transcript prompt "$scratch_directory/wrapper.jsonl" "$prompt_at"
+  write_transcript call "$scratch_directory/wrapper.jsonl" w1 "$window_start" "$window_end" Bash "$(json_of command "ls $own_area/wrapper")"
+  mkdir -p "$scratch_directory/reads-only/subagents"
+  write_transcript prompt "$scratch_directory/reads-only/subagents/agent-reader.jsonl" "$prompt_at"
+  write_transcript call "$scratch_directory/reads-only/subagents/agent-reader.jsonl" r1 "$window_start" "$window_end" Bash "$(json_of command "ls $own_area")"
 
   stop_input() { # stop_input <事件> [子 agent 的会话记录，空就不带]
     printf '{"hook_event_name":"%s","session_id":"selftest-%s","stop_hook_active":false,"transcript_path":"%s","cwd":"%s"%s}' \
-      "$1" "$$" "$main_transcript" "$project" "${2:+,\"agent_id\":\"implementer\",\"agent_transcript_path\":\"$2\"}"
+      "$1" "$$" "$main_transcript" "$selftest_project" "${2:+,\"agent_id\":\"implementer\",\"agent_transcript_path\":\"$2\"}"
   }
   handback_input() { # handback_input <工具名> <agent_id，空就是主 agent> <交回的报告>
     python3 -c 'import json, sys
@@ -305,58 +305,58 @@ hook_input = {"hook_event_name": "PreToolUse", "session_id": "selftest", "transc
               "tool_name": sys.argv[3], "tool_input": {"message": sys.argv[5]}}
 if sys.argv[4]:
     hook_input.update(agent_id=sys.argv[4], agent_type="implementer")
-print(json.dumps(hook_input, ensure_ascii=False))' "$main_transcript" "$project" "$1" "$2" "$3"
+print(json.dumps(hook_input, ensure_ascii=False))' "$main_transcript" "$selftest_project" "$1" "$2" "$3"
   }
   run_hook() { # run_hook <状态目录> < 钩子 JSON
     env -u CLAUDE_PROJECT_DIR TMPDIR="$temporary_root" HOME="$fake_home" HANDBACK_SCRATCH_CHECK_STATE_DIRECTORY="$1" \
       bash "$HOOK_DIRECTORY/handback-scratch-check.sh"
   }
   expect_handback() { # expect_handback <情形> <期望退出码> <输出里要有的片段或空> <输出里不许有的片段或空> <钩子 JSON> [状态目录，空就每次新的]
-    local label="$1" wanted_exit_code="$2" wanted_text="$3" unwanted_text="$4" output exit_code state_directory="${6:-$scratch/state}"
+    local label="$1" wanted_exit_code="$2" wanted_text="$3" unwanted_text="$4" output exit_code state_directory="${6:-$scratch_directory/state}"
     output="$(printf '%s' "$5" | run_hook "$state_directory" 2>&1)"
     exit_code=$?
     if [[ "$exit_code" == "$wanted_exit_code" && ( -z "$wanted_text" || "$output" == *"$wanted_text"* ) \
           && ( -z "$unwanted_text" || "$output" != *"$unwanted_text"* ) ]]; then
-      passed=$((passed + 1))
+      passed_case_count=$((passed_case_count + 1))
     else
-      failed=$((failed + 1))
+      failed_case_count=$((failed_case_count + 1))
       printf '  ✗ 自证「%s」：期望退出 %s%s%s，实测 %s\n' "$label" "$wanted_exit_code" "${wanted_text:+、输出含「$wanted_text」}" "${unwanted_text:+、不含「$unwanted_text」}" "$exit_code"   # gate-lint:detail
       printf '%s\n' "$output" | sed 's/^/      /'
     fi
-    [[ -n "${6:-}" ]] || rm -rf "${scratch:?}/state"
+    [[ -n "${6:-}" ]] || rm -rf "${scratch_directory:?}/state"
   }
-  local first_stop
-  first_stop="$(stop_input SubagentStop "$transcript")"
-  expect_handback "CARGO_TARGET_DIR 指的编译目录拦得下" 2 "编译目录  $own_area/unit-target" "" "$first_stop"
-  expect_handback "跟着 cd 走的相对路径拷的仓副本拦得下" 2 "仓副本  $own_area/nested/work3" "" "$first_stop"
-  expect_handback "仓副本里的编译目录不另报" 2 "" "$own_area/nested/work3/target" "$first_stop"
-  expect_handback "自己建的上级下面、脚本建的也拦" 2 "编译目录  $own_area/runner/mutation-target" "" "$first_stop"
-  expect_handback "不带 .git 拷出来、在里面编过的算仓副本" 2 "仓副本  $own_area/rsync-copy" "" "$first_stop"
-  expect_handback "NAME=相对路径跟着 cd 解析" 2 "编译目录  $own_area/relative-target" "" "$first_stop"
-  expect_handback "~ 按家目录展开" 2 "编译目录  $fake_home/tilde-target" "" "$first_stop"
-  expect_handback "pushd 当 cd 跟" 2 "仓副本  $own_area/pushd-copy" "" "$first_stop"
-  expect_handback "-C <目录> 管它那一段" 2 "仓副本  $own_area/gitc-copy" "" "$first_stop"
-  expect_handback "换行之后的 cd 也跟" 2 "仓副本  $own_area/newline-copy" "" "$first_stop"
-  expect_handback "喂给解释器的 heredoc 正文里的路径算提到" 2 "仓副本  $own_area/py-copy" "" "$first_stop"
-  expect_handback "mktemp 输出的目录下面建的也拦" 2 "仓副本  $temporary_root/tmp.selftest-mktemp/repo" "" "$first_stop"
-  expect_handback "工作树单列" 2 "工作树  $own_area/wt-copy" "" "$first_stop"
-  expect_handback "别的工具读过它里面的文件也算提到" 2 "仓副本  $own_area/deep/variable-copy" "" "$first_stop"
-  expect_handback "后台命令在结果之后建的也拦" 2 "编译目录  $own_area/background-target" "" "$first_stop"
-  expect_handback "没收到完成通知的后台命令，交回之前建的也拦" 2 "编译目录  $own_area/unnotified-target" "" "$first_stop"
-  expect_handback "没收到完成通知的后台命令，交回之后别人建的不拦" 2 "" "after-handback-copy" "$first_stop"
-  expect_handback "没收到完成通知、也没有续跑的后台命令，时间窗开到现在" 2 "编译目录  $own_area/open-background-target" "" "$first_stop"
-  expect_handback "续跑之后别人建的不拦" 2 "" "after-resume-copy" "$first_stop"
-  expect_handback "派出去的子 agent 建的不拦" 2 "" "grandchild-copy" "$first_stop"
-  expect_handback "开工之前就在的仓副本不拦" 2 "" "predecessor-work" "$first_stop"
-  expect_handback "开工之前就在的编译目录不拦" 2 "" "predecessor-target" "$first_stop"
-  expect_handback "两次调用之间别人建的不拦" 2 "" "created-in-gap" "$first_stop"
-  expect_handback "写进文件的 heredoc 正文里的路径不算提到" 2 "" "copy-after-start" "$first_stop"
-  expect_handback "写进文件的内容里提到的路径不算提到" 2 "" "written-about" "$first_stop"
-  expect_handback "提到会话的 scratchpad 不连带它下面别人的" 2 "" "sibling-copy" "$first_stop"
-  expect_handback "提到开工前就在的目录，不连带它下面同一时间别人建的" 2 "" "sibling-in-window" "$first_stop"
-  expect_handback "项目根里的编译目录不拦" 2 "" "$project/target" "$first_stop"
-  expect_handback "符号链接不当编译目录" 2 "" "linkparent" "$first_stop"
-  expect_handback "只读过、没建东西的不拦" 0 "" "" "$(stop_input SubagentStop "$scratch/reads-only/subagents/agent-reader.jsonl")"
+  local subagent_stop_input
+  subagent_stop_input="$(stop_input SubagentStop "$transcript")"
+  expect_handback "CARGO_TARGET_DIR 指的编译目录拦得下" 2 "编译目录  $own_area/unit-target" "" "$subagent_stop_input"
+  expect_handback "跟着 cd 走的相对路径拷的仓副本拦得下" 2 "仓副本  $own_area/nested/work3" "" "$subagent_stop_input"
+  expect_handback "仓副本里的编译目录不另报" 2 "" "$own_area/nested/work3/target" "$subagent_stop_input"
+  expect_handback "自己建的上级下面、脚本建的也拦" 2 "编译目录  $own_area/runner/mutation-target" "" "$subagent_stop_input"
+  expect_handback "不带 .git 拷出来、在里面编过的算仓副本" 2 "仓副本  $own_area/rsync-copy" "" "$subagent_stop_input"
+  expect_handback "NAME=相对路径跟着 cd 解析" 2 "编译目录  $own_area/relative-target" "" "$subagent_stop_input"
+  expect_handback "~ 按家目录展开" 2 "编译目录  $fake_home/tilde-target" "" "$subagent_stop_input"
+  expect_handback "pushd 当 cd 跟" 2 "仓副本  $own_area/pushd-copy" "" "$subagent_stop_input"
+  expect_handback "-C <目录> 管它那一段" 2 "仓副本  $own_area/gitc-copy" "" "$subagent_stop_input"
+  expect_handback "换行之后的 cd 也跟" 2 "仓副本  $own_area/newline-copy" "" "$subagent_stop_input"
+  expect_handback "喂给解释器的 heredoc 正文里的路径算提到" 2 "仓副本  $own_area/py-copy" "" "$subagent_stop_input"
+  expect_handback "mktemp 输出的目录下面建的也拦" 2 "仓副本  $temporary_root/tmp.selftest-mktemp/repo" "" "$subagent_stop_input"
+  expect_handback "工作树单列" 2 "工作树  $own_area/wt-copy" "" "$subagent_stop_input"
+  expect_handback "别的工具读过它里面的文件也算提到" 2 "仓副本  $own_area/deep/variable-copy" "" "$subagent_stop_input"
+  expect_handback "后台命令在结果之后建的也拦" 2 "编译目录  $own_area/background-target" "" "$subagent_stop_input"
+  expect_handback "没收到完成通知的后台命令，交回之前建的也拦" 2 "编译目录  $own_area/unnotified-target" "" "$subagent_stop_input"
+  expect_handback "没收到完成通知的后台命令，交回之后别人建的不拦" 2 "" "after-handback-copy" "$subagent_stop_input"
+  expect_handback "没收到完成通知、也没有续跑的后台命令，时间窗开到现在" 2 "编译目录  $own_area/open-background-target" "" "$subagent_stop_input"
+  expect_handback "续跑之后别人建的不拦" 2 "" "after-resume-copy" "$subagent_stop_input"
+  expect_handback "派出去的子 agent 建的不拦" 2 "" "grandchild-copy" "$subagent_stop_input"
+  expect_handback "开工之前就在的仓副本不拦" 2 "" "predecessor-work" "$subagent_stop_input"
+  expect_handback "开工之前就在的编译目录不拦" 2 "" "predecessor-target" "$subagent_stop_input"
+  expect_handback "两次调用之间别人建的不拦" 2 "" "created-in-gap" "$subagent_stop_input"
+  expect_handback "写进文件的 heredoc 正文里的路径不算提到" 2 "" "copy-after-start" "$subagent_stop_input"
+  expect_handback "写进文件的内容里提到的路径不算提到" 2 "" "written-about" "$subagent_stop_input"
+  expect_handback "提到会话的 scratchpad 不连带它下面别人的" 2 "" "sibling-copy" "$subagent_stop_input"
+  expect_handback "提到开工前就在的目录，不连带它下面同一时间别人建的" 2 "" "sibling-in-window" "$subagent_stop_input"
+  expect_handback "项目根里的编译目录不拦" 2 "" "$selftest_project/target" "$subagent_stop_input"
+  expect_handback "符号链接不当编译目录" 2 "" "linkparent" "$subagent_stop_input"
+  expect_handback "只读过、没建东西的不拦" 0 "" "" "$(stop_input SubagentStop "$scratch_directory/reads-only/subagents/agent-reader.jsonl")"
   expect_handback "Stop 上不判" 0 "" "" "$(stop_input Stop "$transcript")"
   expect_handback "认不出是哪个子 agent 时不拦" 1 "认不出是哪个子 agent" "" "$(stop_input SubagentStop)"
   expect_handback "输入不是 JSON 不拦" 1 "不是 JSON 对象" "" "不是 JSON"
@@ -378,69 +378,69 @@ print(json.dumps(hook_input, ensure_ascii=False))' "$main_transcript" "$project"
   expect_handback "主 agent 的交回不判" 0 "" "" "$(handback_input SubagentHandback "" "")"
   expect_handback "找不到子 agent 的会话记录时不拦" 1 "找不到这个子 agent 自己的会话记录" "" "$(handback_input SubagentHandback ghost "")"
   # ── 收工时（SubagentStop）：拦下之后写了才算，只 du、Read 一下与前缀不算，删了重建的要重新说明 ──
-  local kept_state="$scratch/kept-state"
-  expect_handback "收工时拦：拦下之前提到的不算说明" 2 "编译目录  $own_area/unit-target" "" "$first_stop" "$kept_state"
+  local kept_state="$scratch_directory/kept-state"
+  expect_handback "收工时拦：拦下之前提到的不算说明" 2 "编译目录  $own_area/unit-target" "" "$subagent_stop_input" "$kept_state"
   pause
   write_transcript call "$transcript" after-block-du "$(now_iso)" "$(now_iso)" Bash "$(json_of command "du -sh $own_area/unit-target")"
   write_transcript call "$transcript" after-block-read "$(now_iso)" "$(now_iso)" Read "$(json_of file_path "$own_area/unit-target/CACHEDIR.TAG")"
   write_transcript text "$transcript" "$(now_iso)" "没删 $own_area/unit-target-old：留给主 agent"
-  expect_handback "拦下之后只 du、Read 一下、写了前缀相同的别的路径都不算说明" 2 "编译目录  $own_area/unit-target" "" "$first_stop" "$kept_state"
+  expect_handback "拦下之后只 du、Read 一下、写了前缀相同的别的路径都不算说明" 2 "编译目录  $own_area/unit-target" "" "$subagent_stop_input" "$kept_state"
   pause
   write_transcript text "$transcript" "$(now_iso)" "没删：$own_area/unit-target，主 agent 要拿它复跑全部变异"
-  expect_handback "拦下之后在回复里写了全路径就放行" 0 "" "" "$first_stop" "$kept_state"
+  expect_handback "拦下之后在回复里写了全路径就放行" 0 "" "" "$subagent_stop_input" "$kept_state"
   pause
   rm -rf "${own_area:?}/unit-target"
   make_build_directory "$own_area/unit-target"
-  expect_handback "删了重建的，之前的说明管不到" 2 "编译目录  $own_area/unit-target" "" "$first_stop" "$kept_state"
+  expect_handback "删了重建的，之前的说明管不到" 2 "编译目录  $own_area/unit-target" "" "$subagent_stop_input" "$kept_state"
   pause
   write_transcript call "$transcript" report-heredoc "$(now_iso)" "$(now_iso)" Bash \
     "$(json_of command "cat >> $own_area/report.md <<'EOF'
 没删 $own_area/unit-target：重建的这一份留给主 agent 复跑
 EOF")"
-  expect_handback "拦下之后用 heredoc 写进报告里的那一行也算" 0 "" "" "$first_stop" "$kept_state"
+  expect_handback "拦下之后用 heredoc 写进报告里的那一行也算" 0 "" "" "$subagent_stop_input" "$kept_state"
   pause
-  mkdir -p "$scratch/empty-state" && : > "$scratch/empty-state/selftest-$$-implementer"
-  expect_handback "状态文件写到一半（空的）当没拦过、照拦" 2 "编译目录  $own_area/unit-target" "" "$first_stop" "$scratch/empty-state"
+  mkdir -p "$scratch_directory/empty-state" && : > "$scratch_directory/empty-state/selftest-$$-implementer"
+  expect_handback "状态文件写到一半（空的）当没拦过、照拦" 2 "编译目录  $own_area/unit-target" "" "$subagent_stop_input" "$scratch_directory/empty-state"
   write_transcript rejected "$transcript" rejected-handback "$(now_iso)" SubagentHandback "$(json_of message "没删 $own_area/unit-target：留给主 agent")"
-  expect_handback "被拒掉的那次交回里写的不算" 2 "编译目录  $own_area/unit-target" "" "$first_stop"
+  expect_handback "被拒掉的那次交回里写的不算" 2 "编译目录  $own_area/unit-target" "" "$subagent_stop_input"
   write_transcript call "$transcript" handback "$(now_iso)" "$(now_iso)" SubagentHandback "$(json_of message "没删 $own_area/unit-target：留给主 agent")"
-  expect_handback "送达了的交回报告里写了的，收工时不再拦" 0 "" "" "$first_stop"
+  expect_handback "送达了的交回报告里写了的，收工时不再拦" 0 "" "" "$subagent_stop_input"
   # ── 直接调判定脚本：项目根的上级不判；会话记录读不了退 3 ──
   expect_judge() { # expect_judge <情形> <期望退出码> <会话记录> <项目根>
     local output exit_code
     output="$(env TMPDIR="$temporary_root" HOME="$fake_home" python3 "$PACKAGE_ROOT/scripts/handback-scratch.py" "$3" "$4" 2>&1)"
     exit_code=$?
-    if [[ "$exit_code" == "$2" ]]; then passed=$((passed + 1)); else
-      failed=$((failed + 1))
+    if [[ "$exit_code" == "$2" ]]; then passed_case_count=$((passed_case_count + 1)); else
+      failed_case_count=$((failed_case_count + 1))
       printf '  ✗ 自证「%s」：判定脚本期望退出 %s，实测 %s\n' "$1" "$2" "$exit_code"   # gate-lint:detail
       printf '%s\n' "$output" | sed 's/^/      /'
     fi
   }
-  expect_judge "项目根的上级哪怕是它建的仓副本也不判" 0 "$scratch/wrapper.jsonl" "$own_area/wrapper/project2"
-  expect_judge "会话记录读不了时判不了" 3 "$scratch" "$project"
+  expect_judge "项目根的上级哪怕是它建的仓副本也不判" 0 "$scratch_directory/wrapper.jsonl" "$own_area/wrapper/project2"
+  expect_judge "会话记录读不了时判不了" 3 "$scratch_directory" "$selftest_project"
   # ── 判不了：会话记录格式变了、工具调用的时间戳认不出、取不到创建时间（换一个只会报 0 的 stat）──
-  mkdir -p "$scratch/odd/subagents"
-  write_transcript prompt "$scratch/odd/subagents/agent-odd.jsonl" "$prompt_at"
-  write_transcript raw "$scratch/odd/subagents/agent-odd.jsonl" \
+  mkdir -p "$scratch_directory/odd/subagents"
+  write_transcript prompt "$scratch_directory/odd/subagents/agent-odd.jsonl" "$prompt_at"
+  write_transcript raw "$scratch_directory/odd/subagents/agent-odd.jsonl" \
     "{\"type\": \"assistant\", \"timestamp\": \"$window_start\", \"message\": {\"items\": [{\"type\": \"tool_use\", \"id\": \"o1\", \"name\": \"Bash\", \"input\": {\"command\": \"CARGO_TARGET_DIR=$own_area/unit-target cargo test\"}}]}}"
-  expect_handback "会话记录里的工具调用一次都认不出时不拦" 1 "一次工具调用都没认出来" "" "$(stop_input SubagentStop "$scratch/odd/subagents/agent-odd.jsonl")"
+  expect_handback "会话记录里的工具调用一次都认不出时不拦" 1 "一次工具调用都没认出来" "" "$(stop_input SubagentStop "$scratch_directory/odd/subagents/agent-odd.jsonl")"
   expect_handback "项目根不在时判不了、不拦" 1 "找不到项目根" "" \
-    "$(stop_input SubagentStop "$transcript" | sed "s|\"cwd\":\"$project\"|\"cwd\":\"$scratch/no-such-project\"|")"
-  write_transcript prompt "$scratch/odd/subagents/agent-bad-time.jsonl" "$prompt_at"
-  write_transcript call "$scratch/odd/subagents/agent-bad-time.jsonl" b1 "昨天" "昨天" Bash "$(json_of command "CARGO_TARGET_DIR=$own_area/unit-target cargo test")"
-  expect_handback "工具调用的时间戳认不出时不拦" 1 "认不出（时间戳认不出" "" "$(stop_input SubagentStop "$scratch/odd/subagents/agent-bad-time.jsonl")"
-  mkdir -p "$scratch/fake-bin"
+    "$(stop_input SubagentStop "$transcript" | sed "s|\"cwd\":\"$selftest_project\"|\"cwd\":\"$scratch_directory/no-such-project\"|")"
+  write_transcript prompt "$scratch_directory/odd/subagents/agent-bad-time.jsonl" "$prompt_at"
+  write_transcript call "$scratch_directory/odd/subagents/agent-bad-time.jsonl" b1 "昨天" "昨天" Bash "$(json_of command "CARGO_TARGET_DIR=$own_area/unit-target cargo test")"
+  expect_handback "工具调用的时间戳认不出时不拦" 1 "认不出（时间戳认不出" "" "$(stop_input SubagentStop "$scratch_directory/odd/subagents/agent-bad-time.jsonl")"
+  mkdir -p "$scratch_directory/fake-bin"
   # 调用形如 stat --printf=… -- 路径…：每个路径都报创建时间 0（不报 btime 的文件系统就是这样）
-  printf '#!/usr/bin/env bash\nprintf "0\\t%%s\\0" "${@:3}"\n' > "$scratch/fake-bin/stat"
-  chmod +x "$scratch/fake-bin/stat"
-  PATH="$scratch/fake-bin:$PATH" expect_handback "取不到创建时间时不拦" 1 "取不到创建时间" "" "$first_stop"
-  rm -rf "${scratch:?}"
-  if (( failed > 0 )); then
-    printf '  ✗ handback-scratch-check 自证：%s 种情形判错（共 %s 种）\n' "$failed" "$((passed + failed))"   # gate-lint:summary
+  printf '#!/usr/bin/env bash\nprintf "0\\t%%s\\0" "${@:3}"\n' > "$scratch_directory/fake-bin/stat"
+  chmod +x "$scratch_directory/fake-bin/stat"
+  PATH="$scratch_directory/fake-bin:$PATH" expect_handback "取不到创建时间时不拦" 1 "取不到创建时间" "" "$subagent_stop_input"
+  rm -rf "${scratch_directory:?}"
+  if (( failed_case_count > 0 )); then
+    printf '  ✗ handback-scratch-check 自证：%s 种情形判错（共 %s 种）\n' "$failed_case_count" "$((passed_case_count + failed_case_count))"   # gate-lint:summary
     printf '%s\n' '     → 怎么办：看上面判错的那几种情形，修 handback-scratch-check.sh 或它调的 handback-scratch.py，再跑 bash handback-scratch-check.sh --selftest。'
     return 1
   fi
-  printf '  ✓ handback-scratch-check 自证：%s 种情形判得都对\n' "$passed"
+  printf '  ✓ handback-scratch-check 自证：%s 种情形判得都对\n' "$passed_case_count"
   return 0
 }
 

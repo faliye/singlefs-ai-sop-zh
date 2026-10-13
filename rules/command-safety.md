@@ -21,8 +21,8 @@
 **脚本里一律不许出现 git 的撤销命令。** 要在脚本里回到干净状态，就先 `git stash`，
 或者把整个仓拷一份出来在副本上做。
 
-**`rm -rf` 作用在变量路径上要加空值守卫**：写成 `rm -rf "${d:?}/x"`，不写 `rm -rf "$d/x"`。
-`rm -rf "$d"` 这种后面不跟路径的不用管。
+**`rm -rf` 作用在变量路径上要加空值守卫**：写成 `rm -rf "${build_directory:?}/cache"`，不写 `rm -rf "$build_directory/cache"`。
+`rm -rf "$build_directory"` 这种后面不跟路径的不用管。
 
 ## `pkill -f` / `killall` 一律禁用
 
@@ -30,14 +30,14 @@
 也可以交给 `scripts/proc.py stop 进程号`：它先发 TERM，过 `--grace` 秒（默认 10）还在再发 KILL，要停的是发出命令的进程自己或它的祖先时拒绝。
 统计类的改用 `/proc` 里的结构化信息，并且排掉自己这一支进程树。
 
-**等待循环里同样不用 `pgrep -f`**（`until ! pgrep -f "X"; do sleep 5; done` 这种）。
+**等待循环里同样不用 `pgrep -f`**（`until ! pgrep -f "进程名"; do sleep 5; done` 这种）。
 等一个进程结束，用它**写死的 pid**：`until ! kill -0 "$pid" 2>/dev/null; do sleep 5; done`；
 等自己起的后台任务用 `wait`；不是自己起的（别的脚本拉起来的守护进程之类），让起它的一方把 pid 写进文件再等。
 pid 没记下来的，用 `scripts/proc.py find 可执行文件名 [--argument 参数]` 找进程号：它按可执行文件名逐字比，不拿模式串去比整条命令行，也不列发出这条命令的那一支进程；
 拿到进程号再 `scripts/proc.py wait 进程号 --timeout 秒` 等它退出，到点还没退出就列出还活着的、退出码 3。
 `scripts/shell-lint.sh` 的 S3 那条对脚本里命令位置上的每一处 `pgrep -f` 都红（`if` / `while` / `until` / `!` 后面也算命令位置），
 不看同一行还有没有 `kill`。
-手敲的命令由 `scripts/claude-hooks/pattern-process-guard.sh` 在执行前拒绝，判据与 shell-lint 的 S2、S3 是同一份（`scripts/lib.sh` 的 `PATTERN_KILL_RE`、`PATTERN_PGREP_RE`），
+手敲的命令由 `scripts/claude-hooks/pattern-process-guard.sh` 在执行前拒绝，判据与 shell-lint 的 S2（按模式匹配杀进程）、S3（`pgrep -f`）是同一份（`scripts/lib.sh` 的 `PATTERN_KILL_RE`、`PATTERN_PGREP_RE`），
 拒绝时给出按进程号办事的写法。它是 Claude Code 的 PreToolUse 钩子，项目在 `.claude/settings.json` 的 `hooks.PreToolUse` 里注册一次：
 
 ```json
@@ -46,15 +46,15 @@ pid 没记下来的，用 `scripts/proc.py find 可执行文件名 [--argument �
 
 没注册的会话里，手敲的命令仍然只靠这一条文字。
 
-## 起了后台任务和子 agent，就要定时复检，不强制结束
+## 起了后台任务和子 agent，就要定时复检，调度的一方不响应才终止
 
 长活可以等，但要有人看着：
 
 - **起了就要复检。** 后台起的任务、派出去的子 agent，调度的一方定时看：最后一次动作是多久以前、是不是停在等待循环里、
   同一条命令是不是反复跑而输出一模一样、它写的文件还涨不涨。
-- **检出和处置分开。** 检出卡住与空转的工具（hook、看门狗脚本）只记录、只报告，不拦命令、不杀进程、不停子 agent；
-  结不结束、怎么处置，由调度的一方看了再定。
-  拒绝某一种危险写法的钩子不在此列（`session-wrapup.md` 第 4 条：写入前拒绝覆盖未跟踪的文件）。
+- **检出和处置分开。** 检出卡住与空转的工具（hook、看门狗脚本）只记录、只报告，不拦命令；不杀进程、不停子 agent，只有调度的一方不响应时例外。
+  结不结束、怎么处置，由调度的一方看了再定；报了之后调度的一方没有响应（同一件事连报几次都没处置、也没确认），报告的一方（人、agent 或检出的工具）可以终止它：进程用 `scripts/proc.py stop 进程号`，子 agent 用停止它的工具；终止了要报出来。
+  拒绝某一种危险写法的钩子不在此列（`session-wrapup.md` 第 4 条「同一个仓里有没有别的会话在飞？」：写入前拒绝覆盖未跟踪的文件）。
 - **等日志里的一行字之前，先确认那一行真会写进那个文件。**
 - 在 Claude Code 这类会话里，长活放后台，定期回来复检，不在前台干等。
 
@@ -80,7 +80,7 @@ pid 没记下来的，用 `scripts/proc.py find 可执行文件名 [--argument �
 
 收束只有两种写法：起的时候记 `pids+=($!)`、收的时候逐个 `wait "$pid"` 取退出码；
 或者并行的每一项各写一个退出码文件，收的时候按派活时那张表的顺序逐个判。
-不带参数的 `wait`、后台体里写 `|| bad=1` 再由父进程读 `$bad`，都收不到退出码。
+不用不带参数的 `wait`，也不在后台体里写 `|| bad=1` 再由父进程读 `$bad`。
 
 `scripts/shell-lint.sh` 的 S6 判这一条：命令位置上不带参数的 `wait` 判红。
 退出码确实在别处收了的，在那一行写 `# shell-lint:exit-collected <怎么收的>`，理由不许省。
@@ -93,14 +93,14 @@ pid 没记下来的，用 `scripts/proc.py find 可执行文件名 [--argument �
 
 ## 别用 echo 假装命令成功
 
-不写 `cmd 2>/dev/null; echo "已完成"` 这种报成功的方式。
+不写 `命令 2>/dev/null; echo "已完成"` 这种报成功的方式。
 凡是改状态的命令，都要**回头读一次实际状态**来确认：
-`systemctl stop X` 之后跑一下 `is-active`，不能只看 stop 的退出码。
+`systemctl stop 服务名` 之后跑一下 `is-active`，不能只看 stop 的退出码。
 
 ## 结果抓取要有完整性闸
 
 **做法**：被测程序在最后一行报出它总共发了多少条，抓取方比对条数，对不上就整轮作废。
-这道闸自己也要先证明会红：喂一个声称发 N 条、实际只发 N−1 条的假程序，它必须判红。
+这道闸自己也要先证明会红：喂一个声称的条数比实际发出的多一条的假程序，它必须判红。
 
 ## 带闸的脚本，判完了才交出产物
 
@@ -111,7 +111,7 @@ pid 没记下来的，用 `scripts/proc.py find 可执行文件名 [--argument �
 
 ## 子 shell 里的赋值传不回父进程
 
-`rc="$(run_one ...)"` 这种写法里，`run_one` 内部给变量的赋值**在父进程里是空的**。
+`exit_code="$(run_one ...)"` 这种写法里，`run_one` 内部给变量的赋值**在父进程里是空的**。
 **要传值就落到文件或者走参数，别靠变量。** 它是 `scripts/shell-lint.sh` 里会红的一项。
 
 ## 脚本改文件之后要回读确认，警告是免费的信号
@@ -127,20 +127,20 @@ pid 没记下来的，用 `scripts/proc.py find 可执行文件名 [--argument �
 
 | 形态 | 怎么写 |
 |---|---|
-| `set -e` 下写 `里层; rc=$?` | 退出码在 `if` 里取：`if 里层; then rc=0; else rc=$?; fi` |
-| `export X="$(cmd)"` / `local x="$(cmd)"` | 先赋值再 `export`，两行写 |
+| `set -e` 下写 `里层; exit_code=$?` | 退出码在 `if` 里取：`if 里层; then exit_code=0; else exit_code=$?; fi` |
+| `export 变量名="$(命令)"` / `local 变量名="$(命令)"` | 先赋值再 `export`，两行写 |
 | 握手用的环境变量漏给子进程 | 读完就 `unset`；起子进程时 `env -u` 清掉 |
 
 **判据是「这个值跨了几层进程」**：跨一层就要问它在下一层还在不在、该不该在。
 
 ## 管道里的退出码不是你想要的那个
 
-`cmd | head` 之后的 `$?`、`cmd | grep x && do_something`，判的都是管道最后一段，不是 `cmd`。
+`命令 | head` 之后的 `$?`、`命令 | grep 模式 && 后续动作`，判的都是管道最后一段，不是 `命令`。
 
 **做法**：想判前一段成没成，用 `${PIPESTATUS[0]}`，或者干脆别接管道——
 先把输出落到变量或文件里，判完退出码再处理。
 
-`scripts/shell-lint.sh` 的 S7 判其中一种：设了 `pipefail` 的脚本里，以 `grep -q` 收尾的管道（`… | grep -q 模式`）判红，命中会被读成没命中。
+`scripts/shell-lint.sh` 的 S7 判其中一种：设了 `pipefail` 的脚本里，以 `grep -q` 收尾的管道（`… | grep -q 模式`）判红。
 改法：先把前段的输出落到变量，再 `grep -q 模式 <<<"$变量"`；这种没有前段的写法不判。
 
 ## 测试镜像一律放临时目录

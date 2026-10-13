@@ -4,14 +4,14 @@
 # 规则文件只写怎么做，不写历史与原因（rules/rules-discipline.md）。
 #
 # 扫 rules/*.md（本包的，或 RULES_LINT_DIR 给的目录）与 RULES_LINT_FILES 点名的文件，判七条，任一条成立判红：
-#   ① 记录小节、② 论证小节：看标题剥掉编号之后的字面。
-#   ③ 带日期的行：「」与反引号里的日期不算（引的小节名自带日期是引用，起算日、路径里的日期是参数）。
-#   ④ 解释性段落、⑤ 解释性半句、⑥ 词法说明：词表在 PARAGRAPH_LABELS 到 LEXICAL_EXPLANATIONS 那几个常量。
-#   ⑦ 链到 records/ 或 CHANGELOG.md 而同一行没有劝阻句：读的人默认跟着链接走，跟过去就把分出去的历史又装回上下文。反引号里的路径不判。
-# 围栏里的行不判；表格行不判 ④ ⑤ ⑥。认不出的（不在标点之后的因果、表格里的解释、不以那几个词起头的论证标题）靠 review。
+#   记录小节、论证小节：看标题剥掉编号之后的字面。
+#   带日期的行：「」与反引号里的日期不算（引的小节名自带日期是引用，起算日、路径里的日期是参数）。
+#   解释性段落、解释性半句、词法说明：词表在 PARAGRAPH_LABELS 到 LEXICAL_EXPLANATIONS 那几个常量。
+#   没带劝阻句的历史链接：链到 records/ 或 CHANGELOG.md 而同一行没有劝阻句；读的人默认跟着链接走，跟过去就把分出去的历史又装回上下文。反引号里的路径不判。
+# 围栏里的行不判；表格行不判解释性段落、解释性半句与词法说明。认不出的（不在标点之后的因果、表格里的解释、不以那几个词起头的论证标题）靠 review。
 #
-# 语言按本包 I18N 的 this= 取，词表在 WORDS_BY_LANGUAGE。英文、日文判 ① ② ③ ⑦，④ ⑤ 只认「标签词加冒号」；
-# 连词起头、标点后的连词与 ⑥ 认的是汉语句式，照翻误判比真违规多，由 --not-impl 报未实现，不假装通过。
+# 语言按本包 I18N 的 this= 取，词表在 WORDS_BY_LANGUAGE。英文、日文判记录小节、论证小节、带日期的行与没带劝阻句的历史链接，解释性段落与半句只认「标签词加冒号」；
+# 连词起头、标点后的连词与词法说明认的是汉语句式，照翻误判比真违规多，由 --not-impl 报未实现，不假装通过。
 # RULES_LINT_LANG 只给门禁自证用（样本的语言是样本的属性，不是仓的属性），设了就自报。
 #
 # 还没回扫完的文件登记进 <项目根>/.claude/rules-lint-exclude：一行一条「路径  # 理由」；理由为空、指向不存在的文件、一个都没排到，都判红。
@@ -27,8 +27,8 @@
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 preflight "${BASH_SOURCE[0]}" "$@"; set -- ${PREFLIGHT_ARGUMENTS[@]+"${PREFLIGHT_ARGUMENTS[@]}"}
 
-SCRIPTS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PACKAGE_ROOT="$(cd "$SCRIPTS/.." && pwd)"
+PACKAGE_SCRIPTS_DIRECTORY="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PACKAGE_ROOT="$(cd "$PACKAGE_SCRIPTS_DIRECTORY/.." && pwd)"
 PACKAGE_LANGUAGE="$(sed -n 's/^this=//p' "$PACKAGE_ROOT/I18N" 2>/dev/null | head -1 || true)"
 RULES_LANGUAGE="${PACKAGE_LANGUAGE:-zh}"
 RULES_LANGUAGE_FORCED=0
@@ -42,12 +42,12 @@ if [[ "${1:-}" == --not-impl ]]; then
   if [[ -n "$RULES_NOT_IMPLEMENTED" ]]; then echo "$RULES_NOT_IMPLEMENTED"; fi
   exit 0
 fi
-ROOT="${1:-$PACKAGE_ROOT}"
-[[ -d "$ROOT" ]] || die "找不到项目根：$ROOT" \
+PROJECT_ROOT="${1:-$PACKAGE_ROOT}"
+[[ -d "$PROJECT_ROOT" ]] || die "找不到项目根：$PROJECT_ROOT" \
   "把项目根作为第一个参数传进来： bash scripts/rules-lint.sh <项目根>"
-if [[ "$ROOT" != "/" ]]; then ROOT="${ROOT%/}"; fi
-SCAN="${RULES_LINT_DIR:-$PACKAGE_ROOT/rules}"
-[[ -d "$SCAN" ]] || die "找不到规则目录：$SCAN" \
+if [[ "$PROJECT_ROOT" != "/" ]]; then PROJECT_ROOT="${PROJECT_ROOT%/}"; fi
+RULES_DIRECTORY="${RULES_LINT_DIR:-$PACKAGE_ROOT/rules}"
+[[ -d "$RULES_DIRECTORY" ]] || die "找不到规则目录：$RULES_DIRECTORY" \
   "项目的规则目录不在默认位置时，用 RULES_LINT_DIR 指过去： RULES_LINT_DIR=.claude/rules bash scripts/rules-lint.sh ."
 
 if [[ $RULES_LANGUAGE_FORCED -eq 1 ]]; then
@@ -63,28 +63,28 @@ case "$RULES_LANGUAGE" in
     exit 77 ;;
 esac
 
-RULES_LINT_SCAN="$SCAN" RULES_LINT_ROOT="$ROOT" RULES_LINT_FILES="${RULES_LINT_FILES:-}" \
+RULES_LINT_SCAN="$RULES_DIRECTORY" RULES_LINT_ROOT="$PROJECT_ROOT" RULES_LINT_FILES="${RULES_LINT_FILES:-}" \
   RULES_LINT_LANGUAGE="$RULES_LANGUAGE" python3 - <<'PY'
 import glob, os, re, sys
 
-scan = os.path.realpath(os.environ["RULES_LINT_SCAN"])
-root = os.path.realpath(os.environ["RULES_LINT_ROOT"])
-targets = sorted(os.path.realpath(p) for p in glob.glob(os.path.join(scan, "*.md")))
+rules_directory = os.path.realpath(os.environ["RULES_LINT_SCAN"])
+project_root = os.path.realpath(os.environ["RULES_LINT_ROOT"])
+targets = sorted(os.path.realpath(rule_path) for rule_path in glob.glob(os.path.join(rules_directory, "*.md")))
 for pattern in os.environ.get("RULES_LINT_FILES", "").split():
-    for extra in sorted(glob.glob(os.path.join(root, pattern))):
+    for extra in sorted(glob.glob(os.path.join(project_root, pattern))):
         resolved = os.path.realpath(extra)
         if os.path.isfile(resolved) and resolved not in targets:
             targets.append(resolved)
 if not targets:
-    print(f"  ! {scan} 下一个 .md 都没有，本阶段无对象可判")
+    print(f"  ! {rules_directory} 下一个 .md 都没有，本阶段无对象可判")
     sys.exit(77)
 
 # ── 排除清单 ────────────────────────────────────────────
-exclude_path = os.path.join(root, ".claude", "rules-lint-exclude")
+exclude_path = os.path.join(project_root, ".claude", "rules-lint-exclude")
 excluded, exclude_problems = {}, []
 if os.path.isfile(exclude_path):
-    for number, raw in enumerate(open(exclude_path, encoding="utf-8").read().split("\n"), 1):
-        line = raw.strip()
+    for line_number, raw_line in enumerate(open(exclude_path, encoding="utf-8").read().split("\n"), 1):
+        line = raw_line.strip()
         if not line or line.startswith("#"):
             continue
         path, _, reason = line.partition("#")
@@ -92,18 +92,18 @@ if os.path.isfile(exclude_path):
         if not path:
             continue
         if not reason:
-            exclude_problems.append(f"{exclude_path}:{number}：「{path}」没写理由")
+            exclude_problems.append(f"{exclude_path}:{line_number}：「{path}」没写理由")
             continue
-        full = os.path.realpath(os.path.join(root, path))
-        if not os.path.isfile(full):
-            exclude_problems.append(f"{exclude_path}:{number}：「{path}」指向的文件不存在")
+        resolved_excluded_path = os.path.realpath(os.path.join(project_root, path))
+        if not os.path.isfile(resolved_excluded_path):
+            exclude_problems.append(f"{exclude_path}:{line_number}：「{path}」指向的文件不存在")
             continue
-        excluded[full] = reason
+        excluded[resolved_excluded_path] = reason
 
-skipped = [t for t in targets if t in excluded]
-scanned_targets = [t for t in targets if t not in excluded]
-unused = [os.path.relpath(p, root) for p in excluded if p not in set(targets)]
-for path in unused:
+skipped = [target for target in targets if target in excluded]
+scanned_targets = [target for target in targets if target not in excluded]
+unused_exclusions = [os.path.relpath(excluded_path, project_root) for excluded_path in excluded if excluded_path not in set(targets)]
+for path in unused_exclusions:
     exclude_problems.append(f"{exclude_path}：「{path}」不在本次扫描范围里，一个文件都没排到")
 
 # ── 判据 ────────────────────────────────────────────────
@@ -170,8 +170,11 @@ LEXICAL_EXPLANATIONS = [
     ("「实测」后跟数", re.compile(r"实测[^，。；,;（）()「」]{0,8}\d")),
     ("「今天」后跟数", re.compile(r"今天\s*\d")),
     ("标点后的目的或因果", re.compile(r"(?:[（(，,；;。：:]|——)\s*(?:免得|以免|为了|所以)")),
-    # 「计划第 N 节」：计划增删一节序号就指到别处，又不带路径，读的人跟不过去。
-    ("不带路径的「计划第 N 节」", re.compile(r"计划第[一二三四五六七八九十]+节")),
+    # 「计划第 <序号> 节」：计划增删一节序号就指到别处，又不带路径，读的人跟不过去。
+    ("不带路径的「计划第 <序号> 节」", re.compile(r"计划第[一二三四五六七八九十]+节")),
+    # 「否则」后面跟动作（「否则归 harness 档」「否则退 0」）是条件分支，照留；跟后果（会、没区别、不是）才是论证
+    ("「否则」「不然」后跟后果", re.compile(r"(?:否则|不然)[^，。；,;]{0,15}?(?:会|没区别|等于|不是|白跑|白做|看不出|分不出|证明不了)")),
+    ("论证与来历的固定说法", re.compile(r"病根|算一遍就知道|差别不在|早晚(?!高峰)|没人知道|三个月后|第一次记|第一次写成|用户原话|用户当天|当天质疑")),
 ]
 HISTORY_LINK = re.compile(r"\]\([^)]*(?:records/|CHANGELOG\.md)")
 
@@ -192,8 +195,8 @@ def paragraph_opener(first_line):
     for word in PARAGRAPH_LABELS:
         if text.startswith(word):
             # 「**为什么**：」：标签词自己加了粗体，收尾的星号跳过再看冒号
-            rest = text[len(word):].lstrip("*")
-            if rest == "" or rest[0] in PARAGRAPH_LABEL_DELIMITERS:
+            text_after_label = text[len(word):].lstrip("*")
+            if text_after_label == "" or text_after_label[0] in PARAGRAPH_LABEL_DELIMITERS:
                 return word
     return None
 
@@ -203,7 +206,7 @@ lexical_explanations, bare_links = [], []
 scanned_lines = dated_only_in_quotes = lexical_lines = 0
 
 for path in scanned_targets:
-    relative = os.path.relpath(path, root)
+    relative_path = os.path.relpath(path, project_root)
     lines = open(path, encoding="utf-8").read().split("\n")
     in_fence = False
     fenced = [False] * len(lines)
@@ -224,7 +227,7 @@ for path in scanned_targets:
         if fenced[index]:
             continue
         scanned_lines += 1
-        location = f"{relative}:{index + 1}"
+        location = f"{relative_path}:{index + 1}"
         unquoted_line = without_quoted(line)
         heading = HEADING.match(line)
         if heading:
@@ -248,14 +251,14 @@ for path in scanned_targets:
                 explanatory_half_sentences.append(f"{location}（标签「{match.group(1)}」加冒号）：{line.strip()[:90]}")
         if PROSE_CHECKS and not breaks_paragraph[index]:
             for match in HALF_SENTENCE.finditer(unquoted_line):
-                start = max(0, match.start() - 12)
-                explanatory_half_sentences.append(f"{location}（「{match.group(1)}」）：…{unquoted_line[start:match.end() + 24].strip()}…")
+                excerpt_start = max(0, match.start() - 12)
+                explanatory_half_sentences.append(f"{location}（「{match.group(1)}」）：…{unquoted_line[excerpt_start:match.end() + 24].strip()}…")
         if PROSE_CHECKS and not TABLE.match(line):
             lexical_lines += 1
             for kind, pattern in LEXICAL_EXPLANATIONS:
                 for match in pattern.finditer(unquoted_line):
-                    start = max(0, match.start() - 12)
-                    lexical_explanations.append(f"{location}（{kind}「{match.group(0).strip()}」）：…{unquoted_line[start:match.end() + 24].strip()}…")
+                    excerpt_start = max(0, match.start() - 12)
+                    lexical_explanations.append(f"{location}（{kind}「{match.group(0).strip()}」）：…{unquoted_line[excerpt_start:match.end() + 24].strip()}…")
         if HISTORY_LINK.search(line) and not DISCOURAGEMENT.search(line):
             bare_links.append(f"{location}：{line.strip()[:90]}")
     index = 0
@@ -263,13 +266,13 @@ for path in scanned_targets:
         if not starts_paragraph[index]:
             index += 1
             continue
-        end = index + 1
-        while end < len(lines) and not breaks_paragraph[end] and not starts_paragraph[end]:
-            end += 1
+        paragraph_end = index + 1
+        while paragraph_end < len(lines) and not breaks_paragraph[paragraph_end] and not starts_paragraph[paragraph_end]:
+            paragraph_end += 1
         opener = paragraph_opener(lines[index])
         if opener:
-            explanatory_paragraphs.append(f"{os.path.relpath(path, root)}:{index + 1}（以「{opener}」起头，{end - index} 行）：{lines[index].strip()[:90]}")
-        index = end
+            explanatory_paragraphs.append(f"{relative_path}:{index + 1}（以「{opener}」起头，{paragraph_end - index} 行）：{lines[index].strip()[:90]}")
+        index = paragraph_end
 
 # ── 判决 ────────────────────────────────────────────────
 MOVE_HINT = "删掉，不另立落点（rules/rules-discipline.md 第 3 条；共享规则的历史进 CHANGELOG.md，一版一节）"
@@ -306,7 +309,7 @@ report(explanatory_half_sentences, "处解释性半句（指令后面挂着「�
        + (WORDS["label_words"] if LABEL_EXPLANATION is not None else "「Observed:」「実測：」") + "这类标签）：",
        "指令留下，尾巴删掉；",
        f"尾巴里的经过{MOVE_HINT}。")
-report(lexical_explanations, "处词法说明（「实测」「今天」后跟数、标点后的「免得」「以免」「为了」「所以」）：",
+report(lexical_explanations, "处词法说明（「实测」「今天」后跟数、标点后的「免得」「以免」「为了」「所以」、「否则」「不然」后跟后果，以及「病根」「早晚」「第一次记」「用户原话」这类论证与来历的固定说法）：",
        f"数与经过{MOVE_HINT}；",
        "执行者要照它分支的前提不删，改写成一条指令（条件 → 动作）。")
 report(bare_links, "处指向历史的链接没带劝阻句：",
@@ -316,7 +319,7 @@ report(bare_links, "处指向历史的链接没带劝阻句：",
 if failed:
     sys.exit(1)
 
-skipped_names = [os.path.relpath(p, root) for p in skipped]
+skipped_names = [os.path.relpath(skipped_path, project_root) for skipped_path in skipped]
 skipped_text = "；没扫 0 个" if not skipped_names else \
     f"；没扫 {len(skipped_names)} 个（登记在 .claude/rules-lint-exclude）：{'、'.join(skipped_names)}"
 prose_text = (f"解释性段落 0、解释性半句 0、没带劝阻句的链接 0；词法说明判了 {lexical_lines} 行（围栏与表格行不判），命中 0；"

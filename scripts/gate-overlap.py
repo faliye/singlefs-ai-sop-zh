@@ -6,14 +6,14 @@
 """新加的门禁与钩子要先对过已有的：能追加就追加，能合并就合并，不另起一份，更不整段抄一份。
 
 判的是新加与改动的部分，不翻存量：
-  ① 新加的门禁阶段或钩子，文件里至少一行
+  写明比过谁：新加的门禁阶段或钩子，文件里至少一行
        # gate-similar: <已有的门禁或钩子的文件名> <为什么不并进它>
      一个像的都没有就写 `# gate-similar: 无 <查过哪些>`。点名的要是已有的门禁或钩子，理由不少于 MINIMUM_REASON_CHARACTERS 个字。
      新加的 Claude Code 钩子还要写 `# hook-events: <事件> …`，列出它要挂的每个事件。
-  ② 下面这几种已有的，每一个都要点名，写「无」不算：
+  该点名的点全：下面这几种已有的，每一个都要点名，写「无」不算：
      - 与新钩子挂在同一个事件上、matcher 有交集的已有钩子（按 .claude/settings.json 的注册；新钩子还没注册的事件按 hook-events 声明、matcher 当全匹配）；
      - 与新加的那份字面上很像的已有门禁或钩子（标识符重合 ≥ SIMILARITY_REQUIRING_NAMING，两边都至少 MINIMUM_IDENTIFIERS_FOR_SIMILARITY 个）。
-  ③ 加进来的行里，有连续 CLONE_MINIMUM_LINES 行（去掉空行、注释、短行与只剩一个关键字的行，行内连续空白压成一个之后）
+  不整段抄：加进来的行里，有连续 CLONE_MINIMUM_LINES 行（去掉空行、注释、短行与只剩一个关键字的行，行内连续空白压成一个之后）
      与另一份门禁、钩子或共享脚本逐行相同：判红。确实要留两份的，在其中一份里写
        # gate-overlap:copy-kept <另一份的文件名> <为什么不抽成共用>
 
@@ -24,11 +24,11 @@
     （重定向、tee、cp / mv / install / ln 的目标、touch、sed -i、git mv；跟着 cd 走）。
     认不出的写法：路径拼在变量里、python 或别的解释器里写文件。这些由门禁阶段兜底。
 
-「门禁」：本包 gate.sh 里以 $SCRIPTS/<名> 调的脚本；项目登记的门禁目录下的阶段（默认 .claude/gate.d/），两种形态过渡期并存：
+「门禁」：本包 gate.sh 里以 $SCRIPTS_DIRECTORY/<名> 调的脚本；项目登记的门禁目录下的阶段（默认 .claude/gate.d/），两种形态过渡期并存：
   扁平的 `*.sh`，嵌套的 `<名>/<名>.sh`（同目录下的 `*.case.sh` 是它的用例，不算门禁，不参与比对）。
 「钩子」：本包的 scripts/claude-hooks/*.sh（本包自己的仓里还有 scripts/githooks/*）；项目登记的钩子目录下的 *.sh（默认 .claude/hooks/*.sh）；
   以及 .claude/settings.json 里注册命令指向的文件，放在哪个目录、什么后缀都算。符号链接按它自己的路径认。
-③ 的对照范围再加上本包 scripts/ 下其余的脚本，以及项目登记的门禁目录、钩子目录下的 .py 助手。
+「不整段抄」那一项的对照范围再加上本包 scripts/ 下其余的脚本，以及项目登记的门禁目录、钩子目录下的 .py 助手。
 装进项目的 SOP 副本只当对照，不判：它由上游自己的门禁管。注册命令指不到文件的（内联命令）判不了，成功那句逐个列出。
 
 判不了的一半：点名的那一份是不是真的最像、「为什么不并进去」的理由成不成立，靠 review
@@ -87,7 +87,7 @@ MINIMUM_INFORMATIVE_LINE_LENGTH = 8
 SIMILAR_DECLARATION_RE = re.compile(r'^\s*#\s*gate-similar:\s*(无|[A-Za-z0-9._/-]+)\s*[：:，,、]?\s*(.*?)\s*$')
 COPY_KEPT_RE = re.compile(r'^\s*#\s*gate-overlap:copy-kept\s+([A-Za-z0-9._/-]+)\s*[：:，,、]?\s*(.*?)\s*$')
 HOOK_EVENTS_RE = re.compile(r'^\s*#\s*hook-events:\s*(.*?)\s*$')
-GATE_STAGE_REFERENCE_RE = re.compile(r'\$\{?SCRIPTS\}?/([A-Za-z0-9._-]+\.(?:sh|py))')
+GATE_STAGE_REFERENCE_RE = re.compile(r'\$\{?SCRIPTS_DIRECTORY\}?/([A-Za-z0-9._-]+\.(?:sh|py))')
 IDENTIFIER_RE = re.compile(r'[A-Za-z_][A-Za-z0-9_.-]{3,}')
 EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904'
 # 文件头里给机器读的那几种标记行，不当说明取。准入与运行条件（admission: / run-condition:）每个脚本都排在说明前面，不跳过它们的话说明列整列都是它们。
@@ -143,12 +143,12 @@ def top_level_files(directory, suffixes):
     if not os.path.isdir(directory):
         return []
     real_directory = os.path.realpath(directory)
-    found = []
-    for name in sorted(os.listdir(real_directory)):
-        full_path = os.path.join(real_directory, name)
-        if os.path.isfile(full_path) and (suffixes is None or name.endswith(suffixes)):
-            found.append(full_path)
-    return found
+    top_level_file_paths = []
+    for entry_name in sorted(os.listdir(real_directory)):
+        full_path = os.path.join(real_directory, entry_name)
+        if os.path.isfile(full_path) and (suffixes is None or entry_name.endswith(suffixes)):
+            top_level_file_paths.append(full_path)
+    return top_level_file_paths
 
 
 def nested_gate_stages_in(gate_directory):
@@ -156,12 +156,12 @@ def nested_gate_stages_in(gate_directory):
     同目录下的用例文件 `*.case.sh` 是喂给阶段的数据，不算门禁，不参与比对。"""
     if not os.path.isdir(gate_directory):
         return []
-    found = []
-    for name in sorted(os.listdir(gate_directory)):
-        candidate = os.path.join(gate_directory, name, name + '.sh')
+    nested_stage_scripts = []
+    for stage_name in sorted(os.listdir(gate_directory)):
+        candidate = os.path.join(gate_directory, stage_name, stage_name + '.sh')
         if os.path.isfile(candidate):
-            found.append(candidate)
-    return found
+            nested_stage_scripts.append(candidate)
+    return nested_stage_scripts
 
 
 def expand_project_directory(text, project_root):
@@ -175,12 +175,12 @@ def files_named_in_command(command, project_root):
         words = shlex.split(expanded)
     except ValueError:
         words = expanded.split()
-    found = []
+    named_files = []
     for word in words:
         candidate = os.path.normpath(word if os.path.isabs(word) else os.path.join(project_root, word))
         if os.path.isfile(candidate) and (is_under(candidate, project_root) or is_under(candidate, PACKAGE_ROOT)):
-            found.append(candidate)
-    return found
+            named_files.append(candidate)
+    return named_files
 
 
 def unique_in_order(paths):
@@ -252,8 +252,8 @@ class Inventory:
         return self.display(os.path.join(PACKAGE_ROOT, 'rules', 'sop-first.md')) + RULE_SECTION
 
     def display(self, path):
-        relative = os.path.relpath(path, self.project_root)
-        return path if relative.startswith('..') else relative
+        relative_path = os.path.relpath(path, self.project_root)
+        return path if relative_path.startswith('..') else relative_path
 
     def kind_of(self, path):
         if path in self.gate_stages:
@@ -262,22 +262,22 @@ class Inventory:
             return '钩子'
         return '脚本'
 
-    def resolve_object(self, name, excluding):
+    def resolve_object(self, named_object, excluding):
         """点名的文件名 → 已有的门禁或钩子；认文件名，也认相对仓根的路径尾巴。"""
         for path in self.objects:
             if path == excluding:
                 continue
-            shown = self.display(path)
-            if os.path.basename(path) == name or shown == name or shown.endswith('/' + name):
+            shown_path = self.display(path)
+            if os.path.basename(path) == named_object or shown_path == named_object or shown_path.endswith('/' + named_object):
                 return path
         return None
 
-    def resolve_comparison_file(self, name, excluding):
+    def resolve_comparison_file(self, named_file, excluding):
         for path in self.comparison_files:
             if path == excluding:
                 continue
-            shown = self.display(path)
-            if os.path.basename(path) == name or shown == name or shown.endswith('/' + name):
+            shown_path = self.display(path)
+            if os.path.basename(path) == named_file or shown_path == named_file or shown_path.endswith('/' + named_file):
                 return path
         return None
 
@@ -289,27 +289,27 @@ class Inventory:
     def triggers_of_new_hook(self, hook_path):
         """新钩子可能还没注册：注册了的按注册算，hook-events 里声明了、还没注册的事件，matcher 当全匹配。
         已有的钩子只按注册算——没注册的本来就不生效，谈不上和谁挂在一起。"""
-        registered = self.registered_triggers(hook_path)
-        registered_events = {event_name for event_name, _matcher in registered}
-        declared = [(event_name, matcher) for event_name, matcher in declared_hook_events(hook_path) if event_name not in registered_events]
-        return registered + declared
+        registered_triggers_of_hook = self.registered_triggers(hook_path)
+        registered_events = {event_name for event_name, _matcher in registered_triggers_of_hook}
+        declared_unregistered_triggers = [(event_name, matcher) for event_name, matcher in declared_hook_events(hook_path) if event_name not in registered_events]
+        return registered_triggers_of_hook + declared_unregistered_triggers
 
 
 def declared_hook_events(path):
     """文件头 # hook-events: 里的（事件, matcher）；写成 <事件>:<工具名> 的 matcher 就是那个工具名，只写事件的是空（全匹配）。"""
     for line in read_lines(path)[:60]:
-        match = HOOK_EVENTS_RE.match(line)
-        if match:
-            return [tuple(token.partition(':')[::2]) for token in match.group(1).split()]
+        hook_events_match = HOOK_EVENTS_RE.match(line)
+        if hook_events_match:
+            return [tuple(token.partition(':')[::2]) for token in hook_events_match.group(1).split()]
     return []
 
 
 def description_of(path):
     lines = read_lines(path)[:40]
     for line in lines:
-        stage_name = re.match(r'^\s*#\s*gate-stage:\s*(.+)$', line)
-        if stage_name:
-            return stage_name.group(1).strip()
+        stage_name_match = re.match(r'^\s*#\s*gate-stage:\s*(.+)$', line)
+        if stage_name_match:
+            return stage_name_match.group(1).strip()
     for line in lines:
         stripped = line.strip()
         if stripped.startswith('#!'):
@@ -330,21 +330,21 @@ def run_git(project_root, *arguments):
                           capture_output=True, text=True, encoding='utf-8', errors='replace')
 
 
-def matchers_overlap(first_matcher, second_matcher):
+def matchers_overlap(new_hook_matcher, existing_hook_matcher):
     """两个 matcher 认不认同一个工具名。空与 `*` 什么都认；按 `|` 拆开之后，字面对字面比相等，
     正则对字面拿正则去整串匹配字面，正则对正则分不出来，当成有交集。"""
-    if first_matcher in ('', '*') or second_matcher in ('', '*'):
+    if new_hook_matcher in ('', '*') or existing_hook_matcher in ('', '*'):
         return True
-    for first_alternative in first_matcher.split('|'):
-        for second_alternative in second_matcher.split('|'):
-            first_is_literal = re.fullmatch(r'[A-Za-z0-9_]+', first_alternative) is not None
-            second_is_literal = re.fullmatch(r'[A-Za-z0-9_]+', second_alternative) is not None
-            if first_is_literal and second_is_literal:
-                if first_alternative == second_alternative:
+    for new_hook_alternative in new_hook_matcher.split('|'):
+        for existing_hook_alternative in existing_hook_matcher.split('|'):
+            new_hook_alternative_is_literal = re.fullmatch(r'[A-Za-z0-9_]+', new_hook_alternative) is not None
+            existing_hook_alternative_is_literal = re.fullmatch(r'[A-Za-z0-9_]+', existing_hook_alternative) is not None
+            if new_hook_alternative_is_literal and existing_hook_alternative_is_literal:
+                if new_hook_alternative == existing_hook_alternative:
                     return True
                 continue
-            if first_is_literal or second_is_literal:
-                pattern, literal = (second_alternative, first_alternative) if first_is_literal else (first_alternative, second_alternative)
+            if new_hook_alternative_is_literal or existing_hook_alternative_is_literal:
+                pattern, literal = (existing_hook_alternative, new_hook_alternative) if new_hook_alternative_is_literal else (new_hook_alternative, existing_hook_alternative)
                 try:
                     if re.fullmatch(pattern, literal):
                         return True
@@ -355,41 +355,42 @@ def matchers_overlap(first_matcher, second_matcher):
     return False
 
 
-def triggers_overlap(first_triggers, second_triggers):
-    for first_event, first_matcher in first_triggers:
-        for second_event, second_matcher in second_triggers:
-            if first_event == second_event and matchers_overlap(first_matcher, second_matcher):
+def triggers_overlap(new_hook_triggers, existing_hook_triggers):
+    for new_hook_event, new_hook_matcher in new_hook_triggers:
+        for existing_hook_event, existing_hook_matcher in existing_hook_triggers:
+            if new_hook_event == existing_hook_event and matchers_overlap(new_hook_matcher, existing_hook_matcher):
                 return True
     return False
 
 
 def normalized_lines(path):
-    informative = []
+    informative_lines = []
     for line_number, line in enumerate(read_lines(path), 1):
         stripped = ' '.join(line.split())
         if not stripped or stripped.startswith('#'):
             continue
         if len(stripped) < MINIMUM_INFORMATIVE_LINE_LENGTH or INFORMATIONLESS_LINE_RE.match(stripped):
             continue
-        informative.append((line_number, stripped))
-    return informative
+        informative_lines.append((line_number, stripped))
+    return informative_lines
 
 
 def python_code_text(text):
     """去掉注释与文档串的 python 正文；解析不了就返回 None，由调用方按 shell 的办法退回只剔整行注释。"""
     try:
-        tree = ast.parse(text)
+        syntax_tree = ast.parse(text)
         docstring_line_numbers = set()
-        for node in ast.walk(tree):
-            body = getattr(node, 'body', None)
-            if (isinstance(body, list) and body and isinstance(body[0], ast.Expr)
-                    and isinstance(body[0].value, ast.Constant) and isinstance(body[0].value.value, str)):
-                docstring_line_numbers.update(range(body[0].lineno, body[0].end_lineno + 1))
-        kept = [token.string for token in tokenize.generate_tokens(io.StringIO(text).readline)
+        for node in ast.walk(syntax_tree):
+            node_body = getattr(node, 'body', None)
+            leading_statement = node_body[0] if isinstance(node_body, list) and node_body else None
+            if (isinstance(leading_statement, ast.Expr)
+                    and isinstance(leading_statement.value, ast.Constant) and isinstance(leading_statement.value.value, str)):
+                docstring_line_numbers.update(range(leading_statement.lineno, leading_statement.end_lineno + 1))
+        kept_token_strings = [token.string for token in tokenize.generate_tokens(io.StringIO(text).readline)
                 if token.type != tokenize.COMMENT and token.start[0] not in docstring_line_numbers]
     except (SyntaxError, tokenize.TokenError, ValueError):
         return None
-    return ' '.join(kept)
+    return ' '.join(kept_token_strings)
 
 
 def code_text(path):
@@ -410,37 +411,37 @@ def identifier_set(path):
 def similarity_ranking(inventory, new_path):
     """已有的门禁与钩子按标识符重合从高到低：[(重合度, 路径, 两边是不是都够多标识符)]。"""
     new_identifiers = identifier_set(new_path)
-    scored = []
+    scored_objects = []
     for path in inventory.objects:
         if path == new_path:
             continue
         other_identifiers = identifier_set(path)
-        union = new_identifiers | other_identifiers
-        if union:
-            enough = min(len(new_identifiers), len(other_identifiers)) >= MINIMUM_IDENTIFIERS_FOR_SIMILARITY
-            scored.append((len(new_identifiers & other_identifiers) / len(union), path, enough))
-    scored.sort(key=lambda entry: (-entry[0], entry[1]))
-    return scored
+        identifier_union = new_identifiers | other_identifiers
+        if identifier_union:
+            both_have_enough_identifiers = min(len(new_identifiers), len(other_identifiers)) >= MINIMUM_IDENTIFIERS_FOR_SIMILARITY
+            scored_objects.append((len(new_identifiers & other_identifiers) / len(identifier_union), path, both_have_enough_identifiers))
+    scored_objects.sort(key=lambda ranked_object: (-ranked_object[0], ranked_object[1]))
+    return scored_objects
 
 
 def resolve_diff_base(project_root):
     """门禁阶段的窗口起点。解析不到一个提交时退到空树：空仓里 diff_base 给的是 HEAD，那里一切都是新加的。"""
-    base = os.environ.get('GATE_DIFF_BASE', '')
-    base_given_by_gate = bool(base)
-    if not base:
-        completed = subprocess.run(['bash', '-c', 'source "$1" && diff_base "$2"', '_',
-                                    os.path.join(PACKAGE_SCRIPTS_DIRECTORY, 'lib.sh'), project_root],
-                                   capture_output=True, text=True, encoding='utf-8', errors='replace')
-        if completed.returncode != 0:
-            raise CannotJudge('算不出这一次改动的 diff 基准：' + completed.stderr.strip(),
+    diff_base = os.environ.get('GATE_DIFF_BASE', '')
+    base_given_by_gate = bool(diff_base)
+    if not diff_base:
+        diff_base_run = subprocess.run(['bash', '-c', 'source "$1" && diff_base "$2"', '_',
+                                        os.path.join(PACKAGE_SCRIPTS_DIRECTORY, 'lib.sh'), project_root],
+                                       capture_output=True, text=True, encoding='utf-8', errors='replace')
+        if diff_base_run.returncode != 0:
+            raise CannotJudge('算不出这一次改动的 diff 基准：' + diff_base_run.stderr.strip(),
                               '按上面 lib.sh 的出路修；GATE_BASE 写错了就改成真实存在的提交，或者不设它。')
-        base = completed.stdout.strip()
-    if run_git(project_root, 'rev-parse', '--verify', '-q', base + '^{commit}').returncode == 0:
-        return base
-    if base == 'HEAD':
+        diff_base = diff_base_run.stdout.strip()
+    if run_git(project_root, 'rev-parse', '--verify', '-q', diff_base + '^{commit}').returncode == 0:
+        return diff_base
+    if diff_base == 'HEAD':
         return EMPTY_TREE
     if base_given_by_gate:
-        raise CannotJudge(f'GATE_DIFF_BASE={base} 在 {project_root} 里解析不到提交',
+        raise CannotJudge(f'GATE_DIFF_BASE={diff_base} 在 {project_root} 里解析不到提交',
                           '它是 gate.sh 按这个仓算好导出的，解析不到多半是外层仓的值漏进了这里。'
                           '单跑时不设它（env -u GATE_DIFF_BASE），让脚本按这个仓自己算。')
     return EMPTY_TREE
@@ -452,31 +453,31 @@ def session_start_base(project_root, transcript_path):
     session_started_at = SESSION_TRANSCRIPT.first_timestamp(transcript_path)
     if session_started_at is None:
         return resolve_diff_base(project_root)
-    completed = run_git(project_root, 'rev-list', '-1', '--before=' + session_started_at, 'HEAD')
-    commit = completed.stdout.strip()
-    return commit if completed.returncode == 0 and commit else EMPTY_TREE
+    last_commit_before_session_run = run_git(project_root, 'rev-list', '-1', '--before=' + session_started_at, 'HEAD')
+    last_commit_before_session = last_commit_before_session_run.stdout.strip()
+    return last_commit_before_session if last_commit_before_session_run.returncode == 0 and last_commit_before_session else EMPTY_TREE
 
 
-def changed_lines_by_path(project_root, base, pathspecs):
-    """相对 base 各文件加进来的行号（相对仓根的路径 → 行号集合），以及新加的文件。"""
+def changed_lines_by_path(project_root, diff_base, pathspecs):
+    """相对 diff_base 各文件加进来的行号（相对仓根的路径 → 行号集合），以及新加的文件。"""
     added_lines = {}
     diff_text = run_git(project_root, 'diff', '--relative', '--no-color', '--no-ext-diff', '-M', '-U0',
-                        base, '--', *pathspecs).stdout
+                        diff_base, '--', *pathspecs).stdout
     current_path = None
     for line in diff_text.splitlines():
         if line.startswith('+++ '):
-            target = line[4:]
-            current_path = None if target == '/dev/null' else (target[2:] if target.startswith('b/') else target)
+            diff_target_path = line[len('+++ '):]
+            current_path = None if diff_target_path == '/dev/null' else (diff_target_path[len('b/'):] if diff_target_path.startswith('b/') else diff_target_path)
             if current_path is not None:
                 added_lines.setdefault(current_path, set())
             continue
-        hunk = re.match(r'^@@ -\S+ \+(\d+)(?:,(\d+))? @@', line)
-        if hunk and current_path is not None:
-            start = int(hunk.group(1))
-            count = int(hunk.group(2)) if hunk.group(2) is not None else 1
-            added_lines[current_path].update(range(start, start + count))
+        hunk_header = re.match(r'^@@ -\S+ \+(\d+)(?:,(\d+))? @@', line)
+        if hunk_header and current_path is not None:
+            hunk_start_line_number = int(hunk_header.group(1))
+            added_line_count = int(hunk_header.group(2)) if hunk_header.group(2) is not None else 1
+            added_lines[current_path].update(range(hunk_start_line_number, hunk_start_line_number + added_line_count))
     new_paths = set(run_git(project_root, 'diff', '--relative', '--name-only', '--diff-filter=A', '-M',
-                            base, '--', *pathspecs).stdout.splitlines())
+                            diff_base, '--', *pathspecs).stdout.splitlines())
     for untracked_path in run_git(project_root, 'ls-files', '--others', '--exclude-standard', '--',
                                   *pathspecs).stdout.splitlines():
         new_paths.add(untracked_path)
@@ -507,12 +508,12 @@ def bash_write_targets(command, project_root):
     只认命令文本里写明的目标：cd 跟着走（只在这一条命令里），heredoc 的正文跳过。
     拼在变量里的路径、解释器里写的文件都认不出，那一半由门禁阶段兜底。
     """
-    targets = set()
-    directory = project_root
+    write_targets = set()
+    current_directory = project_root
 
-    def resolve(word):
+    def resolve_path_word(word):
         expanded = os.path.expanduser(expand_project_directory(word, project_root))
-        return os.path.normpath(expanded if os.path.isabs(expanded) else os.path.join(directory, expanded))
+        return os.path.normpath(expanded if os.path.isabs(expanded) else os.path.join(current_directory, expanded))
 
     heredoc_delimiter = None
     for line in command.split('\n'):
@@ -524,24 +525,24 @@ def bash_write_targets(command, project_root):
         try:
             words = shell_words(line)
         except ValueError:
-            for target in re.findall(r'(?<![0-9&<>])>>?\s*([^\s;&|<>]+)', line):
-                targets.add(resolve(target))
+            for redirection_target in re.findall(r'(?<![0-9&<>])>>?\s*([^\s;&|<>]+)', line):
+                write_targets.add(resolve_path_word(redirection_target))
             words = []
         for segment in split_segments(words):
             arguments = []
             position = 0
             while position < len(segment):
                 word = segment[position]
-                following = segment[position + 1] if position + 1 < len(segment) else None
+                following_word = segment[position + 1] if position + 1 < len(segment) else None
                 if word in OUTPUT_REDIRECTIONS:
-                    if following is not None:
-                        targets.add(resolve(following))
+                    if following_word is not None:
+                        write_targets.add(resolve_path_word(following_word))
                     position += 2
                     continue
                 if word in OTHER_REDIRECTIONS:
                     position += 2
                     continue
-                if word.isdigit() and following in OUTPUT_REDIRECTIONS | OTHER_REDIRECTIONS:
+                if word.isdigit() and following_word in OUTPUT_REDIRECTIONS | OTHER_REDIRECTIONS:
                     position += 1
                     continue
                 arguments.append(word)
@@ -551,13 +552,13 @@ def bash_write_targets(command, project_root):
             if not arguments:
                 continue
             command_name = os.path.basename(arguments[0])
-            rest = arguments[1:]
-            if command_name == 'git' and rest[:1] == ['mv']:
-                command_name, rest = 'mv', rest[1:]
+            command_arguments = arguments[1:]
+            if command_name == 'git' and command_arguments[:1] == ['mv']:
+                command_name, command_arguments = 'mv', command_arguments[1:]
             operands = []
             options = []
             skip_next = False
-            for word in rest:
+            for word in command_arguments:
                 if skip_next:
                     options.append(word)
                     skip_next = False
@@ -567,53 +568,53 @@ def bash_write_targets(command, project_root):
                 else:
                     operands.append(word)
             if command_name == 'cd':
-                directory = resolve(operands[0]) if operands else project_root
+                current_directory = resolve_path_word(operands[0]) if operands else project_root
             elif command_name in ('tee', 'touch'):
-                targets.update(resolve(operand) for operand in operands)
+                write_targets.update(resolve_path_word(operand) for operand in operands)
             elif command_name in ('cp', 'mv', 'install', 'ln') and len(operands) >= 2:
                 destination_word = operands[-1]
-                destination = resolve(destination_word)
+                destination = resolve_path_word(destination_word)
                 if destination_word.endswith('/') or os.path.isdir(destination):
-                    targets.update(os.path.join(destination, os.path.basename(source)) for source in operands[:-1])
+                    write_targets.update(os.path.join(destination, os.path.basename(source)) for source in operands[:-1])
                 else:
-                    targets.add(destination)
+                    write_targets.add(destination)
             elif command_name == 'sed' and any(option.startswith('-i') or option.startswith('--in-place') for option in options):
                 has_script_option = any(option in ('-e', '-f') or option.startswith('--expression') for option in options)
-                targets.update(resolve(operand) for operand in (operands if has_script_option else operands[1:]))
+                write_targets.update(resolve_path_word(operand) for operand in (operands if has_script_option else operands[1:]))
         if heredoc_start:
             heredoc_delimiter = heredoc_start.group(2)
-    return targets
+    return write_targets
 
 
 def paths_written_in_transcript(inventory, transcript_path):
     """这份会话记录写过哪些路径（规整过的绝对路径）。"""
-    written = set()
+    written_paths = set()
     for tool_name, tool_input in tool_uses_in_transcript(transcript_path):
         if tool_name in WRITING_TOOL_NAMES:
-            target = tool_input.get('file_path') or tool_input.get('notebook_path')
-            if isinstance(target, str) and target:
-                written.add(os.path.normpath(os.path.join(inventory.project_root, target)))
+            written_file = tool_input.get('file_path') or tool_input.get('notebook_path')
+            if isinstance(written_file, str) and written_file:
+                written_paths.add(os.path.normpath(os.path.join(inventory.project_root, written_file)))
         elif tool_name == 'Bash' and isinstance(tool_input.get('command'), str):
-            written |= bash_write_targets(tool_input['command'], inventory.project_root)
-    return written
+            written_paths |= bash_write_targets(tool_input['command'], inventory.project_root)
+    return written_paths
 
 
 def similar_declarations(path):
     declarations = []
     for line_number, line in enumerate(read_lines(path), 1):
-        match = SIMILAR_DECLARATION_RE.match(line)
-        if match:
-            declarations.append((line_number, match.group(1), match.group(2)))
+        declaration_match = SIMILAR_DECLARATION_RE.match(line)
+        if declaration_match:
+            declarations.append((line_number, declaration_match.group(1), declaration_match.group(2)))
     return declarations
 
 
 def copy_kept_declarations(path):
-    kept = []
+    copy_kept_entries = []
     for line_number, line in enumerate(read_lines(path), 1):
-        match = COPY_KEPT_RE.match(line)
-        if match:
-            kept.append((line_number, match.group(1), match.group(2)))
-    return kept
+        copy_kept_match = COPY_KEPT_RE.match(line)
+        if copy_kept_match:
+            copy_kept_entries.append((line_number, copy_kept_match.group(1), copy_kept_match.group(2)))
+    return copy_kept_entries
 
 
 def trigger_text(inventory, hook_path):
@@ -622,12 +623,12 @@ def trigger_text(inventory, hook_path):
 
 def list_inventory(inventory):
     for path in inventory.objects:
-        triggers = ''
+        trigger_description = ''
         if path in inventory.claude_hooks:
-            triggers = trigger_text(inventory, path)
+            trigger_description = trigger_text(inventory, path)
         elif path in inventory.git_hooks:
-            triggers = 'git ' + os.path.basename(path)
-        print(f'{inventory.kind_of(path)}\t{inventory.display(path)}\t{triggers}\t{description_of(path)}')
+            trigger_description = 'git ' + os.path.basename(path)
+        print(f'{inventory.kind_of(path)}\t{inventory.display(path)}\t{trigger_description}\t{description_of(path)}')
     print(f'共 {len(inventory.objects)} 份：门禁 {len(inventory.gate_stages)}、'
           f'钩子 {len(inventory.claude_hooks) + len(inventory.git_hooks)}')
     for command in inventory.unresolved_commands:
@@ -635,57 +636,57 @@ def list_inventory(inventory):
 
 
 def judge_new_object(inventory, new_path):
-    """① ② 对一份新加的门禁或钩子。返回要打印的拒绝（各是一组行），没有就是空列表。"""
-    shown = inventory.display(new_path)
+    """对一份新加的门禁或钩子判「写明比过谁」与「该点名的点全」。返回要打印的拒绝（各是一组行），没有就是空列表。"""
+    shown_path = inventory.display(new_path)
     rejections = []
     declarations = similar_declarations(new_path)
     named_paths = set()
     declaration_problems = []
-    for line_number, name, reason in declarations:
+    for line_number, named_object, reason in declarations:
         if len(reason) < MINIMUM_REASON_CHARACTERS:
-            declaration_problems.append(f'第 {line_number} 行点了「{name}」，理由不到 {MINIMUM_REASON_CHARACTERS} 个字：「{reason}」')
-        if name == '无':
+            declaration_problems.append(f'第 {line_number} 行点了「{named_object}」，理由不到 {MINIMUM_REASON_CHARACTERS} 个字：「{reason}」')
+        if named_object == '无':
             continue
-        resolved = inventory.resolve_object(name, excluding=new_path)
-        if resolved is None:
-            declaration_problems.append(f'第 {line_number} 行点名的「{name}」不是已有的门禁或钩子')
+        resolved_object = inventory.resolve_object(named_object, excluding=new_path)
+        if resolved_object is None:
+            declaration_problems.append(f'第 {line_number} 行点名的「{named_object}」不是已有的门禁或钩子')
         else:
-            named_paths.add(resolved)
+            named_paths.add(resolved_object)
     ranking = similarity_ranking(inventory, new_path)
     is_claude_hook = new_path in inventory.claude_hooks
-    required = []
+    objects_requiring_naming = []
     if is_claude_hook:
         new_triggers = inventory.triggers_of_new_hook(new_path)
         for other_hook in inventory.claude_hooks:
             if other_hook != new_path and triggers_overlap(new_triggers, inventory.registered_triggers(other_hook)):
-                required.append((other_hook, '挂在同一个触发点上：' + trigger_text(inventory, other_hook)))
-    for score, other_path, enough in ranking:
-        if enough and score >= SIMILARITY_REQUIRING_NAMING and other_path not in [path for path, _why in required]:
-            required.append((other_path, f'字面上很像：标识符重合 {score:.2f}'))
-    unnamed = [(path, why) for path, why in required if path not in named_paths]
+                objects_requiring_naming.append((other_hook, '挂在同一个触发点上：' + trigger_text(inventory, other_hook)))
+    for similarity_score, other_path, both_have_enough_identifiers in ranking:
+        if both_have_enough_identifiers and similarity_score >= SIMILARITY_REQUIRING_NAMING and other_path not in [path for path, _why in objects_requiring_naming]:
+            objects_requiring_naming.append((other_path, f'字面上很像：标识符重合 {similarity_score:.2f}'))
+    unnamed_required_objects = [(path, reason_to_name) for path, reason_to_name in objects_requiring_naming if path not in named_paths]
     if not declarations:
         rejections.append([
-            f'  ✗ {inventory.kind_of(new_path)} {shown} 是新加的，没写 gate-similar：看不出加之前对过哪些已有的',
+            f'  ✗ {inventory.kind_of(new_path)} {shown_path} 是新加的，没写 gate-similar：看不出加之前对过哪些已有的',
             '     → 怎么办：先看已有的有没有管同一件事的——能追加就写进那一份，能合并就合并，不另起一份。',
             f'               全表： python3 {inventory.display(os.path.join(PACKAGE_SCRIPTS_DIRECTORY, THIS_SCRIPT_FILE_NAME))} --list',
-            '               按字面最像的几份：' + '、'.join(f'{inventory.display(path)}（{score:.2f}）' for score, path, _enough in ranking[:3]),
+            '               按字面最像的几份：' + '、'.join(f'{inventory.display(path)}（{similarity_score:.2f}）' for similarity_score, path, _enough in ranking[:3]),
             '               确实要另起一份，在文件里逐个写： # gate-similar: <已有的文件名> <为什么不并进它>',
             f'               一个像的都没有写： # gate-similar: 无 <查过哪些>（{inventory.rule_reference()}）',
         ])
     if declaration_problems:
         rejections.append(
-            [f'  ✗ {shown} 的 gate-similar 有 {len(declaration_problems)} 处写得不对：']  # gate-lint:summary
+            [f'  ✗ {shown_path} 的 gate-similar 有 {len(declaration_problems)} 处写得不对：']  # gate-lint:summary
             + [f'       {problem}' for problem in declaration_problems]
             + ['     → 怎么办：点名写已有门禁或钩子的文件名（--list 列出来的那一列），名字后面跟为什么不并进它，'
                f'理由至少 {MINIMUM_REASON_CHARACTERS} 个字。'])
-    if unnamed:
+    if unnamed_required_objects:
         rejections.append(
-            [f'  ✗ {shown} 与这几份已有的最可能是一回事，却没点名它们：']  # gate-lint:summary
-            + [f'       {inventory.display(path)}  {why}  {description_of(path)}' for path, why in unnamed]
+            [f'  ✗ {shown_path} 与这几份已有的最可能是一回事，却没点名它们：']  # gate-lint:summary
+            + [f'       {inventory.display(path)}  {reason_to_name}  {description_of(path)}' for path, reason_to_name in unnamed_required_objects]
             + ['     → 怎么办：先看新判据能不能并进其中一份。确实要分开，逐个写 # gate-similar: <那份的文件名> <为什么不并进它>；写「无」不算。'])
     if is_claude_hook and not declared_hook_events(new_path):
         rejections.append([
-            f'  ✗ 钩子 {shown} 是新加的，没写 hook-events：看不出它要挂在哪几个事件上',
+            f'  ✗ 钩子 {shown_path} 是新加的，没写 hook-events：看不出它要挂在哪几个事件上',
             '     → 怎么办：在文件头写 # hook-events: <事件> …（例如 PreToolUse、Stop SubagentStop），'
             '每个事件都在 .claude/settings.json 里注册一次；「工具层的闸」按它核挂全没有。',
         ])
@@ -693,36 +694,36 @@ def judge_new_object(inventory, new_path):
 
 
 def find_copies(inventory, added_lines):
-    """③ 加进来的行与别的文件整段相同。返回（copy-kept 写错的、整段相同的、按 copy-kept 放行的对）。"""
-    normalized = {path: normalized_lines(path) for path in inventory.comparison_files}
-    windows = {}
-    for path, lines in normalized.items():
+    """判「不整段抄」：加进来的行与别的文件整段相同。返回（copy-kept 写错的、整段相同的、按 copy-kept 放行的对）。"""
+    normalized_lines_by_path = {path: normalized_lines(path) for path in inventory.comparison_files}
+    window_positions_by_text = {}
+    for path, lines in normalized_lines_by_path.items():
         for position in range(len(lines) - CLONE_MINIMUM_LINES + 1):
-            key = tuple(text for _line_number, text in lines[position:position + CLONE_MINIMUM_LINES])
-            windows.setdefault(key, []).append((path, position))
+            window_text = tuple(text for _line_number, text in lines[position:position + CLONE_MINIMUM_LINES])
+            window_positions_by_text.setdefault(window_text, []).append((path, position))
     kept_pairs = set()
     kept_problems = []
     for path in inventory.comparison_files:
-        for line_number, name, reason in copy_kept_declarations(path):
-            resolved = inventory.resolve_comparison_file(name, excluding=path)
-            if path in added_lines and (resolved is None or len(reason) < MINIMUM_REASON_CHARACTERS):
-                problem = (f'点名的「{name}」不是已有的门禁、钩子或共享脚本' if resolved is None
+        for line_number, named_file, reason in copy_kept_declarations(path):
+            resolved_file = inventory.resolve_comparison_file(named_file, excluding=path)
+            if path in added_lines and (resolved_file is None or len(reason) < MINIMUM_REASON_CHARACTERS):
+                problem = (f'点名的「{named_file}」不是已有的门禁、钩子或共享脚本' if resolved_file is None
                            else f'理由不到 {MINIMUM_REASON_CHARACTERS} 个字')
                 kept_problems.append(f'{inventory.display(path)} 第 {line_number} 行：{problem}')
                 continue
-            if resolved is not None:
-                kept_pairs.add(frozenset((path, resolved)))
+            if resolved_file is not None:
+                kept_pairs.add(frozenset((path, resolved_file)))
     kept_pairs_used = set()
     matched_positions = {}
     for path, line_numbers in added_lines.items():
-        lines = normalized.get(path, [])
+        lines = normalized_lines_by_path.get(path, [])
         for position in range(len(lines) - CLONE_MINIMUM_LINES + 1):
             window = lines[position:position + CLONE_MINIMUM_LINES]
             if not any(line_number in line_numbers for line_number, _text in window):
                 continue
-            key = tuple(text for _line_number, text in window)
+            window_text = tuple(text for _line_number, text in window)
             first_position_by_other = {}
-            for other_path, other_position in windows.get(key, []):
+            for other_path, other_position in window_positions_by_text.get(window_text, []):
                 if other_path != path and other_path not in first_position_by_other:
                     first_position_by_other[other_path] = other_position
             for other_path, other_position in first_position_by_other.items():
@@ -740,22 +741,22 @@ def find_copies(inventory, added_lines):
             chosen_direction[pair] = (path, other_path)
     copies = []
     for path, other_path in sorted(chosen_direction.values()):
-        runs = []
-        run_start = previous = None
+        matched_runs = []
+        run_start = previous_match = None
         for position, other_position in sorted(matched_positions[(path, other_path)]):
-            if previous is not None and position == previous[0] + 1:
-                previous = (position, other_position)
+            if previous_match is not None and position == previous_match[0] + 1:
+                previous_match = (position, other_position)
                 continue
             if run_start is not None:
-                runs.append((run_start, previous))
-            run_start = previous = (position, other_position)
-        runs.append((run_start, previous))
-        lines = normalized[path]
-        other_lines = normalized[other_path]
-        for (first_position, first_other_position), (last_position, _last_other_position) in runs:
-            copies.append(f'{inventory.display(path)}:{lines[first_position][0]}-{lines[last_position + CLONE_MINIMUM_LINES - 1][0]}'
-                          f' 与 {inventory.display(other_path)}:{other_lines[first_other_position][0]} 起'
-                          f'（连续 {last_position - first_position + CLONE_MINIMUM_LINES} 行相同）')
+                matched_runs.append((run_start, previous_match))
+            run_start = previous_match = (position, other_position)
+        matched_runs.append((run_start, previous_match))
+        lines = normalized_lines_by_path[path]
+        other_lines = normalized_lines_by_path[other_path]
+        for (run_start_position, run_start_other_position), (run_end_position, _run_end_other_position) in matched_runs:
+            copies.append(f'{inventory.display(path)}:{lines[run_start_position][0]}-{lines[run_end_position + CLONE_MINIMUM_LINES - 1][0]}'
+                          f' 与 {inventory.display(other_path)}:{other_lines[run_start_other_position][0]} 起'
+                          f'（连续 {run_end_position - run_start_position + CLONE_MINIMUM_LINES} 行相同）')
     return kept_problems, copies, kept_pairs_used
 
 
@@ -764,8 +765,8 @@ def judge(inventory, transcript_path=None):
     if run_git(project_root, 'rev-parse', '--git-dir').returncode != 0:
         print(f'  ! {project_root} 不在 git 仓里，分不出哪些是新加的——本阶段无对象可判（这不是通过）')
         return EXIT_NOTHING_TO_JUDGE
-    base = session_start_base(project_root, transcript_path) if transcript_path else resolve_diff_base(project_root)
-    added_lines_relative, new_paths_relative = changed_lines_by_path(project_root, base, inventory.judged_pathspecs)
+    diff_base = session_start_base(project_root, transcript_path) if transcript_path else resolve_diff_base(project_root)
+    added_lines_relative, new_paths_relative = changed_lines_by_path(project_root, diff_base, inventory.judged_pathspecs)
     comparison_set = set(inventory.comparison_files)
     added_lines = {}
     for relative_path, line_numbers in added_lines_relative.items():
@@ -776,12 +777,12 @@ def judge(inventory, transcript_path=None):
     left_to_other_sessions = []
     if transcript_path:
         # 收工钩子只判这个会话自己写过的：别的会话同一段时间里加的，归它们自己收工时判。
-        written = paths_written_in_transcript(inventory, transcript_path)
-        left_to_other_sessions = [path for path in new_objects if path not in written]
-        added_lines = {path: line_numbers for path, line_numbers in added_lines.items() if path in written}
-        new_objects = [path for path in new_objects if path in written]
+        written_paths = paths_written_in_transcript(inventory, transcript_path)
+        left_to_other_sessions = [path for path in new_objects if path not in written_paths]
+        added_lines = {path: line_numbers for path, line_numbers in added_lines.items() if path in written_paths}
+        new_objects = [path for path in new_objects if path in written_paths]
     if not added_lines and not new_objects:
-        scope = '这个会话' if transcript_path else f'相对 {base[:12]}，这一次'
+        scope = '这个会话' if transcript_path else f'相对 {diff_base[:12]}，这一次'
         print(f'  ! {scope}没有新加或改动门禁与钩子——无对象可判（这不是通过）')
         return EXIT_NOTHING_TO_JUDGE
 
@@ -798,7 +799,7 @@ def judge(inventory, transcript_path=None):
     if copies:
         rejections.append(
             [f'  ✗ 加进来的行里有 {len(copies)} 段与别的门禁、钩子或共享脚本整段相同：']  # gate-lint:summary
-            + [f'       {copy}' for copy in copies]
+            + [f'       {copied_run}' for copied_run in copies]
             + ['     → 怎么办：两份要做的是同一件事，就把新判据并进已有的那一份；',
                '               只是共用一段逻辑，抽成共用的库（本包的 lib.sh、项目 .claude/gate.d/ 下的 lib-*.py 这类），两边都调它。',
                '               确实要留两份，在其中一份里写 # gate-overlap:copy-kept <另一份的文件名> <为什么不抽成共用>。'])
@@ -808,7 +809,7 @@ def judge(inventory, transcript_path=None):
         return EXIT_RED
 
     new_object_names = '、'.join(inventory.display(path) for path in new_objects) or '无'
-    print(f'  ✓ 相对 {base[:12]}：新加的门禁与钩子 {len(new_objects)} 个（{new_object_names}）都写明了比过谁，'
+    print(f'  ✓ 相对 {diff_base[:12]}：新加的门禁与钩子 {len(new_objects)} 个（{new_object_names}）都写明了比过谁，'
           f'改过的 {len(added_lines)} 份脚本对照已有的 {len(inventory.comparison_files)} 份没有整段相同')
     if kept_pairs_used:
         print('    按 copy-kept 留着两份的：' + '、'.join(

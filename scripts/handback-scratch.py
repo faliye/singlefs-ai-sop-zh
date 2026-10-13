@@ -5,16 +5,16 @@
 
 钩子 claude-hooks/handback-scratch-check.sh 在交回工具（SubagentHandback）的 PreToolUse 与 SubagentStop 上调它。
 
-判的对象，三样都满足才算：
-  ① 编译目录（带 CACHEDIR.TAG 的目录：cargo 的 target 与 CARGO_TARGET_DIR 指的目录都带，别的工具按 https://bford.info/cachedir/ 打了这个标记的缓存也算）、
+判的对象，种类、位置、建的时刻三样都满足才算：
+  种类：编译目录（带 CACHEDIR.TAG 的目录：cargo 的 target 与 CARGO_TARGET_DIR 指的目录都带，别的工具按 https://bford.info/cachedir/ 打了这个标记的缓存也算）、
      工作树（.git 是文件：git worktree add 建的）、仓副本（.git 是目录：clone、连 .git 一起拷的仓；
      或者不带 .git 拷出来、在里面编过的——直接含着名为 target 的编译目录）；
-  ② 在临时目录里（/tmp、/var/tmp、/dev/shm、$TMPDIR 之下），不在项目根之内——项目自己的 target 与 Claude Code 建在项目里的 worktree 归主 agent 管；
-  ③ 在这个子 agent 自己的某次工具调用还没结束时建的：目录的创建时间（statx 的 btime）落在那次调用的时间窗里
+  位置：在临时目录里（/tmp、/var/tmp、/dev/shm、$TMPDIR 之下），不在项目根之内——项目自己的 target 与 Claude Code 建在项目里的 worktree 归主 agent 管；
+  建的时刻：在这个子 agent 自己的某次工具调用还没结束时建的：目录的创建时间（statx 的 btime）落在那次调用的时间窗里
      （发起那条记录到结果那条记录；后台跑的到它自己的完成通知，没有通知的到它之后第一次送达的交回，都没有的到现在；两头各放 WINDOW_SLACK_SECONDS）。
      派子 agent 的调用（DISPATCH_TOOL_NAMES）不开时间窗：派出去的那个建的归它自己的 SubagentStop。
      开工之前就在的、它两次调用之间别人建的，都不算它的。
-认哪些是它的：它的工具调用里提到过那个目录本身，或那个目录里面的路径；它自己建的目录（③）被提到过，它下一级的也算。
+认哪些是它的：它的工具调用里提到过那个目录本身，或那个目录里面的路径；它自己建的目录（在它某次调用的时间窗里建的）被提到过，它下一级的也算。
   「提到」：工具输入里的绝对路径（写进文件的内容与说明文字不算，那是在说它、不是在那里干活）；
   Bash 命令里的每个词（NAME=值、--选项=值 取值那一半）跟着同一条命令里的 cd、pushd 走、按当时的目录解析，-C <目录> 管它那一段；
   喂给解释器的 heredoc（python3 - <<EOF 这类）正文里的绝对路径；命令里有 mktemp 时，它的输出里的绝对路径。磁盘上现在还在的才算。
@@ -112,12 +112,12 @@ def resolve_word(word, directory):
 
 
 def existing_absolute_paths(text, directory):
-    found = set()
-    for match in ABSOLUTE_PATH_RE.findall(text):
-        path = resolve_word(match, directory)
+    existing_paths = set()
+    for path_text in ABSOLUTE_PATH_RE.findall(text):
+        path = resolve_word(path_text, directory)
         if path is not None and os.path.lexists(path):
-            found.add(path)
-    return found
+            existing_paths.add(path)
+    return existing_paths
 
 
 def split_heredocs(command):
@@ -157,8 +157,8 @@ def paths_in_bash_command(command, start_directory):
         for position, word in enumerate(words):
             if position > 0 and words[position - 1] == '-C':
                 segment_directory = resolve_word(word, directory) or directory
-            for piece in word.split('='):
-                path = resolve_word(piece, segment_directory)
+            for equals_separated_part in word.split('='):
+                path = resolve_word(equals_separated_part, segment_directory)
                 if path is not None and os.path.lexists(path):
                     mentioned.add(path)
     return mentioned
@@ -169,12 +169,12 @@ def strings_in(value, skipped_field_names):
     if isinstance(value, str):
         yield value
     elif isinstance(value, dict):
-        for field_name, inner in value.items():
+        for field_name, inner_value in value.items():
             if field_name not in skipped_field_names:
-                yield from strings_in(inner, skipped_field_names)
+                yield from strings_in(inner_value, skipped_field_names)
     elif isinstance(value, list):
-        for inner in value:
-            yield from strings_in(inner, skipped_field_names)
+        for inner_value in value:
+            yield from strings_in(inner_value, skipped_field_names)
 
 
 def paths_mentioned_in_calls(calls, project_root):
@@ -212,8 +212,8 @@ def is_shared_directory(path, roots):
         if path in (root, claude_directory):
             return True
         if is_strictly_under(path, claude_directory):
-            parts = os.path.relpath(path, claude_directory).split(os.sep)
-            if parts[0].startswith('-') and (len(parts) <= 2 or (len(parts) == 3 and parts[2] == 'scratchpad')):
+            components_below_claude_directory = os.path.relpath(path, claude_directory).split(os.sep)
+            if components_below_claude_directory[0].startswith('-') and (len(components_below_claude_directory) <= 2 or (len(components_below_claude_directory) == 3 and components_below_claude_directory[2] == 'scratchpad')):
                 return True
     return False
 
@@ -249,17 +249,17 @@ def birth_times(paths):
     if not ordered:
         return {}
     # 每条带上路径名再配对：中途被删掉的那个 stat 不输出，按位置配会让后面的全错一位
-    completed = subprocess.run(['stat', '--printf=%.9W\\t%n\\0', '--', *ordered],
+    stat_run = subprocess.run(['stat', '--printf=%.9W\\t%n\\0', '--', *ordered],
                                capture_output=True, text=True, check=False)
-    reported = {}
-    for record in completed.stdout.split('\0'):
+    birth_time_reported_by_stat = {}
+    for record in stat_run.stdout.split('\0'):
         seconds_text, separator, path = record.partition('\t')
         if separator:
             try:
-                reported[path] = float(seconds_text)
+                birth_time_reported_by_stat[path] = float(seconds_text)
             except ValueError:
                 pass
-    return {path: (reported[path] if reported.get(path, 0.0) > 0 else None) for path in ordered}
+    return {path: (birth_time_reported_by_stat[path] if birth_time_reported_by_stat.get(path, 0.0) > 0 else None) for path in ordered}
 
 
 def delivered_handbacks(calls):
@@ -310,11 +310,11 @@ def candidate_directories(mentioned, project_root, roots, windows):
         if not is_within(parent_birth_times.get(parent), windows):
             continue
         try:
-            names = os.listdir(parent)
+            child_names = os.listdir(parent)
         except OSError:
-            names = []
-        for name in names:
-            child = os.path.join(parent, name)
+            child_names = []
+        for child_name in child_names:
+            child = os.path.join(parent, child_name)
             if kind_of(child):
                 candidates.add(child)
     return candidates
@@ -329,14 +329,14 @@ def explains_path(text, path):
 
 def explanations(transcript_path, calls, explained_after, pending_handback_text, now):
     """（时刻, 文字）：送达了的交回；这一次要交回的那份；拦下之后回复里的文字与工具调用的输入。"""
-    found = [(call['started_at'], '\n'.join(strings_in(call['input'], set()))) for call in delivered_handbacks(calls)]
+    explanation_entries = [(call['started_at'], '\n'.join(strings_in(call['input'], set()))) for call in delivered_handbacks(calls)]
     if explained_after is not None:
-        found.extend((call['started_at'], '\n'.join(strings_in(call['input'], set()))) for call in calls
+        explanation_entries.extend((call['started_at'], '\n'.join(strings_in(call['input'], set()))) for call in calls
                      if call['started_at'] > explained_after and call['name'] not in HANDBACK_TOOL_NAMES)
-        found.extend((at, text) for at, text in SESSION_TRANSCRIPT.assistant_texts(transcript_path) if at > explained_after)
+        explanation_entries.extend((written_at, text) for written_at, text in SESSION_TRANSCRIPT.assistant_texts(transcript_path) if written_at > explained_after)
     if pending_handback_text is not None:
-        found.append((now, pending_handback_text))
-    return found
+        explanation_entries.append((now, pending_handback_text))
+    return explanation_entries
 
 
 def count_tool_use_lines(transcript_path):
@@ -357,29 +357,29 @@ def judge(transcript_path, project_root, explained_after, pending_handback_text)
     roots = scratch_roots()
     mentioned = paths_mentioned_in_calls(calls, project_root)
     candidates = candidate_directories(mentioned, project_root, roots, windows)
-    created = birth_times(candidates)
-    unknown_birth = sorted(path for path, seconds in created.items() if seconds is None)
-    own = sorted(path for path, seconds in created.items() if is_within(seconds, windows))
-    left = [path for path in own if not any(is_strictly_under(path, outer) for outer in own)]
-    if left:
+    birth_time_by_path = birth_times(candidates)
+    paths_without_birth_time = sorted(path for path, seconds in birth_time_by_path.items() if seconds is None)
+    own_directories = sorted(path for path, seconds in birth_time_by_path.items() if is_within(seconds, windows))
+    remaining_directories = [path for path in own_directories if not any(is_strictly_under(path, outer_path) for outer_path in own_directories)]
+    if remaining_directories:
         # 说明要写在它建好之后：同一个路径删了又重建，之前那句说明管不到新建的这一份
         explanation_entries = explanations(transcript_path, calls, explained_after, pending_handback_text, now)
-        left = [path for path in left
-                if not any(at >= created[path] and explains_path(text, path) for at, text in explanation_entries)]
+        remaining_directories = [path for path in remaining_directories
+                                 if not any(written_at >= birth_time_by_path[path] and explains_path(text, path) for written_at, text in explanation_entries)]
 
-    for path in left:
+    for path in remaining_directories:
         print(f'{kind_of(path)}\t{path}')
     cannot_judge = []
     if unreadable_count:
         cannot_judge.append(f'有 {unreadable_count} 次工具调用认不出（时间戳认不出，或缺编号与输入），它们建的东西分不出来')
     elif tool_use_line_count and not calls:
         cannot_judge.append(f'会话记录里有 {tool_use_line_count} 行带 tool_use，一次工具调用都没认出来：记录的格式可能变了')
-    if unknown_birth:
-        cannot_judge.append(f'这些目录取不到创建时间，分不出是不是它建的：{" ".join(unknown_birth)}')
+    if paths_without_birth_time:
+        cannot_judge.append(f'这些目录取不到创建时间，分不出是不是它建的：{" ".join(paths_without_birth_time)}')
     for problem in cannot_judge:
         print(f'  ✗ {problem}', file=sys.stderr)
         print('     → 怎么办：这一部分没判。自己看一眼是不是这个子 agent 建的，是就照删。', file=sys.stderr)
-    if left:
+    if remaining_directories:
         return EXIT_SOME_LEFT
     return EXIT_CANNOT_JUDGE if cannot_judge else EXIT_NONE_LEFT
 
@@ -395,7 +395,7 @@ def read_pending_handback():
 
 
 def main():
-    positional = []
+    positional_arguments = []
     explained_after = None
     pending_handback_text = None
     arguments = iter(sys.argv[1:])
@@ -409,12 +409,13 @@ def main():
         elif argument == '--pending-handback':
             pending_handback_text = read_pending_handback()
         else:
-            positional.append(argument)
-    if len(positional) != 2:
+            positional_arguments.append(argument)
+    if len(positional_arguments) != 2:
         print('  ✗ 参数不对')
         print('     → 怎么办：用法 handback-scratch.py <子 agent 的会话记录.jsonl> <项目根> [--explained-after <epoch 秒>] [--pending-handback]')
         return EXIT_USAGE
-    return judge(positional[0], os.path.realpath(positional[1]), explained_after, pending_handback_text)
+    transcript_path, project_root = positional_arguments
+    return judge(transcript_path, os.path.realpath(project_root), explained_after, pending_handback_text)
 
 
 if __name__ == '__main__':

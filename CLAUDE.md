@@ -5,7 +5,7 @@
 管的是**项目怎么跟 AI 协作**，不管文件系统怎么设计。
 只有一个使用者。在这个仓里干活，同样受这些规则管。
 
-改规范本体**必须同时抬 `VERSION`**，否则项目那边的门禁会报版本对不上。
+改规范本体**必须同时抬 `VERSION`**。
 发版按周合批：规则与脚本的改动先在工作区攒着，一周合一版；误报、误判的修正累积到那一版一起发；使用者项目随发版同步一次副本。
 **哪些路径算「规范本体」，以 `scripts/version-discipline.sh` 里的 `GOVERNED` 为准**，
 清单只有那一处，这里不再抄一份。
@@ -32,7 +32,7 @@
 
 ## 规则（始终生效）
 
-**解释和论证在 `rules/` 里是多余的。** 规则只写判据、步骤、射程与例外、默认做法、指向（`rules/rules-discipline.md` 第 1、2 条）。
+**解释和论证在 `rules/` 里是多余的。** 规则只写判据、步骤、射程与例外、默认做法、指向（`rules/rules-discipline.md` 第 1 条「正文只写四样」、第 2 条「判据留下，论证搬走」）。
 
 @rules/engineering-philosophy.md
 @rules/sop-first.md
@@ -55,8 +55,7 @@
 ## 分工判据
 
 **这套 SOP 是给它那一个使用者做的，不假设别的项目也能用。**
-所以判据不是「别的项目会不会也需要」——根本没有别的项目可看，
-这个问题谁都能答「会」，答完什么都往上游塞。
+判据不是「别的项目会不会也需要」。
 
 一条内容该放哪，看它管的是什么：
 
@@ -66,8 +65,7 @@
   → 放项目本地。设计决策进 `kb/decisions.md`，不变量进 `kb/invariants.md`，
   **项目自己的规则进 `.claude/rules/`**，项目专用脚本留在 `.claude/scripts/`。
 
-**拿不准就放项目本地。** 一条不该上游的规矩上了游，此后每一轮工作都要绕开它；
-放项目本地放错了，改回来只动一个文件。
+**拿不准就放项目本地。**
 
 ## 接法
 
@@ -75,10 +73,10 @@
 
 | 层 | 接法 |
 |---|---|
-| rules | 项目 `CLAUDE.md` 用 `@.claude/singlefs-ai-sop/rules/x.md` 引用，项目里不留副本 |
-| 项目本地规则 | 放 `.claude/rules/x.md`，项目 `CLAUDE.md` 里用 `@.claude/rules/x.md` 引用。不上游 |
+| rules | 项目 `CLAUDE.md` 用 `@.claude/singlefs-ai-sop/rules/<名>.md` 引用，项目里不留副本 |
+| 项目本地规则 | 放 `.claude/rules/<名>.md`，项目 `CLAUDE.md` 里用 `@.claude/rules/<名>.md` 引用。不上游 |
 | skills | 项目 `.claude/skills/<名>/SKILL.md` 是**桩**：frontmatter + 指向共享正文 |
 | agents | 项目 `.claude/agents/<名>.md` 是**桩**：frontmatter + 指向共享正文。约定见 `agents/INDEX.md` |
-| scripts | 项目 `.claude/scripts/x.sh` 是**包装**：设好环境后 `exec` 共享脚本 |
+| scripts | 项目 `.claude/scripts/<名>.sh` 是**包装**：设好环境后 `exec` 共享脚本 |
 
-桩和包装里不写正文，也不写逻辑。正文只该有一处，写进桩里就多出第二处，两处早晚说不同的话。
+桩和包装里不写正文，也不写逻辑。

@@ -10,7 +10,7 @@
     relay-timing-lint.py --selftest         # 自证：内嵌红绿样本逐个判、钉死统计数；再另起一个子进程在弱判据下跑自证，它必须判红
 
 为什么：转打一次会阻塞（虚机里标准输出是串口，几毫秒），子进程写管道不被挡，行的时间戳里就混进前面几行的打印积压。
-实测：只隔几微秒计算的几行，时间戳跨了 20 多 ms；外层算出的挂钟小于子进程自己计的时间。
+实测：只隔几微秒计算的几行，时间戳跨了 20 多毫秒；外层算出的挂钟小于子进程自己计的时间。
 
 判据（Rust，先把字符串、字符字面量与注释抹成空白，再按花括号配对取循环体）：
   ① 这个循环在读子进程输出：`for … in <表达式>` 的表达式或 `while` 的条件里有 `.lines()`、`.read_line(`、`.read_until(`，
@@ -27,7 +27,7 @@
 
 够不着的写法（不判，不等于通过）：
   - 输出藏在自己写的函数里：循环体只调 `relay_line(...)`，打印在那个函数里面；
-  - 子进程输出跨文件传进另一个函数，或者传了两层以上（F 传给 G、G 再传给 H），而最里面那个函数自己没有子进程标记；
+  - 子进程输出跨文件传进另一个函数，或者传了两层以上（起子进程的函数传给辅助函数、辅助函数再传给下一层），而最里面那个函数自己没有子进程标记；
     输出流不经 `let` 而经结构体字段、闭包捕获或 `if let` / `match` 绑定传出去的，也认不出；
   - 读线程把行经通道送出、收的那一侧一边取时间一边打印：收的一侧不认作读子进程输出；
   - `loop` 套着内层循环时，外层与内层可能各报一次；宏展开出来的循环；shell 装置（`while read` 配 `date`）不查。
@@ -53,7 +53,7 @@ import re
 import subprocess
 import sys
 import tempfile
-from typing import Optional
+from typing import NamedTuple, Optional
 # 开跑之前先判准入与运行条件（rules/preflight-discipline.md）；不写 __pycache__：门禁跑到一半冒出一个未跟踪的目录，「工作区跑的过程中没变」就对不上
 sys.dont_write_bytecode = True
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
@@ -64,21 +64,21 @@ SCANNED_TOP_DIRECTORIES = ()
 SKIP_DIRECTORIES = {".git", "node_modules", "target", "fixtures"}
 
 
-def _frozen_evidence_directories(root="."):
+def _frozen_evidence_directories(repository_root="."):
     """原样保存的证据不扫：门禁不许逼人回去改原件，那只会把证据链弄断或让检查被绕过
     （rules/evidence-discipline.md「门禁也得绕开这批目录」）。
     清单读项目根的 .claude/doc-lint-exclude，与 doc-lint 用的是同一份，不另抄一份。
     """
-    out = []
+    registered_directories = []
     try:
-        with open(os.path.join(str(root), ".claude/doc-lint-exclude"), encoding="utf-8") as handle:
+        with open(os.path.join(str(repository_root), ".claude/doc-lint-exclude"), encoding="utf-8") as handle:
             for line in handle:
                 line = line.split("#")[0].strip()
                 if line:
-                    out.append(line.rstrip("/"))
+                    registered_directories.append(line.rstrip("/"))
     except OSError:
         pass
-    return tuple(out)
+    return tuple(registered_directories)
 
 
 FROZEN_EVIDENCE_DIRECTORIES = ()
@@ -138,6 +138,12 @@ class ScanResult:
     child_output_loops: list
 
 
+class FunctionSpan(NamedTuple):
+    name: str
+    start_offset: int
+    closing_brace_offset: int
+
+
 def weak_mode_enabled() -> bool:
     return os.environ.get(WEAK_MODE_ENVIRONMENT_VARIABLE) == "1"
 
@@ -160,65 +166,65 @@ def previous_is_identifier_character(source: str, position: int) -> bool:
 def mask_rust_literals_and_comments(source: str) -> str:
     """字符串、字符字面量与注释抹成空白、换行留着：偏移与行号不变，字面量里的括号与关键字不会带偏配对与匹配。"""
     characters = list(source)
-    length = len(source)
+    source_length = len(source)
 
-    def blank(start: int, end: int) -> None:
-        for index in range(start, min(end, length)):
-            if characters[index] != "\n":
-                characters[index] = " "
+    def blank_out_range(start: int, end: int) -> None:
+        for character_index in range(start, min(end, source_length)):
+            if characters[character_index] != "\n":
+                characters[character_index] = " "
 
     position = 0
-    while position < length:
-        current = source[position]
-        following = source[position + 1] if position + 1 < length else ""
-        if current == "/" and following == "/":
+    while position < source_length:
+        current_character = source[position]
+        following_character = source[position + 1] if position + 1 < source_length else ""
+        if current_character == "/" and following_character == "/":
             end = source.find("\n", position)
-            end = length if end == -1 else end
-            blank(position, end)
+            end = source_length if end == -1 else end
+            blank_out_range(position, end)
             position = end
             continue
-        if current == "/" and following == "*":
-            depth = 1
+        if current_character == "/" and following_character == "*":
+            comment_nesting_depth = 1
             cursor = position + 2
-            while cursor < length and depth > 0:
+            while cursor < source_length and comment_nesting_depth > 0:
                 if source.startswith("/*", cursor):
-                    depth += 1
+                    comment_nesting_depth += 1
                     cursor += 2
                 elif source.startswith("*/", cursor):
-                    depth -= 1
+                    comment_nesting_depth -= 1
                     cursor += 2
                 else:
                     cursor += 1
-            blank(position, cursor)
+            blank_out_range(position, cursor)
             position = cursor
             continue
         raw_string_match = RUST_RAW_STRING_START.match(source, position)
         if raw_string_match and not previous_is_identifier_character(source, position):
-            terminator = '"' + raw_string_match.group(1)
-            end = source.find(terminator, raw_string_match.end())
-            end = length if end == -1 else end + len(terminator)
-            blank(position, end)
+            raw_string_terminator = '"' + raw_string_match.group(1)
+            end = source.find(raw_string_terminator, raw_string_match.end())
+            end = source_length if end == -1 else end + len(raw_string_terminator)
+            blank_out_range(position, end)
             position = end
             continue
-        starts_byte_literal = current == "b" and not previous_is_identifier_character(source, position)
-        if current == '"' or (starts_byte_literal and following == '"'):
-            cursor = position + (2 if current == "b" else 1)
-            while cursor < length and source[cursor] != '"':
+        starts_byte_literal = current_character == "b" and not previous_is_identifier_character(source, position)
+        if current_character == '"' or (starts_byte_literal and following_character == '"'):
+            cursor = position + (2 if current_character == "b" else 1)
+            while cursor < source_length and source[cursor] != '"':
                 cursor += 2 if source[cursor] == "\\" else 1
             end = cursor + 1
-            blank(position, end)
+            blank_out_range(position, end)
             position = end
             continue
-        if current == "'" or (starts_byte_literal and following == "'"):
-            content_start = position + (1 if current == "'" else 2)
-            if content_start < length and source[content_start] == "\\":
-                closing = source.find("'", content_start + 2)
-                end = length if closing == -1 else closing + 1
-                blank(position, end)
+        if current_character == "'" or (starts_byte_literal and following_character == "'"):
+            content_start = position + (1 if current_character == "'" else 2)
+            if content_start < source_length and source[content_start] == "\\":
+                closing_quote_index = source.find("'", content_start + 2)
+                end = source_length if closing_quote_index == -1 else closing_quote_index + 1
+                blank_out_range(position, end)
                 position = end
                 continue
-            if content_start + 1 < length and source[content_start + 1] == "'":
-                blank(position, content_start + 2)
+            if content_start + 1 < source_length and source[content_start + 1] == "'":
+                blank_out_range(position, content_start + 2)
                 position = content_start + 2
                 continue
             position += 1  # 生命周期或循环标签，不是字面量
@@ -230,8 +236,8 @@ def mask_rust_literals_and_comments(source: str) -> str:
 def find_block_open(masked: str, start: int) -> Optional[int]:
     """从 start 往后找圆括号、方括号之外的第一个 `{`；先碰到 `;` 说明没有块（例如只有声明的 fn），返回 None。"""
     bracket_depth = 0
-    for index in range(start, len(masked)):
-        character = masked[index]
+    for character_index in range(start, len(masked)):
+        character = masked[character_index]
         if character in "([":
             bracket_depth += 1
         elif character in ")]":
@@ -239,63 +245,63 @@ def find_block_open(masked: str, start: int) -> Optional[int]:
         elif bracket_depth == 0 and character == ";":
             return None
         elif bracket_depth == 0 and character == "{":
-            return index
+            return character_index
     return None
 
 
 def matching_close_brace(masked: str, open_index: int) -> int:
-    depth = 0
-    for index in range(open_index, len(masked)):
-        if masked[index] == "{":
-            depth += 1
-        elif masked[index] == "}":
-            depth -= 1
-            if depth == 0:
-                return index
+    brace_depth = 0
+    for character_index in range(open_index, len(masked)):
+        if masked[character_index] == "{":
+            brace_depth += 1
+        elif masked[character_index] == "}":
+            brace_depth -= 1
+            if brace_depth == 0:
+                return character_index
     return len(masked) - 1
 
 
-def collapse_whitespace(text: str, limit: int = 140) -> str:
+def collapse_whitespace(text: str, character_limit: int = 140) -> str:
     collapsed = " ".join(text.split())
-    return collapsed if len(collapsed) <= limit else collapsed[: limit - 1] + "…"
+    return collapsed if len(collapsed) <= character_limit else collapsed[: character_limit - 1] + "…"
 
 
 def rust_lines_bound_names(function_text: str) -> set:
-    names = set()
+    bound_names = set()
     for binding in RUST_LET_BINDING.finditer(function_text):
         initializer = binding.group(2)
         if RUST_LINES_ITERATOR.search(initializer) and not RUST_ITERATOR_CONSUMER.search(initializer):
-            names.add(binding.group(1))
-    return names
+            bound_names.add(binding.group(1))
+    return bound_names
 
 
-def mentions_any_name(text: str, names: set) -> Optional[str]:
-    for name in sorted(names):
+def mentions_any_name(text: str, candidate_names: set) -> Optional[str]:
+    for name in sorted(candidate_names):
         if re.search(r"\b" + re.escape(name) + r"\b", text):
             return name
     return None
 
 
 def matching_close_parenthesis(masked: str, open_index: int) -> int:
-    depth = 0
-    for index in range(open_index, len(masked)):
-        if masked[index] == "(":
-            depth += 1
-        elif masked[index] == ")":
-            depth -= 1
-            if depth == 0:
-                return index
+    parenthesis_depth = 0
+    for character_index in range(open_index, len(masked)):
+        if masked[character_index] == "(":
+            parenthesis_depth += 1
+        elif masked[character_index] == ")":
+            parenthesis_depth -= 1
+            if parenthesis_depth == 0:
+                return character_index
     return len(masked) - 1
 
 
 def functions_receiving_child_output(masked: str, function_spans: list) -> dict:
     """同一文件里、从带子进程标记的函数那儿接过子进程输出的函数：名字 → 传进来的那个函数名。只传一层。
 
-    认法：带标记的函数 F 里，调用同文件另一个函数 G 的实参里出现子进程标记，或出现 F 里经 `let` 从子进程输出流派生出来的名字
+    认法：带标记的调用方函数里，调用同文件另一个函数时的实参里出现子进程标记，或出现调用方里经 `let` 从子进程输出流派生出来的名字
     （`let child_output = child.stdout.take()…`、再 `let reader = BufReader::new(child_output)`，两个都算）。
     `Stdio::piped()` 绑的是子进程句柄不是输出流，不从它派生，免得 `let status = child.wait()` 之类也被算进来。
     """
-    function_names = {name for name, _start, _end in function_spans}
+    function_names = {function_span.name for function_span in function_spans}
     receivers = {}
     for caller_name, caller_start, caller_end in function_spans:
         caller_text = masked[caller_start:caller_end + 1]
@@ -303,14 +309,14 @@ def functions_receiving_child_output(masked: str, function_spans: list) -> dict:
             continue
         bindings = [(binding.group(1), binding.group(2)) for binding in RUST_LET_BINDING.finditer(caller_text)]
         child_stream_names = set()
-        grew = True
-        while grew:  # 至多每个 let 加一次名字，轮数不超过 let 的个数加一
-            grew = False
+        child_stream_names_grew = True
+        while child_stream_names_grew:  # 至多每个 let 加一次名字，轮数不超过 let 的个数加一
+            child_stream_names_grew = False
             for bound_name, initializer in bindings:
                 if bound_name not in child_stream_names and (
                         RUST_CHILD_STREAM_MARKER.search(initializer) or mentions_any_name(initializer, child_stream_names)):
                     child_stream_names.add(bound_name)
-                    grew = True
+                    child_stream_names_grew = True
         for callee_name in sorted(function_names - {caller_name}):
             for call_match in re.finditer(r"\b" + re.escape(callee_name) + r"\s*(?:::\s*<[^()]*>\s*)?\(", caller_text):
                 open_parenthesis = call_match.end() - 1
@@ -327,7 +333,7 @@ def analyze_rust(relative_path: str, source: str) -> list:
     for function_match in RUST_FUNCTION_KEYWORD.finditer(masked):
         open_index = find_block_open(masked, function_match.end())
         if open_index is not None:
-            function_spans.append((function_match.group(1), function_match.start(), matching_close_brace(masked, open_index)))
+            function_spans.append(FunctionSpan(function_match.group(1), function_match.start(), matching_close_brace(masked, open_index)))
     receivers = functions_receiving_child_output(masked, function_spans)
     child_output_loops = []
     for loop_match in RUST_LOOP_KEYWORD.finditer(masked):
@@ -339,9 +345,10 @@ def analyze_rust(relative_path: str, source: str) -> list:
         header = masked[loop_match.end():open_index]
         if keyword == "loop" and header.strip():
             continue
-        enclosing_spans = [span for span in function_spans if span[1] <= keyword_start <= span[2]]
+        enclosing_spans = [function_span for function_span in function_spans
+                           if function_span.start_offset <= keyword_start <= function_span.closing_brace_offset]
         if enclosing_spans:
-            innermost_name, innermost_start, innermost_end = max(enclosing_spans, key=lambda span: span[1])
+            innermost_name, innermost_start, innermost_end = max(enclosing_spans, key=lambda function_span: function_span.start_offset)
             function_text = masked[innermost_start:innermost_end + 1]
         else:
             innermost_name = None
@@ -365,9 +372,9 @@ def analyze_rust(relative_path: str, source: str) -> list:
             continue
         if not RUST_CHILD_PROCESS_MARKER.search(function_text) and innermost_name not in receivers:
             continue
-        region = masked[keyword_start:close_index + 1]
-        timing_match = RUST_TIMING_CALL.search(region)
-        output_match = RUST_OUTPUT_CALL.search(region)
+        loop_text = masked[keyword_start:close_index + 1]
+        timing_match = RUST_TIMING_CALL.search(loop_text)
+        output_match = RUST_OUTPUT_CALL.search(loop_text)
         line_number = masked.count("\n", 0, keyword_start) + 1
         passed_from = receivers.get(innermost_name) if not RUST_CHILD_PROCESS_MARKER.search(function_text) else None
         loop_head = collapse_whitespace(source[keyword_start:open_index + 1])
@@ -396,40 +403,40 @@ def is_process_readline_call(node: ast.AST) -> bool:
             and contains_process_stream(node.func.value))
 
 
-def python_timing_label(call: ast.Call) -> Optional[str]:
-    function = call.func
-    if isinstance(function, ast.Attribute) and isinstance(function.value, ast.Name) and function.value.id == "time" \
-            and function.attr in PYTHON_TIMING_ATTRIBUTES:
-        return f"time.{function.attr}("
-    if isinstance(function, ast.Name) and function.id in PYTHON_TIMING_BARE_NAMES:
-        return f"{function.id}("
+def python_timing_label(call_node: ast.Call) -> Optional[str]:
+    callee = call_node.func
+    if isinstance(callee, ast.Attribute) and isinstance(callee.value, ast.Name) and callee.value.id == "time" \
+            and callee.attr in PYTHON_TIMING_ATTRIBUTES:
+        return f"time.{callee.attr}("
+    if isinstance(callee, ast.Name) and callee.id in PYTHON_TIMING_BARE_NAMES:
+        return f"{callee.id}("
     return None
 
 
-def python_output_label(call: ast.Call) -> Optional[str]:
-    function = call.func
-    if isinstance(function, ast.Name) and function.id == "print":
+def python_output_label(call_node: ast.Call) -> Optional[str]:
+    callee = call_node.func
+    if isinstance(callee, ast.Name) and callee.id == "print":
         return "print("
-    if isinstance(function, ast.Attribute) and function.attr in PYTHON_OUTPUT_ATTRIBUTES:
-        return f".{function.attr}("
+    if isinstance(callee, ast.Attribute) and callee.attr in PYTHON_OUTPUT_ATTRIBUTES:
+        return f".{callee.attr}("
     return None
 
 
-def first_call_label(roots: list, labeler) -> Optional[str]:
-    for root in roots:
-        for child in ast.walk(root):
-            if isinstance(child, ast.Call):
-                label = labeler(child)
+def first_call_label(searched_nodes: list, label_of_call) -> Optional[str]:
+    for searched_node in searched_nodes:
+        for descendant in ast.walk(searched_node):
+            if isinstance(descendant, ast.Call):
+                label = label_of_call(descendant)
                 if label is not None:
                     return label
     return None
 
 
 def analyze_python(relative_path: str, source: str) -> list:
-    tree = ast.parse(source)
+    syntax_tree = ast.parse(source)
     raw_lines = source.split("\n")
     child_output_loops = []
-    for node in ast.walk(tree):
+    for node in ast.walk(syntax_tree):
         if isinstance(node, (ast.For, ast.AsyncFor)) and contains_process_stream(node.iter):
             scanned_roots = [node.iter] + list(node.body)
         elif isinstance(node, ast.While) and any(is_process_readline_call(child) for child in ast.walk(node)):
@@ -448,42 +455,42 @@ def analyze_python(relative_path: str, source: str) -> list:
     return child_output_loops
 
 
-def scan(root: pathlib.Path) -> ScanResult:
+def scan(repository_root: pathlib.Path) -> ScanResult:
     scanned_file_count = 0
     # 冻结证据的清单按**被扫那个仓**现算：射程与排除表都不写死在这里。
-    frozen_directories = _frozen_evidence_directories(root)
+    frozen_directories = _frozen_evidence_directories(repository_root)
     frozen_file_counts = {directory: 0 for directory in frozen_directories}
     unparsable_files = []
     child_output_loops = []
     top_directories = SCANNED_TOP_DIRECTORIES or tuple(
-        name for name in sorted(os.listdir(root))
-        if (root / name).is_dir() and name not in SKIP_DIRECTORIES and not name.startswith(".")
+        name for name in sorted(os.listdir(repository_root))
+        if (repository_root / name).is_dir() and name not in SKIP_DIRECTORIES and not name.startswith(".")
     ) + tuple(
-        name for name in sorted(os.listdir(root))
-        if (root / name).is_dir() and name.startswith(".claude")
+        name for name in sorted(os.listdir(repository_root))
+        if (repository_root / name).is_dir() and name.startswith(".claude")
     )
     for top_directory in top_directories:
-        for directory, subdirectories, files in os.walk(root / top_directory):
+        for directory, subdirectories, file_names in os.walk(repository_root / top_directory):
             subdirectories[:] = sorted(name for name in subdirectories if name not in SKIPPED_DIRECTORY_NAMES)
-            for file_name in sorted(files):
+            for file_name in sorted(file_names):
                 if not file_name.endswith(SCANNED_SUFFIXES):
                     continue
-                relative_path = (pathlib.Path(directory) / file_name).relative_to(root).as_posix()
-                frozen_directory = next((frozen for frozen in frozen_directories if relative_path.startswith(frozen + "/")), None)
+                relative_path = (pathlib.Path(directory) / file_name).relative_to(repository_root).as_posix()
+                frozen_directory = next((frozen_directory_candidate for frozen_directory_candidate in frozen_directories if relative_path.startswith(frozen_directory_candidate + "/")), None)
                 if frozen_directory is not None:
                     frozen_file_counts[frozen_directory] += 1
                     continue
                 try:
-                    source = (root / relative_path).read_text(encoding="utf-8")
+                    source = (repository_root / relative_path).read_text(encoding="utf-8")
                     if file_name.endswith(".rs"):
-                        loops = analyze_rust(relative_path, source)
+                        file_child_output_loops = analyze_rust(relative_path, source)
                     else:
-                        loops = analyze_python(relative_path, source)
+                        file_child_output_loops = analyze_python(relative_path, source)
                 except (UnicodeDecodeError, OSError, SyntaxError, ValueError):
                     unparsable_files.append(relative_path)
                     continue
                 scanned_file_count += 1
-                child_output_loops.extend(loops)
+                child_output_loops.extend(file_child_output_loops)
     return ScanResult(scanned_file_count, frozen_file_counts, unparsable_files, child_output_loops)
 
 
@@ -493,39 +500,39 @@ def is_hit(child_output_loop: ChildOutputLoop) -> bool:
     return child_output_loop.timing_call is not None and child_output_loop.output_call is not None
 
 
-def run(root: pathlib.Path) -> int:
-    result = scan(root)
+def run(repository_root: pathlib.Path) -> int:
+    scan_result = scan(repository_root)
     if weak_mode_enabled():
         print(f"  ! {WEAK_MODE_ENVIRONMENT_VARIABLE}=1：弱判据，只看取时间、不看输出调用（自证专用，门禁里不许设）")
-    hits = [loop for loop in result.child_output_loops if is_hit(loop)]
-    exempted = [loop for loop in hits if loop.allow_reason]
-    unexempted = [loop for loop in hits if loop.allow_reason is None]
-    empty_reasons = [loop for loop in result.child_output_loops if loop.allow_reason == ""]
-    frozen_text = "、".join(f"{directory} 里 {count} 个（冻结证据）" for directory, count in result.frozen_file_counts.items())
-    unparsable_text = f"解析不了的 {len(result.unparsable_files)} 个" + (
-        "（" + "、".join(result.unparsable_files) + "）" if result.unparsable_files else "")
-    statistics = (f"扫了 {result.scanned_file_count} 个文件、{len(result.child_output_loops)} 个读子进程输出的循环、"
+    flagged_loops = [loop for loop in scan_result.child_output_loops if is_hit(loop)]
+    exempted = [loop for loop in flagged_loops if loop.allow_reason]
+    unexempted = [loop for loop in flagged_loops if loop.allow_reason is None]
+    empty_reasons = [loop for loop in scan_result.child_output_loops if loop.allow_reason == ""]
+    frozen_text = "、".join(f"{directory} 里 {skipped_file_count} 个（冻结证据）" for directory, skipped_file_count in scan_result.frozen_file_counts.items())
+    unparsable_text = f"解析不了的 {len(scan_result.unparsable_files)} 个" + (
+        "（" + "、".join(scan_result.unparsable_files) + "）" if scan_result.unparsable_files else "")
+    statistics = (f"扫了 {scan_result.scanned_file_count} 个文件、{len(scan_result.child_output_loops)} 个读子进程输出的循环、"
                   f"豁免 {len(exempted)} 处；没扫：{frozen_text}、{unparsable_text}")
-    if result.scanned_file_count == 0:
+    if scan_result.scanned_file_count == 0:
         print(f"  ! 仓根下的顶层目录（{'、'.join(sorted(SKIP_DIRECTORIES))} 与点开头的不扫，.claude* 照扫）里没有可扫的 .rs / .py，"
               f"本轮无对象可判（{statistics}）")
         return 77
-    failed = False
+    has_failure = False
     if unexempted:
-        failed = True
+        has_failure = True
         for loop in unexempted:
             print(f"      {loop.relative_path}:{loop.line_number}  {loop.loop_head}  "   # gate-lint:detail
                   f"取时间 {loop.timing_call}  输出 {loop.output_call}")
         print(f"  ✗ 有 {len(unexempted)} 处读子进程输出的循环一边给行打时间戳一边转打（{statistics}）")
         print(f"     → 怎么办：{RELAY_TIMING_REMEDY}")
     if empty_reasons:
-        failed = True
+        has_failure = True
         for loop in empty_reasons:
             print(f"      {loop.relative_path}:{loop.line_number}  {loop.loop_head}  豁免注释没写理由")   # gate-lint:detail
         print(f"  ✗ 有 {len(empty_reasons)} 处 {ALLOW_MARKER} 后面没写理由（{statistics}）")
         print("     → 怎么办：在 allow 后面写清这个循环的时间戳为什么不受转打阻塞影响（例如时间只拿来判超时、不进任何计时结论）；"
               "写不出理由就别豁免，按「读子进程输出的循环一边打时间戳一边转打」那条的出路改写法。")
-    if failed:
+    if has_failure:
         return 1
     print(f"  ✓ 没有读子进程输出的循环一边给行打时间戳一边转打（{statistics}）")
     return 0
@@ -874,27 +881,27 @@ SELFTEST_CASES = [
 
 def run_selftest_cases() -> int:
     failures = []
-    for case_name, files, expectation in SELFTEST_CASES:
-        want_exit = None
-        wanted_fragments = []
+    for case_name, sample_files, expectation in SELFTEST_CASES:
+        expected_exit_code = None
+        expected_fragments = []
         for expectation_line in expectation.split("\n"):
             if expectation_line.startswith("exit="):
-                want_exit = int(expectation_line[len("exit="):])
+                expected_exit_code = int(expectation_line[len("exit="):])
             elif expectation_line.startswith("want="):
-                wanted_fragments.append(expectation_line[len("want="):])
+                expected_fragments.append(expectation_line[len("want="):])
         with tempfile.TemporaryDirectory() as work_directory:
-            root = pathlib.Path(work_directory)
-            for relative_path, content in files.items():
-                (root / relative_path).parent.mkdir(parents=True, exist_ok=True)
-                (root / relative_path).write_text(content, encoding="utf-8")
-            captured = io.StringIO()
-            with contextlib.redirect_stdout(captured):
-                got_exit = run(root)
-        output = captured.getvalue()
+            sample_repository = pathlib.Path(work_directory)
+            for relative_path, content in sample_files.items():
+                (sample_repository / relative_path).parent.mkdir(parents=True, exist_ok=True)
+                (sample_repository / relative_path).write_text(content, encoding="utf-8")
+            captured_output = io.StringIO()
+            with contextlib.redirect_stdout(captured_output):
+                actual_exit_code = run(sample_repository)
+        output = captured_output.getvalue()
         problems = []
-        if got_exit != want_exit:
-            problems.append(f"期望退出 {want_exit}，实测 {got_exit}")
-        problems.extend(f"输出里找不到「{fragment}」" for fragment in wanted_fragments if fragment not in output)
+        if actual_exit_code != expected_exit_code:
+            problems.append(f"期望退出 {expected_exit_code}，实测 {actual_exit_code}")
+        problems.extend(f"输出里找不到「{fragment}」" for fragment in expected_fragments if fragment not in output)
         if problems:
             failures.append((case_name, problems, output))
     for case_name, problems, output in failures:
@@ -932,10 +939,10 @@ def selftest() -> int:
 def default_root() -> pathlib.Path:
     """不给仓库根时判当前目录所在的 git 仓（不在 git 仓里就是当前目录）。不按本文件的位置往上数：
     它装在上游包的 scripts/ 下、也装在项目的 .claude/<包名>/scripts/ 下，往上数几层都数不到被判的那个仓。"""
-    completed = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True, check=False,
+    git_toplevel_run = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True, check=False,
                                stdin=subprocess.DEVNULL)
-    toplevel = completed.stdout.strip()
-    return pathlib.Path(toplevel) if completed.returncode == 0 and toplevel else pathlib.Path.cwd()
+    toplevel_directory = git_toplevel_run.stdout.strip()
+    return pathlib.Path(toplevel_directory) if git_toplevel_run.returncode == 0 and toplevel_directory else pathlib.Path.cwd()
 
 
 def main(arguments: list) -> int:
@@ -945,8 +952,8 @@ def main(arguments: list) -> int:
         print("  ✗ 用法：relay-timing-lint.py --check [仓库根]，或 relay-timing-lint.py --selftest")
         print("     → 怎么办：门禁里跑 --check，改了这份脚本先跑 --selftest。")
         return 2
-    root = pathlib.Path(arguments[1]) if len(arguments) == 2 else default_root()
-    return run(root.resolve())
+    repository_root = pathlib.Path(arguments[1]) if len(arguments) == 2 else default_root()
+    return run(repository_root.resolve())
 
 
 if __name__ == "__main__":

@@ -13,8 +13,8 @@ PACKAGE_ROOT = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 
 def package_family():
     try:
-        with open(os.path.join(PACKAGE_ROOT, 'I18N'), encoding='utf-8') as handle:
-            for line in handle:
+        with open(os.path.join(PACKAGE_ROOT, 'I18N'), encoding='utf-8') as i18n_file:
+            for line in i18n_file:
                 if line.startswith('family='):
                     family = line.split('=', 1)[1].strip()
                     if family:

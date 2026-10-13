@@ -38,7 +38,7 @@ if [[ -f "$CARGO_PREFIX_FILE" ]]; then
     "写成一行： <命令与参数>  # 理由；相对路径从项目根算。"
   command -v "${prefix_words[0]}" >/dev/null 2>&1 || die "$CARGO_PREFIX_FILE 的前缀命令找不到：${prefix_words[0]}" \
     "装上它、把它放进 PATH，或写成从项目根算起的路径；前缀起不来就不跑 cargo，不退回无包装去跑。"
-  # 第一个词之后的也要查：前缀常是「解释器 + 脚本路径」，脚本缺了时 bash 退 127，被下面的 fmt 报成「格式不合规」。
+  # 前缀命令后面的词也要查：前缀常是「解释器 + 脚本路径」，脚本缺了时 bash 退 127，被后面的 cargo fmt 报成「格式不合规」。
   # 像路径的词（带 /，或以 .sh / .py 结尾）从项目根算起都要存在。选项与赋值（--working-directory=/x、CARGO_TARGET_DIR=/x）不是路径，不查。
   missing_prefix_paths=()
   for prefix_word in "${prefix_words[@]:1}"; do
@@ -103,7 +103,7 @@ fi
   "上面列出了失败的用例名。单跑一个看细节：" \
   "cargo test --all <用例名> -- --nocapture" \
   "改代码还是改断言，先想清楚是哪一种——直接改断言等于把测试关掉。" ${CARGO_PREFIX_NOTE[@]+"${CARGO_PREFIX_NOTE[@]}"}
-# 每个测试二进制（含文档测试）打一行 `test result: ok. N passed; M failed; …`，跑了的条数是各行 passed 与 failed 之和
+# 每个测试二进制（含文档测试）打一行 `test result: ok. <通过数> passed; <失败数> failed; …`，跑了的条数是各行 passed 与 failed 之和
 test_count=0; test_binary_count=0
 while IFS= read -r test_result_line; do
   if [[ "$test_result_line" =~ ([0-9]+)\ passed\;\ ([0-9]+)\ failed\; ]]; then

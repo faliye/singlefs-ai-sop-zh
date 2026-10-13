@@ -1,0 +1,17 @@
+# 名字与注释纪律（rules/code-discipline.md「名字」一节与「注释里不写缩写，不用代号指东西」）铺到本仓时没改的部分。
+# 一行一条：<路径>  # 为什么不改。路径相对仓根，必须存在；改完一份删一行。
+scripts/fixtures/  # 各道检查自己的输入：样本里的名字与写法就是被判的对象，改了样本判的就不再是原来那件事；样本目录名（rmok、projok 这类）是用例名，还没回扫
+CHANGELOG.md  # 历史：每一版当时的原话，不改
+MANIFEST.sha256  # 生成的清单，跟着翻译文件重算
+scripts/lib.sh  # 顶层函数与全局变量（C_GRN、C_RST、pkg_root、CMD_POS、head1、HEREDOC_RE、_awk_version 这类）是对外接口：项目的门禁阶段 source 它，改名会把下游弄坏
+scripts/preflight.py  # 顶层函数、类与常量（INTERPRETER_NAME_RE 这类）是对外接口：别的脚本与项目 import 它
+scripts/preflight.sh  # 顶层函数是对外接口：钩子与 lib.sh source 它
+scripts/claude-hook-lib.sh  # 顶层函数与变量是对外接口：钩子 source 它
+scripts/manifest.sh  # translated_paths、not_translated_re 被三语 CLAUDE.md 点名
+scripts/version-discipline.sh  # GOVERNED 被三语 CLAUDE.md 点名
+scripts/gate.sh  # GATE_RUN_TMPDIR、GATE_RUN_TMPDIR_KEPT 与环境变量 GATE_CROSS_RUN_TMPDIR 成对，TMPDIR 是 POSIX 定的名字
+scripts/doc-lint.sh  # 检查代号 A–M、①…⑳ 与词表、正则是判据本身；环境变量 DOC_LINT_LANG 等是对外接口
+scripts/naming-lint.sh  # N1、N2 编号与 ABBR_TABLE 词表是判据本身
+scripts/shell-lint.sh  # S1–S7 编号是对外报告与规则里点名的检查编号
+scripts/session-transcript.py  # TOOL_USE_ID_IN_NOTIFICATION_RE 的 _RE 后缀与全仓约定一致，_RE 后缀要不要改待定
+scripts/comment-only-change.py  # rust_code_tokens_and_documentation_code 与 SAFETY_TAG 被使用者项目的门禁库直接 import，是对外接口：再改名先通知下游，发版说明里写明

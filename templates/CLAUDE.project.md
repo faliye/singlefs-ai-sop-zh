@@ -25,7 +25,7 @@
 在这里一起 `@` 引用。别往共享 SOP 上放，那边只放协作规范。
 
 （上面那些 `@.claude/singlefs-ai-sop/...` 是 [singlefs-ai-sop](.claude/singlefs-ai-sop/README.md) 发下来的共享规则。
-**改它们等于同时改掉每个参与者的下限**，要改就去改上游并抬 `VERSION`，不许在项目里就地改。）
+要改就去改上游并抬 `VERSION`，不许在项目里就地改。）
 
 ## 项目本地事实
 
@@ -41,13 +41,12 @@
 
 ## 门禁
 
-门禁是为了**把每一份提交抬到值得花人时间去看那条线上**，不是为了把谁挡在外面。
-它不按来源区分提交的人，只区分带证据的和不带的。
+门禁不按来源区分提交的人，只区分带证据的和不带的。
 
 ```bash
 bash .claude/scripts/gate.sh          # 准入门禁，提交前必跑
 
-bash .claude/scripts/check.sh         # 快速反馈（格式/lint/构建/单测）
+bash .claude/scripts/check.sh         # 快速反馈（格式/lint/构建/单元测试）
 bash .claude/scripts/gate-lint.sh     # 门禁自身：每条拒绝是否都给了下一步
 bash .claude/scripts/shell-lint.sh    # shell 纪律：pkill -f / pgrep -f、子 shell 赋值往外带值、git 撤销命令、无守卫的 rm -rf、不带参数的 wait、pipefail 下以 grep -q 收尾的管道
 bash .claude/scripts/naming-lint.sh   # 命名纪律：.rs 里的单字母名与常见缩写

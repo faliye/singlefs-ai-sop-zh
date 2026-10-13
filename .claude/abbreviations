@@ -1,0 +1,19 @@
+# 本仓用到的领域缩写：一行一条，# 后面写全称与含义（rules/code-discipline.md「缩写登记表」）。
+kb  # knowledge base：知识库，项目给模型检索的知识文档，放在 .claude/kb/ 或 .claude/kb-directories 登记的目录
+sop  # standard operating procedure：标准作业规程，指这套贡献者治理规范本身
+ai  # artificial intelligence：人工智能，指写代码、改代码的模型
+io  # input/output：输入输出，读写文件、设备与网络
+api  # application programming interface：应用程序接口，对外承诺的调用约定
+pr  # pull request：合并请求
+pid  # process identifier：进程号
+cpu  # central processing unit：中央处理器
+gpu  # graphics processing unit：图形处理器，用作计算加速硬件
+json  # JavaScript Object Notation：一种文本数据格式
+tsv  # tab-separated values：制表符分隔的表格文本
+sha  # secure hash algorithm：安全散列算法，git 的提交哈希与 sha256sum 用的就是它
+utf  # Unicode transformation format：Unicode 的编码形式（UTF-8）
+crc  # cyclic redundancy check：循环冗余校验
+lba  # logical block address：逻辑块地址
+raid  # redundant array of independent disks：独立磁盘冗余阵列
+ci  # continuous integration：持续集成
+i18n  # internationalization：国际化，指多语言仓的同步

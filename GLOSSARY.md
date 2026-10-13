@@ -1,7 +1,7 @@
 # 术语表 / Glossary / 用語集
 
 **这一份各语言仓共用，原样复制，不翻译。** 它本身就是那张对照表——
-把它翻译成 N 份，等于把同一张表抄了 N 份，而那正是它要防的事。
+有几种语言就把它翻译成几份，等于把同一张表抄了几份，而那正是它要防的事。
 
 **所以说明这一列写成三语并排**（`中文<br>English<br>日本語`）。
 判据跟别处一样：**给人读的散文，得让读它的人读得懂**；
@@ -52,10 +52,10 @@
 | 弄坏开关 | break switch | 壊しスイッチ | 只给自证用的开关，打开就把脚本的某一处判法改坏，证明自证会红<br>a switch used only by the self-test that breaks one part of the script's judging, proving the self-test goes red<br>自己検査専用のスイッチ。スクリプトの判定の一箇所を壊し、自己検査が赤くなることを示す |
 | 不变量 | invariant | 不変条件 | 项目的检查是它的可执行形式<br>the project's checks are its executable form<br>プロジェクトの検査がその実行可能な形 |
 | 欠账表 | debt table | 負債表 | 项目 kb 里的 `checks-owed.md`：已经知道要拦什么、还没立的检查，一周合一批评估<br>`checks-owed.md` in the project kb: checks we know we want but have not built yet, assessed in a weekly batch<br>プロジェクト kb の `checks-owed.md`：止めたいと分かっているがまだ立てていない検査。週に一度まとめて評価する |
-| 确定性模型 | deterministic model | 決定的モデル | 无随机源、真实 I/O、并发、时钟；跑 N 遍必然一致<br>no randomness, real I/O, concurrency or clock; N runs are identical<br>乱数・実 I/O・並行・時計を持たない。N 回走らせても同一 |
+| 确定性模型 | deterministic model | 決定的モデル | 无随机源、真实 I/O、并发、时钟；跑多少遍都必然一致<br>no randomness, real I/O, concurrency or clock; every run gives the same result<br>乱数・実 I/O・並行・時計を持たない。何回走らせても同一 |
 | 规范本体 | governed paths | 規範本体 | 改了必须抬 `VERSION` 的那些路径<br>the paths whose change requires a `VERSION` bump<br>変更したら `VERSION` を上げねばならないパス群 |
 | 译本 | translation | 訳本 | 生成物，不是平行版本<br>a product, not a parallel edition<br>生成物であって並行版ではない |
-| 编号 | number | 番号 | 指代某条决策/不变量/欠检查的符号，如 D1、I-3.1<br>the symbol standing for a decision, invariant or owed check, e.g. D1, I-3.1<br>判断・不変条件・借り検査を指す記号（D1、I-3.1 など） |
+| 编号 | number | 番号 | 指代某条决策/不变量/欠检查的符号，如 D1、I-3.1<br>the symbol standing for a decision, invariant or owed check, such as D1, I-3.1<br>判断・不変条件・借り検査を指す記号（D1、I-3.1 など） |
 | 简称 | short name | 簡称 | 编号的短名，引用处每次都要带着它<br>a number's short name, carried at every citation<br>番号の短い名。引用のたびに添える |
 | 登记位 | registration site | 登録箇所 | 编号唯一的说明处：登记表的一行，或带破折号的标题<br>a number's single site of definition: a registry row, or a heading with a dash<br>番号を説明する唯一の箇所：登録表の一行、または破折号つき見出し |
 | 登记表 | registry table | 登録表 | 上方带 `doc-lint:registry` 标记的那张表<br>the table preceded by a `doc-lint:registry` marker<br>`doc-lint:registry` 標記が直前に付く表 |

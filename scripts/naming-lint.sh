@@ -26,139 +26,139 @@
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 preflight "${BASH_SOURCE[0]}" "$@"; set -- ${PREFLIGHT_ARGUMENTS[@]+"${PREFLIGHT_ARGUMENTS[@]}"}
 
-ROOT="${1:-$(project_root)}"
-[[ -d "$ROOT" ]] || die "找不到项目根：$ROOT" \
+PROJECT_ROOT="${1:-$(project_root)}"
+[[ -d "$PROJECT_ROOT" ]] || die "找不到项目根：$PROJECT_ROOT" \
   "把项目根作为第一个参数传进来： bash scripts/naming-lint.sh <项目根>"
-if [[ "$ROOT" != "/" ]]; then ROOT="${ROOT%/}"; fi
+if [[ "$PROJECT_ROOT" != "/" ]]; then PROJECT_ROOT="${PROJECT_ROOT%/}"; fi
 
 # gate.sh 当阶段跑时已经打过同名标题（GATE_IN_STAGE 由 run_stage 设）
 [[ -n "${GATE_IN_STAGE:-}" ]] || head1 "命名纪律"
 
 trim() { local text="$1"; text="${text#"${text%%[![:space:]]*}"}"; printf '%s' "${text%"${text##*[![:space:]]}"}"; }
-fails=0
+failure_count=0
 
 # ── 不扫的目录 ──────────────────────────────────────────
 # 排除的目录里名字没人管，所以每条要写理由、一律报出来：静悄悄少扫一批文件，和这道检查没实现长得一样。
-# 默认那几处（target/、.git/、.claude/、$ROOT/scripts/fixtures/）在 lib.sh 的 rust_source_files 里，与「构建与单测」共用；这里只追加排除表里的。
-# 样本目录写成相对 ROOT 的前缀：写成 */fixtures/* 的话 selftest 拿样本目录当 ROOT 跑时样本全被跳过，自证成了摆设。
-EXCL=()
-EXFILE="$ROOT/.claude/naming-lint-exclude"
-expaths=(); exwhys=(); exns=()
-if [[ -f "$EXFILE" ]]; then
-  exline=0
+# 默认那几处（target/、.git/、.claude/、$PROJECT_ROOT/scripts/fixtures/）在 lib.sh 的 rust_source_files 里，与「构建与单测」共用；这里只追加排除表里的。
+# 样本目录写成相对 PROJECT_ROOT 的前缀：写成 */fixtures/* 的话 selftest 拿样本目录当 PROJECT_ROOT 跑时样本全被跳过，自证成了摆设。
+EXCLUDED_PATH_ARGUMENTS=()
+EXCLUDE_FILE="$PROJECT_ROOT/.claude/naming-lint-exclude"
+excluded_paths=(); excluded_reasons=(); excluded_file_counts=()
+if [[ -f "$EXCLUDE_FILE" ]]; then
+  exclude_line_number=0
   while IFS= read -r line || [[ -n "$line" ]]; do
-    exline=$((exline+1))
+    exclude_line_number=$((exclude_line_number+1))
     [[ -z "${line//[[:space:]]/}" || "${line#"${line%%[![:space:]]*}"}" == \#* ]] && continue
     if [[ "$line" != *\#* ]]; then
-      bad ".claude/naming-lint-exclude:$exline  这一条没写理由：$line"
+      bad ".claude/naming-lint-exclude:$exclude_line_number  这一条没写理由：$line"
       howto "格式： research/  # 实验代码与产物一一对应，改名要连同重跑" \
             "理由不许省：排除一个目录，那里面的名字就没人管了（rules/code-discipline.md）。"
-      fails=$((fails+1)); continue
+      failure_count=$((failure_count+1)); continue
     fi
-    expath="$(trim "${line%%#*}")"; exwhy="$(trim "${line#*#}")"
-    expath="${expath%/}"
-    if [[ -z "$exwhy" ]]; then
-      bad ".claude/naming-lint-exclude:$exline  # 后面是空的，等于没写理由"
+    excluded_path="$(trim "${line%%#*}")"; excluded_reason="$(trim "${line#*#}")"
+    excluded_path="${excluded_path%/}"
+    if [[ -z "$excluded_reason" ]]; then
+      bad ".claude/naming-lint-exclude:$exclude_line_number  # 后面是空的，等于没写理由"
       howto "在 # 后面写清为什么这批代码的名字不归这道检查管。"
-      fails=$((fails+1)); continue
+      failure_count=$((failure_count+1)); continue
     fi
-    if [[ -z "$expath" || "$expath" == "." || "$expath" == /* || "$expath" == *..* ]]; then
-      bad ".claude/naming-lint-exclude:$exline  路径不合法：「$expath」"
+    if [[ -z "$excluded_path" || "$excluded_path" == "." || "$excluded_path" == /* || "$excluded_path" == *..* ]]; then
+      bad ".claude/naming-lint-exclude:$exclude_line_number  路径不合法：「$excluded_path」"
       howto "只收项目根之下的相对子目录，例： research/" \
             "不收 . 、绝对路径、含 .. 的路径——那些一行就能把整棵树排掉。"
-      fails=$((fails+1)); continue
+      failure_count=$((failure_count+1)); continue
     fi
     # 一条排除可以是单个 .rs：回扫旧代码时没改完的文件逐个列进来，改完一个删一行，排除只缩不涨。
-    if [[ -f "$ROOT/$expath" && "$expath" == *.rs ]]; then
-      EXCL+=(-not -path "$ROOT/$expath")
-      expaths+=("$expath"); exwhys+=("$exwhy"); exns+=(1)
+    if [[ -f "$PROJECT_ROOT/$excluded_path" && "$excluded_path" == *.rs ]]; then
+      EXCLUDED_PATH_ARGUMENTS+=(-not -path "$PROJECT_ROOT/$excluded_path")
+      excluded_paths+=("$excluded_path"); excluded_reasons+=("$excluded_reason"); excluded_file_counts+=(1)
       continue
     fi
-    if [[ ! -d "$ROOT/$expath" ]]; then
-      bad ".claude/naming-lint-exclude:$exline  目录或 .rs 文件不存在：$expath"
+    if [[ ! -d "$PROJECT_ROOT/$excluded_path" ]]; then
+      bad ".claude/naming-lint-exclude:$exclude_line_number  目录或 .rs 文件不存在：$excluded_path"
       howto "路径拼错了就改对；那批代码已经挪走、删了或改完了，就把这一行删掉。" \
             "留着的排除项会让人以为还有东西在被绕开。"
-      fails=$((fails+1)); continue
+      failure_count=$((failure_count+1)); continue
     fi
-    exn="$(find "$ROOT/$expath" -name '*.rs' -type f -not -path '*/target/*' | wc -l)"
-    if [[ "$exn" -eq 0 ]]; then
-      bad ".claude/naming-lint-exclude:$exline  $expath 下一个 .rs 都没有，这条排除没有作用"
+    excluded_file_count="$(find "$PROJECT_ROOT/$excluded_path" -name '*.rs' -type f -not -path '*/target/*' | wc -l)"
+    if [[ "$excluded_file_count" -eq 0 ]]; then
+      bad ".claude/naming-lint-exclude:$exclude_line_number  $excluded_path 下一个 .rs 都没有，这条排除没有作用"
       howto "删掉这一行。不起作用的排除项只会让人以为那批文件被绕开了。"
-      fails=$((fails+1)); continue
+      failure_count=$((failure_count+1)); continue
     fi
-    EXCL+=(-not -path "$ROOT/$expath/*")
-    expaths+=("$expath/"); exwhys+=("$exwhy"); exns+=("$exn")
-  done < "$EXFILE"
+    EXCLUDED_PATH_ARGUMENTS+=(-not -path "$PROJECT_ROOT/$excluded_path/*")
+    excluded_paths+=("$excluded_path/"); excluded_reasons+=("$excluded_reason"); excluded_file_counts+=("$excluded_file_count")
+  done < "$EXCLUDE_FILE"
 fi
 
 # ── 缩写登记表 ──────────────────────────────────────────
 # 登记表是缩写唯一的权威定义：不写含义的、单字母的、登记两遍的都判红，它们让「这个缩写指什么」答不上来。
-ABFILE="$ROOT/.claude/abbreviations"
+ABBREVIATIONS_FILE="$PROJECT_ROOT/.claude/abbreviations"
 declare -A REGISTERED=()
 declare -A NUMBERED=()
-numbered_re='^([a-z])<数字>$'
-if [[ -f "$ABFILE" ]]; then
-  abline=0
+numbered_registration_pattern='^([a-z])<数字>$'
+if [[ -f "$ABBREVIATIONS_FILE" ]]; then
+  abbreviation_line_number=0
   while IFS= read -r line || [[ -n "$line" ]]; do
-    abline=$((abline+1))
+    abbreviation_line_number=$((abbreviation_line_number+1))
     [[ -z "${line//[[:space:]]/}" || "${line#"${line%%[![:space:]]*}"}" == \#* ]] && continue
     if [[ "$line" != *\#* ]]; then
-      bad ".claude/abbreviations:$abline  这一条没写全称和含义：$line"
+      bad ".claude/abbreviations:$abbreviation_line_number  这一条没写全称和含义：$line"
       howto "格式： lba  # logical block address：逻辑块地址" \
             "登记表就是这个缩写唯一的权威定义，不写含义等于没登记（rules/code-discipline.md）。"
-      fails=$((fails+1)); continue
+      failure_count=$((failure_count+1)); continue
     fi
     token="$(trim "${line%%#*}")"; meaning="$(trim "${line#*#}")"
     if [[ -z "$meaning" ]]; then
-      bad ".claude/abbreviations:$abline  # 后面是空的，等于没写含义：$token"
+      bad ".claude/abbreviations:$abbreviation_line_number  # 后面是空的，等于没写含义：$token"
       howto "在 # 后面写全称，以及它在这个项目里指什么。"
-      fails=$((fails+1)); continue
+      failure_count=$((failure_count+1)); continue
     fi
     # 项目自己的编号：登记的是「这个字母加数字」一整类，权威定义在登记它的那张表里；登记之后 e12_x 里的 e12 不算单字母。
-    if [[ "$token" =~ $numbered_re ]]; then
+    if [[ "$token" =~ $numbered_registration_pattern ]]; then
       letter="${BASH_REMATCH[1]}"
       if [[ -n "${NUMBERED[$letter]:-}" ]]; then
-        bad ".claude/abbreviations:$abline  重复登记：$token（第 ${NUMBERED[$letter]} 行已经登记过）"
+        bad ".claude/abbreviations:$abbreviation_line_number  重复登记：$token（第 ${NUMBERED[$letter]} 行已经登记过）"
         howto "一种编号只许有一处定义，删掉其中一行（rules/kb-discipline.md：矛盾比空白更糟）。"
-        fails=$((fails+1)); continue
+        failure_count=$((failure_count+1)); continue
       fi
-      NUMBERED[$letter]="$abline"; continue
+      NUMBERED[$letter]="$abbreviation_line_number"; continue
     fi
     if [[ "$token" =~ ^[a-z][0-9]*$ ]]; then
-      bad ".claude/abbreviations:$abline  单字母不许登记：$token"
+      bad ".claude/abbreviations:$abbreviation_line_number  单字母不许登记：$token"
       howto "一个字母没有唯一的含义，登记了也说不清它指什么。" \
             "把用到它的名字写全（rules/code-discipline.md 的「名字」一节）。"
-      fails=$((fails+1)); continue
+      failure_count=$((failure_count+1)); continue
     fi
     if [[ ! "$token" =~ ^[a-z][a-z0-9]*$ ]]; then
-      bad ".claude/abbreviations:$abline  缩写要写成小写字母开头的一段字母数字：「$token」"
+      bad ".claude/abbreviations:$abbreviation_line_number  缩写要写成小写字母开头的一段字母数字：「$token」"
       howto "登记的是名字拆开之后的一段，一律小写，例： lba、crc32c。" \
             "名字里写成 Lba、LBA 的，拆段之后都按 lba 查。"
-      fails=$((fails+1)); continue
+      failure_count=$((failure_count+1)); continue
     fi
     if [[ -n "${REGISTERED[$token]:-}" ]]; then
-      bad ".claude/abbreviations:$abline  重复登记：$token（第 ${REGISTERED[$token]} 行已经登记过）"
+      bad ".claude/abbreviations:$abbreviation_line_number  重复登记：$token（第 ${REGISTERED[$token]} 行已经登记过）"
       howto "一个缩写只许有一处定义，删掉其中一行（rules/kb-discipline.md：矛盾比空白更糟）。"
-      fails=$((fails+1)); continue
+      failure_count=$((failure_count+1)); continue
     fi
-    REGISTERED[$token]="$abline"
-  done < "$ABFILE"
+    REGISTERED[$token]="$abbreviation_line_number"
+  done < "$ABBREVIATIONS_FILE"
 fi
 
-files=()
-while IFS= read -r f; do files+=("$f"); done < <(rust_source_files "$ROOT" ${EXCL[@]+"${EXCL[@]}"} | sort)
+rust_files=()
+while IFS= read -r rust_file; do rust_files+=("$rust_file"); done < <(rust_source_files "$PROJECT_ROOT" ${EXCLUDED_PATH_ARGUMENTS[@]+"${EXCLUDED_PATH_ARGUMENTS[@]}"} | sort)
 
-if [[ ${#expaths[@]} -gt 0 ]]; then
-  total_excluded=0; for i in "${!expaths[@]}"; do total_excluded=$((total_excluded+exns[i])); done
+if [[ ${#excluded_paths[@]} -gt 0 ]]; then
+  total_excluded=0; for excluded_index in "${!excluded_paths[@]}"; do total_excluded=$((total_excluded+excluded_file_counts[excluded_index])); done
   warn "按 .claude/naming-lint-exclude 不扫 $total_excluded 个 .rs —— 那里面的名字没人管："
-  for i in "${!expaths[@]}"; do warn "  ${expaths[$i]}  （${exns[$i]} 个）—— ${exwhys[$i]}"; done
+  for excluded_index in "${!excluded_paths[@]}"; do warn "  ${excluded_paths[$excluded_index]}  （${excluded_file_counts[$excluded_index]} 个）—— ${excluded_reasons[$excluded_index]}"; done
 fi
-if [[ $fails -gt 0 ]]; then
-  bad "命名纪律的配置有 $fails 处不合规，名字这一轮没有查"   # gate-lint:summary
+if [[ $failure_count -gt 0 ]]; then
+  bad "命名纪律的配置有 $failure_count 处不合规，名字这一轮没有查"   # gate-lint:summary
   exit 1
 fi
-if [[ ${#files[@]} -eq 0 ]]; then
-  ok "没有要查的 .rs 文件（${#files[@]} 个），本阶段无对象可判"
+if [[ ${#rust_files[@]} -eq 0 ]]; then
+  ok "没有要查的 .rs 文件（${#rust_files[@]} 个），本阶段无对象可判"
   # 退 3 而不退 0：退 0 在汇总里与「判过了」分不出，而这一轮一个名字都没看（rules/show-me-test.md「门禁不许假装通过」）。
   exit 3
 fi
@@ -315,446 +315,452 @@ TABLE
 
 # ── 扫描程序 ────────────────────────────────────────────
 # 逐行剥掉注释、字符串、字符字面量（生命周期留着）再认声明处；块栈记着在哪种块里：字段只在 struct 体、枚举成员只在 enum 体里认，trait 实现里的方法名与 extern 块不判。
-# 输出一行一条：V 违规 / M 标记缺理由 / X 被行内豁免的行 / S 声明总数。
+# 输出一行一条，第一段是标签：VIOLATION 违规 / MISSING_REASON 标记缺理由 / EXEMPTED 被行内豁免的行 / DECLARATION_TOTAL 声明总数。
 NAMING_AWK="$(cat <<'AWK'
 BEGIN {
-  n = split(ENVIRON["NAMING_ABBR"], rows, "\n")
-  for (i = 1; i <= n; i++) {
-    if (rows[i] ~ /^[ \t]*$/) continue
-    key = rows[i]; sub(/[ \t].*$/, "", key)
-    val = rows[i]; sub(/^[^ \t]+[ \t]+/, "", val)
-    ABBR[key] = val
+  item_count = split(ENVIRON["NAMING_ABBR"], table_rows, "\n")
+  for (item_index = 1; item_index <= item_count; item_index++) {
+    if (table_rows[item_index] ~ /^[ \t]*$/) continue
+    abbreviation = table_rows[item_index]; sub(/[ \t].*$/, "", abbreviation)
+    full_form = table_rows[item_index]; sub(/^[^ \t]+[ \t]+/, "", full_form)
+    ABBREVIATION_FULL_FORM[abbreviation] = full_form
   }
-  n = split(ENVIRON["NAMING_ALLOW"], rows, " ")
-  for (i = 1; i <= n; i++) if (rows[i] != "") ALLOW[rows[i]] = 1
-  n = split(ENVIRON["NAMING_NUMBERED"], rows, " ")
-  for (i = 1; i <= n; i++) if (rows[i] != "") NUMBERED_LETTER[rows[i]] = 1
-  n = split("mut ref box true false self Self crate super in if else as dyn impl move where", words, " ")
-  for (i = 1; i <= n; i++) PATKW[words[i]] = 1
-  n = split("self Self super crate static _", words, " ")
-  for (i = 1; i <= n; i++) NONAME[words[i]] = 1
-  n = split("block expr ident item lifetime literal meta pat pat_param path stmt tt ty vis", words, " ")
-  for (i = 1; i <= n; i++) FRAGMENT[words[i]] = 1
-  n = split("lib main mod build", words, " ")
-  for (i = 1; i <= n; i++) CARGO_FILE[words[i]] = 1
-  root = ENVIRON["NAMING_ROOT"] "/"
-  total_decls = 0
+  item_count = split(ENVIRON["NAMING_ALLOW"], table_rows, " ")
+  for (item_index = 1; item_index <= item_count; item_index++) if (table_rows[item_index] != "") REGISTERED_ABBREVIATION[table_rows[item_index]] = 1
+  item_count = split(ENVIRON["NAMING_NUMBERED"], table_rows, " ")
+  for (item_index = 1; item_index <= item_count; item_index++) if (table_rows[item_index] != "") NUMBERED_LETTER[table_rows[item_index]] = 1
+  item_count = split("mut ref box true false self Self crate super in if else as dyn impl move where", keyword_list, " ")
+  for (item_index = 1; item_index <= item_count; item_index++) PATTERN_KEYWORD[keyword_list[item_index]] = 1
+  item_count = split("self Self super crate static _", keyword_list, " ")
+  for (item_index = 1; item_index <= item_count; item_index++) NOT_A_DECLARED_NAME[keyword_list[item_index]] = 1
+  item_count = split("block expr ident item lifetime literal meta pat pat_param path stmt tt ty vis", keyword_list, " ")
+  for (item_index = 1; item_index <= item_count; item_index++) MACRO_FRAGMENT_SPECIFIER[keyword_list[item_index]] = 1
+  item_count = split("lib main mod build", keyword_list, " ")
+  for (item_index = 1; item_index <= item_count; item_index++) CARGO_FILE[keyword_list[item_index]] = 1
+  root_prefix = ENVIRON["NAMING_ROOT"] "/"
+  total_declarations = 0
 }
 
 FNR == 1 {
-  rel = FILENAME
-  if (index(rel, root) == 1) rel = substr(rel, length(root) + 1)
-  blockdepth = 0; instr = 0; rawhashes = -1
-  sp = 0; pending = ""; hdrbuf = ""; pdepth = 0
-  sig = 0; sigstarted = 0; sigdepth = 0; sigangle = 0; parambuf = ""
-  inuse = 0
-  delete seen
-  base = rel; sub(/^.*\//, "", base); sub(/\.rs$/, "", base)
-  if (!(base in CARGO_FILE)) judge(base, "文件名")
+  relative_path = FILENAME
+  if (index(relative_path, root_prefix) == 1) relative_path = substr(relative_path, length(root_prefix) + 1)
+  block_comment_depth = 0; in_string_literal = 0; raw_string_hash_count = -1
+  block_stack_depth = 0; pending_block_kind = ""; impl_header_text = ""; bracket_depth = 0
+  in_function_signature = 0; signature_parameters_started = 0; signature_bracket_depth = 0; signature_angle_depth = 0; parameter_text = ""
+  in_use_declaration = 0
+  delete judged_names
+  file_stem = relative_path; sub(/^.*\//, "", file_stem); sub(/\.rs$/, "", file_stem)
+  if (!(file_stem in CARGO_FILE)) judge_name(file_stem, "文件名")
 }
 
 {
-  raw = $0
-  code = strip(raw)
-  skipline = 0
-  if (raw ~ /naming-lint:external/) {
-    why = raw; sub(/.*naming-lint:external/, "", why)
-    gsub(/\*\//, "", why); gsub(/^[ \t:：]+|[ \t]+$/, "", why)
-    if (why == "") printf "M\t%s\t%d\n", rel, FNR
-    else { skipline = 1; printf "X\t%s\t%d\t%s\n", rel, FNR, why }
+  raw_line = $0
+  code_line = strip_comments_and_literals(raw_line)
+  is_exempted_line = 0
+  if (raw_line ~ /naming-lint:external/) {
+    exemption_reason = raw_line; sub(/.*naming-lint:external/, "", exemption_reason)
+    gsub(/\*\//, "", exemption_reason); gsub(/^[ \t:：]+|[ \t]+$/, "", exemption_reason)
+    if (exemption_reason == "") printf "MISSING_REASON\t%s\t%d\n", relative_path, FNR
+    else { is_exempted_line = 1; printf "EXEMPTED\t%s\t%d\t%s\n", relative_path, FNR, exemption_reason }
   }
-  ctx = (sp > 0) ? stack[sp] : "file"
-  if (!skipline && ctx != "extern") {
-    if (ctx != "macro") declarations(code, ctx)
-    macro_vars(code)
+  block_context = (block_stack_depth > 0) ? block_stack[block_stack_depth] : "file"
+  if (!is_exempted_line && block_context != "extern") {
+    if (block_context != "macro") judge_declarations_on_line(code_line, block_context)
+    judge_macro_variables(code_line)
   }
-  track(code)
+  track_block_stack(code_line)
 }
 
-END { printf "S\t%d\n", total_decls }
+END { printf "DECLARATION_TOTAL\t%d\n", total_declarations }
 
 # ── 剥注释、字符串、字符字面量 ─────────────────────────
-function strip(line,    out, i, n, c, two, j, k, prevc) {
-  out = ""; n = length(line); i = 1
-  while (i <= n) {
-    c = substr(line, i, 1)
-    if (blockdepth > 0) {
-      two = substr(line, i, 2)
-      if (two == "*/") { blockdepth--; i += 2; continue }
-      if (two == "/*") { blockdepth++; i += 2; continue }
-      i++; continue
+function strip_comments_and_literals(line,    stripped_text, position, line_length, character, two_characters, raw_quote_start, hash_end, previous_character) {
+  stripped_text = ""; line_length = length(line); position = 1
+  while (position <= line_length) {
+    character = substr(line, position, 1)
+    if (block_comment_depth > 0) {
+      two_characters = substr(line, position, 2)
+      if (two_characters == "*/") { block_comment_depth--; position += 2; continue }
+      if (two_characters == "/*") { block_comment_depth++; position += 2; continue }
+      position++; continue
     }
-    if (instr) {
-      if (c == "\\") { i += 2; continue }
-      if (c == "\"") { instr = 0; out = out "\""; i++; continue }
-      i++; continue
+    if (in_string_literal) {
+      if (character == "\\") { position += 2; continue }
+      if (character == "\"") { in_string_literal = 0; stripped_text = stripped_text "\""; position++; continue }
+      position++; continue
     }
-    if (rawhashes >= 0) {
-      if (c == "\"" && substr(line, i + 1, rawhashes) == hashes(rawhashes)) {
-        out = out "\""; i += 1 + rawhashes; rawhashes = -1; continue
+    if (raw_string_hash_count >= 0) {
+      if (character == "\"" && substr(line, position + 1, raw_string_hash_count) == repeated_hash_marks(raw_string_hash_count)) {
+        stripped_text = stripped_text "\""; position += 1 + raw_string_hash_count; raw_string_hash_count = -1; continue
       }
-      i++; continue
+      position++; continue
     }
-    two = substr(line, i, 2)
-    if (two == "//") break
-    if (two == "/*") { blockdepth = 1; i += 2; continue }
-    prevc = (out == "") ? "" : substr(out, length(out), 1)
-    if (prevc !~ /[A-Za-z0-9_]/) {
-      j = 0
-      if (c == "r") j = i + 1
-      else if (c == "b" && substr(line, i + 1, 1) == "r") j = i + 2
-      if (j > 0) {
-        k = j; while (substr(line, k, 1) == "#") k++
-        if (substr(line, k, 1) == "\"") { rawhashes = k - j; out = out "\""; i = k + 1; continue }
-        if (c == "r" && k == j + 1 && substr(line, k, 1) ~ /[A-Za-z_]/) { i = k; continue }
-      }
-    }
-    if (c == "\"") { instr = 1; out = out "\""; i++; continue }
-    if (c == "'") {
-      if (substr(line, i + 1, 1) == "\\") {
-        k = index(substr(line, i + 3), "'")
-        if (k > 0) { out = out "''"; i = i + 3 + k; continue }
-      } else if (substr(line, i + 2, 1) == "'" && substr(line, i + 1, 1) != "'") {
-        out = out "''"; i += 3; continue
+    two_characters = substr(line, position, 2)
+    if (two_characters == "//") break
+    if (two_characters == "/*") { block_comment_depth = 1; position += 2; continue }
+    previous_character = (stripped_text == "") ? "" : substr(stripped_text, length(stripped_text), 1)
+    if (previous_character !~ /[A-Za-z0-9_]/) {
+      raw_quote_start = 0
+      if (character == "r") raw_quote_start = position + 1
+      else if (character == "b" && substr(line, position + 1, 1) == "r") raw_quote_start = position + 2
+      if (raw_quote_start > 0) {
+        hash_end = raw_quote_start; while (substr(line, hash_end, 1) == "#") hash_end++
+        if (substr(line, hash_end, 1) == "\"") { raw_string_hash_count = hash_end - raw_quote_start; stripped_text = stripped_text "\""; position = hash_end + 1; continue }
+        if (character == "r" && hash_end == raw_quote_start + 1 && substr(line, hash_end, 1) ~ /[A-Za-z_]/) { position = hash_end; continue }
       }
     }
-    out = out c; i++
+    if (character == "\"") { in_string_literal = 1; stripped_text = stripped_text "\""; position++; continue }
+    if (character == "'") {
+      if (substr(line, position + 1, 1) == "\\") {
+        hash_end = index(substr(line, position + 3), "'")
+        if (hash_end > 0) { stripped_text = stripped_text "''"; position = position + 3 + hash_end; continue }
+      } else if (substr(line, position + 2, 1) == "'" && substr(line, position + 1, 1) != "'") {
+        stripped_text = stripped_text "''"; position += 3; continue
+      }
+    }
+    stripped_text = stripped_text character; position++
   }
-  return out
+  return stripped_text
 }
-function hashes(count,    text) { text = ""; while (count-- > 0) text = text "#"; return text }
+function repeated_hash_marks(hash_count,    marks) { marks = ""; while (hash_count-- > 0) marks = marks "#"; return marks }
 
 # ── 块栈：这一行之后我们在哪种块里 ──────────────────────
-function item_start(before) {
-  return before ~ /^[ \t]*$/ || before ~ /[;{}\]][ \t]*$/ ||
-         before ~ /(^|[^A-Za-z0-9_])(pub|unsafe|default)[ \t]*$/ || before ~ /pub\([^)]*\)[ \t]*$/
+function starts_item(text_before_word) {
+  return text_before_word ~ /^[ \t]*$/ || text_before_word ~ /[;{}\]][ \t]*$/ ||
+         text_before_word ~ /(^|[^A-Za-z0-9_])(pub|unsafe|default)[ \t]*$/ || text_before_word ~ /pub\([^)]*\)[ \t]*$/
 }
-function track(code,    i, j, n, c, word, before, after, kind) {
-  n = length(code); i = 1
-  while (i <= n) {
-    c = substr(code, i, 1)
-    if (c ~ /[A-Za-z_]/) {
-      j = i; while (j <= n && substr(code, j, 1) ~ /[A-Za-z0-9_]/) j++
-      word = substr(code, i, j - i)
-      before = substr(code, 1, i - 1)
-      after = substr(code, j)
-      if (before !~ /[A-Za-z0-9_'$]$/) {
-        if (word == "fn" && after ~ /^[ \t]+[A-Za-z_]/) { pending = "fn"; hdrbuf = ""; pdepth = 0 }
-        else if (word == "impl" && pending != "fn" && item_start(before)) { pending = "impl"; hdrbuf = ""; pdepth = 0 }
-        else if ((word == "struct" || word == "union") && after ~ /^[ \t]+[A-Za-z_]/) { pending = "struct"; pdepth = 0 }
-        else if (word == "enum" && after ~ /^[ \t]+[A-Za-z_]/) { pending = "enum"; pdepth = 0 }
-        else if (word == "trait" && after ~ /^[ \t]+[A-Za-z_]/) { pending = "trait"; pdepth = 0 }
-        else if (word == "mod" && after ~ /^[ \t]+[A-Za-z_]/) { pending = "mod"; pdepth = 0 }
-        else if (word == "macro_rules") { pending = "macro"; pdepth = 0 }
-        else if (word == "extern" && after ~ /^[ \t]*(""[ \t]*)?\{/) { pending = "extern"; pdepth = 0 }
+function track_block_stack(code_line,    position, word_end, code_length, character, word, text_before_word, text_after_word, block_kind) {
+  code_length = length(code_line); position = 1
+  while (position <= code_length) {
+    character = substr(code_line, position, 1)
+    if (character ~ /[A-Za-z_]/) {
+      word_end = position; while (word_end <= code_length && substr(code_line, word_end, 1) ~ /[A-Za-z0-9_]/) word_end++
+      word = substr(code_line, position, word_end - position)
+      text_before_word = substr(code_line, 1, position - 1)
+      text_after_word = substr(code_line, word_end)
+      if (text_before_word !~ /[A-Za-z0-9_'$]$/) {
+        if (word == "fn" && text_after_word ~ /^[ \t]+[A-Za-z_]/) { pending_block_kind = "fn"; impl_header_text = ""; bracket_depth = 0 }
+        else if (word == "impl" && pending_block_kind != "fn" && starts_item(text_before_word)) { pending_block_kind = "impl"; impl_header_text = ""; bracket_depth = 0 }
+        else if ((word == "struct" || word == "union") && text_after_word ~ /^[ \t]+[A-Za-z_]/) { pending_block_kind = "struct"; bracket_depth = 0 }
+        else if (word == "enum" && text_after_word ~ /^[ \t]+[A-Za-z_]/) { pending_block_kind = "enum"; bracket_depth = 0 }
+        else if (word == "trait" && text_after_word ~ /^[ \t]+[A-Za-z_]/) { pending_block_kind = "trait"; bracket_depth = 0 }
+        else if (word == "mod" && text_after_word ~ /^[ \t]+[A-Za-z_]/) { pending_block_kind = "mod"; bracket_depth = 0 }
+        else if (word == "macro_rules") { pending_block_kind = "macro"; bracket_depth = 0 }
+        else if (word == "extern" && text_after_word ~ /^[ \t]*(""[ \t]*)?\{/) { pending_block_kind = "extern"; bracket_depth = 0 }
       }
-      if (pending == "impl") hdrbuf = hdrbuf " " word
-      i = j; continue
+      if (pending_block_kind == "impl") impl_header_text = impl_header_text " " word
+      position = word_end; continue
     }
-    if (pending == "impl") hdrbuf = hdrbuf c
-    if (c == "(" || c == "[") pdepth++
-    else if (c == ")" || c == "]") { if (pdepth > 0) pdepth-- }
-    else if (c == "{") {
-      kind = "block"
-      if (pending == "impl") kind = (hdrbuf ~ /[^A-Za-z0-9_]for[ \t]/) ? "trait_impl" : "impl"
-      else if (pending != "") kind = pending
-      else if (sp > 0 && stack[sp] == "enum") kind = "fields"
-      stack[++sp] = kind
-      pending = ""; hdrbuf = ""; pdepth = 0
+    if (pending_block_kind == "impl") impl_header_text = impl_header_text character
+    if (character == "(" || character == "[") bracket_depth++
+    else if (character == ")" || character == "]") { if (bracket_depth > 0) bracket_depth-- }
+    else if (character == "{") {
+      block_kind = "block"
+      if (pending_block_kind == "impl") block_kind = (impl_header_text ~ /[^A-Za-z0-9_]for[ \t]/) ? "trait_impl" : "impl"
+      else if (pending_block_kind != "") block_kind = pending_block_kind
+      else if (block_stack_depth > 0 && block_stack[block_stack_depth] == "enum") block_kind = "fields"
+      block_stack[++block_stack_depth] = block_kind
+      pending_block_kind = ""; impl_header_text = ""; bracket_depth = 0
     }
-    else if (c == "}") { if (sp > 0) sp--; pending = ""; hdrbuf = "" }
-    else if (c == ";" && pdepth == 0) { pending = ""; hdrbuf = "" }
-    i++
+    else if (character == "}") { if (block_stack_depth > 0) block_stack_depth--; pending_block_kind = ""; impl_header_text = "" }
+    else if (character == ";" && bracket_depth == 0) { pending_block_kind = ""; impl_header_text = "" }
+    position++
   }
-  if (pending == "impl") hdrbuf = hdrbuf " "
+  if (pending_block_kind == "impl") impl_header_text = impl_header_text " "
 }
 
 # ── 这一行声明了哪些名字 ────────────────────────────────
-function declarations(code, ctx,    work, rest, m, g, line) {
+function judge_declarations_on_line(code_line, block_context,    remaining_code, text_after_match, name_match, generics_text, field_line) {
   # 上一行的函数签名还没收尾（参数分几行写）
-  if (sig) scan_params(code)
+  if (in_function_signature) scan_parameters(code_line)
 
-  work = code
-  while (match(work, /(^|[^A-Za-z0-9_])fn[ \t]+([A-Za-z_][A-Za-z0-9_]*)/, m)) {
-    if (ctx != "trait_impl") judge(m[2], "函数")
-    rest = substr(work, RSTART + RLENGTH)
-    if (rest ~ /^[ \t]*</) { g = angle(rest); judge_generics(g); rest = substr(rest, ANGLE_END + 1) }
-    sig = 1; sigstarted = 0; sigdepth = 0; sigangle = 0; parambuf = ""
-    scan_params(rest)
-    work = rest
+  remaining_code = code_line
+  while (match(remaining_code, /(^|[^A-Za-z0-9_])fn[ \t]+([A-Za-z_][A-Za-z0-9_]*)/, name_match)) {
+    if (block_context != "trait_impl") judge_name(name_match[2], "函数")
+    text_after_match = substr(remaining_code, RSTART + RLENGTH)
+    if (text_after_match ~ /^[ \t]*</) { generics_text = angle_bracket_content(text_after_match); judge_generics(generics_text); text_after_match = substr(text_after_match, ANGLE_CLOSING_POSITION + 1) }
+    in_function_signature = 1; signature_parameters_started = 0; signature_bracket_depth = 0; signature_angle_depth = 0; parameter_text = ""
+    scan_parameters(text_after_match)
+    remaining_code = text_after_match
   }
 
-  work = code
-  while (match(work, /(^|[^A-Za-z0-9_])(struct|enum|union|trait|type)[ \t]+([A-Za-z_][A-Za-z0-9_]*)/, m)) {
-    rest = substr(work, RSTART + RLENGTH)
-    if (!(ctx == "trait_impl" && m[2] == "type")) judge(m[3], "类型")
-    if (rest ~ /^[ \t]*</) { g = angle(rest); judge_generics(g); rest = substr(rest, ANGLE_END + 1) }
-    if ((m[2] == "struct" || m[2] == "union") && match(rest, /\{/)) same_line_fields(substr(rest, RSTART + 1))
-    if (m[2] == "enum" && match(rest, /\{/)) same_line_variants(substr(rest, RSTART + 1))
-    work = rest
+  remaining_code = code_line
+  while (match(remaining_code, /(^|[^A-Za-z0-9_])(struct|enum|union|trait|type)[ \t]+([A-Za-z_][A-Za-z0-9_]*)/, name_match)) {
+    text_after_match = substr(remaining_code, RSTART + RLENGTH)
+    if (!(block_context == "trait_impl" && name_match[2] == "type")) judge_name(name_match[3], "类型")
+    if (text_after_match ~ /^[ \t]*</) { generics_text = angle_bracket_content(text_after_match); judge_generics(generics_text); text_after_match = substr(text_after_match, ANGLE_CLOSING_POSITION + 1) }
+    if ((name_match[2] == "struct" || name_match[2] == "union") && match(text_after_match, /\{/)) same_line_fields(substr(text_after_match, RSTART + 1))
+    if (name_match[2] == "enum" && match(text_after_match, /\{/)) same_line_variants(substr(text_after_match, RSTART + 1))
+    remaining_code = text_after_match
   }
-  if (match(code, /(^|[^A-Za-z0-9_])impl[ \t]*</)) { g = angle(substr(code, RSTART + RLENGTH - 1)); judge_generics(g) }
+  if (match(code_line, /(^|[^A-Za-z0-9_])impl[ \t]*</)) { generics_text = angle_bracket_content(substr(code_line, RSTART + RLENGTH - 1)); judge_generics(generics_text) }
 
-  if (match(code, /^[ \t]*(pub(\([^)]*\))?[ \t]+)?(const|static)[ \t]+(mut[ \t]+)?([A-Za-z_][A-Za-z0-9_]*)[ \t]*:/, m))
-    if (ctx != "trait_impl") judge(m[5], "常量")
-  if (match(code, /^[ \t]*(pub(\([^)]*\))?[ \t]+)?mod[ \t]+([A-Za-z_][A-Za-z0-9_]*)/, m)) judge(m[3], "模块")
-  if (match(code, /macro_rules![ \t]*([A-Za-z_][A-Za-z0-9_]*)/, m)) judge(m[1], "宏")
+  if (match(code_line, /^[ \t]*(pub(\([^)]*\))?[ \t]+)?(const|static)[ \t]+(mut[ \t]+)?([A-Za-z_][A-Za-z0-9_]*)[ \t]*:/, name_match))
+    if (block_context != "trait_impl") judge_name(name_match[5], "常量")
+  if (match(code_line, /^[ \t]*(pub(\([^)]*\))?[ \t]+)?mod[ \t]+([A-Za-z_][A-Za-z0-9_]*)/, name_match)) judge_name(name_match[3], "模块")
+  if (match(code_line, /macro_rules![ \t]*([A-Za-z_][A-Za-z0-9_]*)/, name_match)) judge_name(name_match[1], "宏")
 
   # use … as 别名（跨行的 use 组也认）
-  if (code ~ /^[ \t]*(pub(\([^)]*\))?[ \t]+)?use[ \t]/) inuse = 1
-  if (inuse) {
-    work = code
-    while (match(work, /(^|[^A-Za-z0-9_])as[ \t]+([A-Za-z_][A-Za-z0-9_]*)/, m)) { judge(m[2], "别名"); work = substr(work, RSTART + RLENGTH) }
-    if (code ~ /;/) inuse = 0
+  if (code_line ~ /^[ \t]*(pub(\([^)]*\))?[ \t]+)?use[ \t]/) in_use_declaration = 1
+  if (in_use_declaration) {
+    remaining_code = code_line
+    while (match(remaining_code, /(^|[^A-Za-z0-9_])as[ \t]+([A-Za-z_][A-Za-z0-9_]*)/, name_match)) { judge_name(name_match[2], "别名"); remaining_code = substr(remaining_code, RSTART + RLENGTH) }
+    if (code_line ~ /;/) in_use_declaration = 0
   }
 
-  work = code
-  while (match(work, /'([A-Za-z_][A-Za-z0-9_]*):[ \t]*(loop|while|for|\{)/, m)) { judge("'" m[1], "标签"); work = substr(work, RSTART + RLENGTH) }
+  remaining_code = code_line
+  while (match(remaining_code, /'([A-Za-z_][A-Za-z0-9_]*):[ \t]*(loop|while|for|\{)/, name_match)) { judge_name("'" name_match[1], "标签"); remaining_code = substr(remaining_code, RSTART + RLENGTH) }
 
-  work = code
-  while (match(work, /(^|[^A-Za-z0-9_])let[ \t]+/)) {
-    rest = substr(work, RSTART + RLENGTH)
-    bind_pattern(pattern_head(rest), "变量")
-    work = rest
+  remaining_code = code_line
+  while (match(remaining_code, /(^|[^A-Za-z0-9_])let[ \t]+/)) {
+    text_after_match = substr(remaining_code, RSTART + RLENGTH)
+    bind_pattern(pattern_head(text_after_match), "变量")
+    remaining_code = text_after_match
   }
 
-  work = code
-  while (match(work, /(^|[^A-Za-z0-9_])for[ \t]+/)) {
-    rest = substr(work, RSTART + RLENGTH)
-    if (match(rest, /[ \t]in([ \t]|$)/)) {
-      g = substr(rest, 1, RSTART - 1)
-      if (g !~ /[{};=<]/) bind_pattern(g, "循环变量")
+  remaining_code = code_line
+  while (match(remaining_code, /(^|[^A-Za-z0-9_])for[ \t]+/)) {
+    text_after_match = substr(remaining_code, RSTART + RLENGTH)
+    if (match(text_after_match, /[ \t]in([ \t]|$)/)) {
+      generics_text = substr(text_after_match, 1, RSTART - 1)
+      if (generics_text !~ /[{};=<]/) bind_pattern(generics_text, "循环变量")
     }
-    work = rest
+    remaining_code = text_after_match
   }
 
-  closures(code)
-  if (code !~ /macro_rules!/) match_arms(code)
+  judge_closure_parameters(code_line)
+  if (code_line !~ /macro_rules!/) judge_match_arm_bindings(code_line)
 
-  if (ctx == "struct" || ctx == "fields") { line = code; sub(/^[ \t]*(#\[[^]]*\][ \t]*)+/, "", line); same_line_fields(line) }
-  if (ctx == "enum") { line = code; sub(/^[ \t]*(#\[[^]]*\][ \t]*)+/, "", line); variant_item(line) }
+  if (block_context == "struct" || block_context == "fields") { field_line = code_line; sub(/^[ \t]*(#\[[^]]*\][ \t]*)+/, "", field_line); same_line_fields(field_line) }
+  if (block_context == "enum") { field_line = code_line; sub(/^[ \t]*(#\[[^]]*\][ \t]*)+/, "", field_line); variant_item(field_line) }
 }
 
-function macro_vars(code,    work, m) {
-  work = code
-  while (match(work, /\$([A-Za-z_][A-Za-z0-9_]*)[ \t]*:[ \t]*([a-z_]+)/, m)) {
-    if (m[2] in FRAGMENT) judge(m[1], "宏变量")
-    work = substr(work, RSTART + RLENGTH)
+function judge_macro_variables(code_line,    remaining_code, name_match) {
+  remaining_code = code_line
+  while (match(remaining_code, /\$([A-Za-z_][A-Za-z0-9_]*)[ \t]*:[ \t]*([a-z_]+)/, name_match)) {
+    if (name_match[2] in MACRO_FRAGMENT_SPECIFIER) judge_name(name_match[1], "宏变量")
+    remaining_code = substr(remaining_code, RSTART + RLENGTH)
   }
 }
 
-# 从文本开头的 < 起，取出配对的 <…> 里面的内容；ANGLE_END 是收尾的 > 在 text 里的位置
-function angle(text,    i, n, c, depth, start) {
-  n = length(text); depth = 0; start = 0; ANGLE_END = n
-  for (i = 1; i <= n; i++) {
-    c = substr(text, i, 1)
-    if (c == "<") { depth++; if (depth == 1) start = i + 1 }
-    else if (c == ">" && substr(text, i - 1, 1) != "-") {
-      depth--
-      if (depth == 0) { ANGLE_END = i; return substr(text, start, i - start) }
+# 从文本开头的 < 起，取出配对的 <…> 里面的内容；ANGLE_CLOSING_POSITION 是收尾的 > 在 text 里的位置
+function angle_bracket_content(text,    position, text_length, character, nesting_depth, content_start) {
+  text_length = length(text); nesting_depth = 0; content_start = 0; ANGLE_CLOSING_POSITION = text_length
+  for (position = 1; position <= text_length; position++) {
+    character = substr(text, position, 1)
+    if (character == "<") { nesting_depth++; if (nesting_depth == 1) content_start = position + 1 }
+    else if (character == ">" && substr(text, position - 1, 1) != "-") {
+      nesting_depth--
+      if (nesting_depth == 0) { ANGLE_CLOSING_POSITION = position; return substr(text, content_start, position - content_start) }
     }
   }
-  return (start > 0) ? substr(text, start) : ""
+  return (content_start > 0) ? substr(text, content_start) : ""
 }
 
-function judge_generics(g,    n, items, i, item, m) {
-  n = split_top(g, items)
-  for (i = 1; i <= n; i++) {
-    item = items[i]; sub(/^[ \t]+/, "", item)
-    if (match(item, /^'([A-Za-z_][A-Za-z0-9_]*)/, m)) judge("'" m[1], "生命周期")
-    else if (match(item, /^const[ \t]+([A-Za-z_][A-Za-z0-9_]*)/, m)) judge(m[1], "泛型参数")
-    else if (match(item, /^([A-Za-z_][A-Za-z0-9_]*)/, m)) judge(m[1], "泛型参数")
+function judge_generics(generics_text,    item_count, items, item_index, item, name_match) {
+  item_count = split_top_level_commas(generics_text, items)
+  for (item_index = 1; item_index <= item_count; item_index++) {
+    item = items[item_index]; sub(/^[ \t]+/, "", item)
+    if (match(item, /^'([A-Za-z_][A-Za-z0-9_]*)/, name_match)) judge_name("'" name_match[1], "生命周期")
+    else if (match(item, /^const[ \t]+([A-Za-z_][A-Za-z0-9_]*)/, name_match)) judge_name(name_match[1], "泛型参数")
+    else if (match(item, /^([A-Za-z_][A-Za-z0-9_]*)/, name_match)) judge_name(name_match[1], "泛型参数")
   }
 }
 
 # 按顶层逗号切开（括号、方括号、花括号、尖括号里的逗号不算；-> 的 > 不算）
-function split_top(text, out,    i, n, c, depth, item, count) {
-  depth = 0; item = ""; count = 0; n = length(text)
-  for (i = 1; i <= n; i++) {
-    c = substr(text, i, 1)
-    if (c == "(" || c == "[" || c == "{" || c == "<") depth++
-    else if (c == ")" || c == "]" || c == "}") depth--
-    else if (c == ">" && substr(text, i - 1, 1) != "-") depth--
-    else if (c == "," && depth == 0) { out[++count] = item; item = ""; continue }
-    item = item c
+function split_top_level_commas(text, items,    position, text_length, character, nesting_depth, item, item_count) {
+  nesting_depth = 0; item = ""; item_count = 0; text_length = length(text)
+  for (position = 1; position <= text_length; position++) {
+    character = substr(text, position, 1)
+    if (character == "(" || character == "[" || character == "{" || character == "<") nesting_depth++
+    else if (character == ")" || character == "]" || character == "}") nesting_depth--
+    else if (character == ">" && substr(text, position - 1, 1) != "-") nesting_depth--
+    else if (character == "," && nesting_depth == 0) { items[++item_count] = item; item = ""; continue }
+    item = item character
   }
-  if (item ~ /[^ \t]/) out[++count] = item
-  return count
+  if (item ~ /[^ \t]/) items[++item_count] = item
+  return item_count
 }
 
 # 模式到哪儿为止：顶层的 =（不是 == / =>）、单冒号（类型标注）、分号，或者多出来的右括号
-function pattern_head(text,    i, n, c, depth, next_char, prev_char) {
-  depth = 0; n = length(text)
-  for (i = 1; i <= n; i++) {
-    c = substr(text, i, 1); next_char = substr(text, i + 1, 1); prev_char = substr(text, i - 1, 1)
-    if (c == "(" || c == "[" || c == "{") depth++
-    else if (c == ")" || c == "]" || c == "}") { if (depth == 0) return substr(text, 1, i - 1); depth-- }
-    else if (depth == 0 && c == "=" && next_char != "=" && next_char != ">") return substr(text, 1, i - 1)
-    else if (depth == 0 && c == ":" && next_char != ":" && prev_char != ":") return substr(text, 1, i - 1)
-    else if (depth == 0 && c == ";") return substr(text, 1, i - 1)
+function pattern_head(text,    position, text_length, character, nesting_depth, next_char, previous_character) {
+  nesting_depth = 0; text_length = length(text)
+  for (position = 1; position <= text_length; position++) {
+    character = substr(text, position, 1); next_char = substr(text, position + 1, 1); previous_character = substr(text, position - 1, 1)
+    if (character == "(" || character == "[" || character == "{") nesting_depth++
+    else if (character == ")" || character == "]" || character == "}") { if (nesting_depth == 0) return substr(text, 1, position - 1); nesting_depth-- }
+    else if (nesting_depth == 0 && character == "=" && next_char != "=" && next_char != ">") return substr(text, 1, position - 1)
+    else if (nesting_depth == 0 && character == ":" && next_char != ":" && previous_character != ":") return substr(text, 1, position - 1)
+    else if (nesting_depth == 0 && character == ";") return substr(text, 1, position - 1)
   }
   return text
 }
 
 # 从模式里挑出绑定：跳过路径段、字段名、变体名、关键字、方法调用
-function bind_pattern(pattern, kind,    rest, consumed, name, before, after) {
-  rest = pattern; consumed = ""
-  while (match(rest, /[A-Za-z_][A-Za-z0-9_]*/)) {
-    name = substr(rest, RSTART, RLENGTH)
-    before = consumed substr(rest, 1, RSTART - 1)
-    after = substr(rest, RSTART + RLENGTH)
-    consumed = before name
-    rest = after
-    if (before ~ /(::|\.|'|\$|[0-9])[ \t]*$/) continue
-    if (after ~ /^[ \t]*(::|\(|\{|!)/) continue
-    if (after ~ /^[ \t]*:([^:]|$)/) continue
+function bind_pattern(pattern, name_kind,    remaining_pattern, consumed, name, text_before_name, text_after_name) {
+  remaining_pattern = pattern; consumed = ""
+  while (match(remaining_pattern, /[A-Za-z_][A-Za-z0-9_]*/)) {
+    name = substr(remaining_pattern, RSTART, RLENGTH)
+    text_before_name = consumed substr(remaining_pattern, 1, RSTART - 1)
+    text_after_name = substr(remaining_pattern, RSTART + RLENGTH)
+    consumed = text_before_name name
+    remaining_pattern = text_after_name
+    if (text_before_name ~ /(::|\.|'|\$|[0-9])[ \t]*$/) continue
+    if (text_after_name ~ /^[ \t]*(::|\(|\{|!)/) continue
+    if (text_after_name ~ /^[ \t]*:([^:]|$)/) continue
     if (name ~ /^[A-Z]/) continue
-    if (name in PATKW) continue
-    judge(name, kind)
+    if (name in PATTERN_KEYWORD) continue
+    judge_name(name, name_kind)
   }
 }
 
 # 函数参数：可能跨行，括号配对着读，读到收尾的 ) 为止
-function scan_params(text,    i, n, c) {
-  n = length(text)
-  for (i = 1; i <= n; i++) {
-    c = substr(text, i, 1)
-    if (!sigstarted) {
-      if (c == "(") { sigstarted = 1; sigdepth = 1; sigangle = 0; parambuf = ""; continue }
-      if (c == "{" || c == ";") { sig = 0; return }
+function scan_parameters(text,    position, text_length, character) {
+  text_length = length(text)
+  for (position = 1; position <= text_length; position++) {
+    character = substr(text, position, 1)
+    if (!signature_parameters_started) {
+      if (character == "(") { signature_parameters_started = 1; signature_bracket_depth = 1; signature_angle_depth = 0; parameter_text = ""; continue }
+      if (character == "{" || character == ";") { in_function_signature = 0; return }
       continue
     }
-    if (c == "(" || c == "[" || c == "{") sigdepth++
-    else if (c == "<") sigangle++
-    else if (c == ">" && substr(text, i - 1, 1) != "-") { if (sigangle > 0) sigangle-- }
-    else if (c == ")" || c == "]" || c == "}") {
-      sigdepth--
-      if (sigdepth == 0) { param_chunk(parambuf); parambuf = ""; sig = 0; return }
+    if (character == "(" || character == "[" || character == "{") signature_bracket_depth++
+    else if (character == "<") signature_angle_depth++
+    else if (character == ">" && substr(text, position - 1, 1) != "-") { if (signature_angle_depth > 0) signature_angle_depth-- }
+    else if (character == ")" || character == "]" || character == "}") {
+      signature_bracket_depth--
+      if (signature_bracket_depth == 0) { judge_parameter_chunk(parameter_text); parameter_text = ""; in_function_signature = 0; return }
     }
-    else if (c == "," && sigdepth == 1 && sigangle == 0) { param_chunk(parambuf); parambuf = ""; continue }
-    parambuf = parambuf c
+    else if (character == "," && signature_bracket_depth == 1 && signature_angle_depth == 0) { judge_parameter_chunk(parameter_text); parameter_text = ""; continue }
+    parameter_text = parameter_text character
   }
-  parambuf = parambuf " "
+  parameter_text = parameter_text " "
 }
-function param_chunk(chunk) { if (chunk ~ /[^ \t]/) bind_pattern(pattern_head(chunk), "参数") }
+function judge_parameter_chunk(chunk) { if (chunk ~ /[^ \t]/) bind_pattern(pattern_head(chunk), "参数") }
 
-# 闭包参数 |a, b: T|：开头那根 | 前面得是 ( , = { move return 或者行首
-function closures(code,    i, n, k, prev, params, items, count, index_of_item) {
-  n = length(code)
-  for (i = 1; i <= n; i++) {
-    if (substr(code, i, 1) != "|") continue
-    if (substr(code, i + 1, 1) == "|") { i++; continue }
-    prev = substr(code, 1, i - 1); sub(/[ \t]+$/, "", prev)
-    if (!(prev == "" || prev ~ /[(,={]$/ || prev ~ /(^|[^A-Za-z0-9_])(move|return)$/)) continue
-    k = index(substr(code, i + 1), "|")
-    if (k == 0) return
-    params = substr(code, i + 1, k - 1)
+# 闭包参数 |left, right: Value|：开头那根 | 前面得是 ( , = { move return 或者行首
+function judge_closure_parameters(code_line,    position, code_length, closing_bar_offset, text_before_bar, closure_parameter_text, items, item_count, item_index) {
+  code_length = length(code_line)
+  for (position = 1; position <= code_length; position++) {
+    if (substr(code_line, position, 1) != "|") continue
+    if (substr(code_line, position + 1, 1) == "|") { position++; continue }
+    text_before_bar = substr(code_line, 1, position - 1); sub(/[ \t]+$/, "", text_before_bar)
+    if (!(text_before_bar == "" || text_before_bar ~ /[(,={]$/ || text_before_bar ~ /(^|[^A-Za-z0-9_])(move|return)$/)) continue
+    closing_bar_offset = index(substr(code_line, position + 1), "|")
+    if (closing_bar_offset == 0) return
+    closure_parameter_text = substr(code_line, position + 1, closing_bar_offset - 1)
     delete items
-    count = split_top(params, items)
-    for (index_of_item = 1; index_of_item <= count; index_of_item++)
-      bind_pattern(pattern_head(items[index_of_item]), "闭包参数")
-    i = i + k
+    item_count = split_top_level_commas(closure_parameter_text, items)
+    for (item_index = 1; item_index <= item_count; item_index++)
+      bind_pattern(pattern_head(items[item_index]), "闭包参数")
+    position = position + closing_bar_offset
   }
 }
 
 # match 臂：=> 往回找到模式的起点（顶层的 , { ( [ 或者行首），守卫 if 之后的不算
-function match_arms(code,    work, position, j, c, depth, start, pattern) {
-  work = code
-  while ((position = index(work, "=>")) > 0) {
-    depth = 0; start = 1
-    for (j = position - 1; j >= 1; j--) {
-      c = substr(work, j, 1)
-      if (c == ")" || c == "]" || c == "}") depth++
-      else if (c == "(" || c == "[" || c == "{") { if (depth == 0) { start = j + 1; break } depth-- }
-      else if (c == "," && depth == 0) { start = j + 1; break }
+function judge_match_arm_bindings(code_line,    remaining_code, position, scan_position, character, nesting_depth, pattern_start, pattern) {
+  remaining_code = code_line
+  while ((position = index(remaining_code, "=>")) > 0) {
+    nesting_depth = 0; pattern_start = 1
+    for (scan_position = position - 1; scan_position >= 1; scan_position--) {
+      character = substr(remaining_code, scan_position, 1)
+      if (character == ")" || character == "]" || character == "}") nesting_depth++
+      else if (character == "(" || character == "[" || character == "{") { if (nesting_depth == 0) { pattern_start = scan_position + 1; break } nesting_depth-- }
+      else if (character == "," && nesting_depth == 0) { pattern_start = scan_position + 1; break }
     }
-    pattern = substr(work, start, position - start)
+    pattern = substr(remaining_code, pattern_start, position - pattern_start)
     sub(/^[ \t]*\|/, "", pattern)
     if (match(pattern, /(^|[^A-Za-z0-9_])if[ \t]/)) pattern = substr(pattern, 1, RSTART)
     bind_pattern(pattern, "匹配绑定")
-    work = substr(work, position + 2)
+    remaining_code = substr(remaining_code, position + 2)
   }
 }
 
 # struct 体里的字段（一行里写几个也认）
-function same_line_fields(text,    rest, m) {
-  rest = text
-  while (match(rest, /(^|[,{])[ \t]*(pub(\([^)]*\))?[ \t]+)?([A-Za-z_][A-Za-z0-9_]*)[ \t]*:([^:]|$)/, m)) {
-    judge(m[4], "字段")
-    rest = substr(rest, RSTART + RLENGTH)
+function same_line_fields(text,    remaining_text, field_match) {
+  remaining_text = text
+  while (match(remaining_text, /(^|[,{])[ \t]*(pub(\([^)]*\))?[ \t]+)?([A-Za-z_][A-Za-z0-9_]*)[ \t]*:([^:]|$)/, field_match)) {
+    judge_name(field_match[4], "字段")
+    remaining_text = substr(remaining_text, RSTART + RLENGTH)
   }
 }
 
 # enum 头所在那一行里就写了成员：enum Choice { First, Second(u8), Third { value: u8 } }
-function same_line_variants(text,    i, n, c, depth, item) {
-  depth = 0; item = ""; n = length(text)
-  for (i = 1; i <= n; i++) {
-    c = substr(text, i, 1)
-    if (c == "(" || c == "{" || c == "[" || c == "<") depth++
-    else if (c == ")" || c == "]") depth--
-    else if (c == ">" && substr(text, i - 1, 1) != "-") depth--
-    else if (c == "}") { if (depth == 0) { variant_item(item); return } depth-- }
-    else if (c == "," && depth == 0) { variant_item(item); item = ""; continue }
-    item = item c
+function same_line_variants(text,    position, text_length, character, nesting_depth, item) {
+  nesting_depth = 0; item = ""; text_length = length(text)
+  for (position = 1; position <= text_length; position++) {
+    character = substr(text, position, 1)
+    if (character == "(" || character == "{" || character == "[" || character == "<") nesting_depth++
+    else if (character == ")" || character == "]") nesting_depth--
+    else if (character == ">" && substr(text, position - 1, 1) != "-") nesting_depth--
+    else if (character == "}") { if (nesting_depth == 0) { variant_item(item); return } nesting_depth-- }
+    else if (character == "," && nesting_depth == 0) { variant_item(item); item = ""; continue }
+    item = item character
   }
   variant_item(item)
 }
-function variant_item(item,    m) {
-  if (match(item, /^[ \t]*(#\[[^]]*\][ \t]*)*([A-Za-z_][A-Za-z0-9_]*)/, m)) {
-    judge(m[2], "枚举成员")
+function variant_item(item,    variant_match) {
+  if (match(item, /^[ \t]*(#\[[^]]*\][ \t]*)*([A-Za-z_][A-Za-z0-9_]*)/, variant_match)) {
+    judge_name(variant_match[2], "枚举成员")
     if (match(item, /\{/)) same_line_fields(substr(item, RSTART + 1))
   }
 }
 
 # ── 判一个名字 ──────────────────────────────────────────
-function judge(name, kind,    core, key, lowered, n, parts, i, part, stripped, stem, reason) {
-  core = name; sub(/^'/, "", core); sub(/^r#/, "", core)
-  if (core == "" || (core in NONAME)) return
-  key = FNR SUBSEP kind SUBSEP name
-  if (key in seen) return
-  seen[key] = 1
-  total_decls++
-  gsub(/^_+|_+$/, "", core)
-  if (core == "") return
-  if (length(core) == 1) { violation(kind, name, "单字母"); return }
-  lowered = gensub(/([a-z0-9])([A-Z])/, "\\1_\\2", "g", core)
-  lowered = gensub(/([A-Z]+)([A-Z][a-z])/, "\\1_\\2", "g", lowered)
-  n = split(tolower(lowered), parts, /_+/)
+function judge_name(name, name_kind,    core_name, judged_key, snake_case_name, part_count, parts, part_index, part, part_without_digits, singular_stem, reason) {
+  core_name = name; sub(/^'/, "", core_name); sub(/^r#/, "", core_name)
+  if (core_name == "" || (core_name in NOT_A_DECLARED_NAME)) return
+  judged_key = FNR SUBSEP name_kind SUBSEP name
+  if (judged_key in judged_names) return
+  judged_names[judged_key] = 1
+  total_declarations++
+  gsub(/^_+|_+$/, "", core_name)
+  if (core_name == "") return
+  if (length(core_name) == 1) { print_violation(name_kind, name, "单字母"); return }
+  snake_case_name = gensub(/([a-z0-9])([A-Z])/, "\\1_\\2", "g", core_name)
+  snake_case_name = gensub(/([A-Z]+)([A-Z][a-z])/, "\\1_\\2", "g", snake_case_name)
+  part_count = split(tolower(snake_case_name), parts, /_+/)
   reason = ""
-  for (i = 1; i <= n; i++) {
-    part = parts[i]
+  for (part_index = 1; part_index <= part_count; part_index++) {
+    part = parts[part_index]
     if (part == "" || part ~ /^[0-9]+$/) continue
     if (part ~ /^[uif](8|16|32|64|128)$/) continue
-    stripped = part; sub(/[0-9]+$/, "", stripped)
-    stem = (stripped ~ /..s$/) ? substr(stripped, 1, length(stripped) - 1) : ""
-    if ((part in ALLOW) || (stripped in ALLOW) || (stem != "" && (stem in ALLOW))) continue
-    if (part == "a" && i > 1 && i < n) continue
+    part_without_digits = part; sub(/[0-9]+$/, "", part_without_digits)
+    singular_stem = (part_without_digits ~ /..s$/) ? substr(part_without_digits, 1, length(part_without_digits) - 1) : ""
+    if ((part in REGISTERED_ABBREVIATION) || (part_without_digits in REGISTERED_ABBREVIATION) || (singular_stem != "" && (singular_stem in REGISTERED_ABBREVIATION))) continue
+    if (part == "a" && part_index > 1 && part_index < part_count) continue
     if (part ~ /^[a-z][0-9]+$/ && (substr(part, 1, 1) in NUMBERED_LETTER)) continue
     if (part ~ /^[a-z][0-9]*$/) { reason = reason (reason == "" ? "" : "；") "「" part "」是单字母" (part ~ /[0-9]/ ? "加数字" : ""); continue }
-    if (stripped in ABBR) { reason = reason (reason == "" ? "" : "；") "「" part "」是缩写，写全：" ABBR[stripped]; continue }
-    if (stem != "" && (stem in ABBR)) { reason = reason (reason == "" ? "" : "；") "「" part "」是缩写的复数，写全：" ABBR[stem]; continue }
+    if (part_without_digits in ABBREVIATION_FULL_FORM) { reason = reason (reason == "" ? "" : "；") "「" part "」是缩写，写全：" ABBREVIATION_FULL_FORM[part_without_digits]; continue }
+    if (singular_stem != "" && (singular_stem in ABBREVIATION_FULL_FORM)) { reason = reason (reason == "" ? "" : "；") "「" part "」是缩写的复数，写全：" ABBREVIATION_FULL_FORM[singular_stem]; continue }
   }
-  if (reason != "") violation(kind, name, reason)
+  if (reason != "") print_violation(name_kind, name, reason)
 }
-function violation(kind, name, reason) { printf "V\t%s\t%d\t%s\t%s\t%s\n", rel, FNR, kind, name, reason }
+function print_violation(name_kind, name, reason) { printf "VIOLATION\t%s\t%d\t%s\t%s\t%s\n", relative_path, FNR, name_kind, name, reason }
 AWK
 )"
 
-report="$(mktemp)"; trap 'rm -f "$report"' EXIT
-NAMING_ABBR="$ABBR_TABLE" NAMING_ALLOW="${!REGISTERED[*]}" NAMING_NUMBERED="${!NUMBERED[*]}" NAMING_ROOT="$ROOT" \
-  awk "$NAMING_AWK" "${files[@]}" > "$report" \
+report_file="$(mktemp)"; trap 'rm -f "$report_file"' EXIT
+NAMING_ABBR="$ABBR_TABLE" NAMING_ALLOW="${!REGISTERED[*]}" NAMING_NUMBERED="${!NUMBERED[*]}" NAMING_ROOT="$PROJECT_ROOT" \
+  awk "$NAMING_AWK" "${rust_files[@]}" > "$report_file" \
   || die "naming-lint 自己的扫描程序出错了（awk 退出码非零）" \
          "这是本脚本的缺陷，不是被查代码的问题。把上面 awk 的报错连同文件名报给维护 singlefs-ai-sop 的人。"
 
-viol_lines=(); mark_lines=(); exempt_lines=(); ndecl=0
-while IFS=$'\t' read -r tag field1 field2 field3 field4 field5; do
-  case "$tag" in
-    V) viol_lines+=("$field1:$field2  $field3 $field4 —— $field5") ;;
-    M) mark_lines+=("$field1:$field2  naming-lint:external 后面没写理由") ;;
-    X) exempt_lines+=("$field1:$field2 —— $field3") ;;
-    S) ndecl="$field1" ;;
+violation_lines=(); mark_lines=(); exempt_lines=(); declaration_count=0
+while IFS=$'\t' read -r record_tag record_fields; do
+  case "$record_tag" in
+    VIOLATION)
+      IFS=$'\t' read -r record_file record_line_number record_name_kind record_name record_reason <<<"$record_fields"
+      violation_lines+=("$record_file:$record_line_number  $record_name_kind $record_name —— $record_reason") ;;
+    MISSING_REASON)
+      IFS=$'\t' read -r record_file record_line_number <<<"$record_fields"
+      mark_lines+=("$record_file:$record_line_number  naming-lint:external 后面没写理由") ;;
+    EXEMPTED)
+      IFS=$'\t' read -r record_file record_line_number record_reason <<<"$record_fields"
+      exempt_lines+=("$record_file:$record_line_number —— $record_reason") ;;
+    DECLARATION_TOTAL) declaration_count="$record_fields" ;;
   esac
-done < "$report"
+done < "$report_file"
 
 if [[ ${#exempt_lines[@]} -gt 0 ]]; then
   warn "按 naming-lint:external 豁免 ${#exempt_lines[@]} 行（名字是外部定的）："
@@ -765,16 +771,16 @@ if [[ ${#mark_lines[@]} -gt 0 ]]; then
   bad "${#mark_lines[@]} 处 naming-lint:external 没写理由，那几行照常查"
   howto "在标记后面写清为什么这个名字不归我们定，例： // naming-lint:external 字段名照外部格式的规范原样写" \
         "没有理由的豁免等于把这一行的检查关掉，而看的人不知道为什么。"
-  fails=$((fails+1))
+  failure_count=$((failure_count+1))
 fi
-if [[ ${#viol_lines[@]} -gt 0 ]]; then
-  for viol_line in "${viol_lines[@]}"; do say "        $viol_line"; done
-  bad "${#viol_lines[@]} 处名字不合命名纪律（查了 ${#files[@]} 个 .rs 文件、$ndecl 个声明的名字）"
+if [[ ${#violation_lines[@]} -gt 0 ]]; then
+  for violation_line in "${violation_lines[@]}"; do say "        $violation_line"; done
+  bad "${#violation_lines[@]} 处名字不合命名纪律（查了 ${#rust_files[@]} 个 .rs 文件、$declaration_count 个声明的名字）"
   howto "照 rules/code-discipline.md 的「名字」一节改：缩写写全，单字母按它是什么来命名，名字长不要紧。" \
         "项目自己的领域缩写（lba、crc 这类）确实要用，就登记进 .claude/abbreviations：<缩写>  # <全称与含义>" \
         "名字是外部定的（外部格式的字段名这类），在那一行写 // naming-lint:external <为什么>" \
         "「e57」这类是项目登记过的编号，就在 .claude/abbreviations 登记 e<数字>  # <登记在哪张表>"
-  fails=$((fails+1))
+  failure_count=$((failure_count+1))
 fi
-[[ $fails -eq 0 ]] || exit 1
-ok "命名纪律通过：查了 ${#files[@]} 个 .rs 文件、$ndecl 个声明的名字"
+[[ $failure_count -eq 0 ]] || exit 1
+ok "命名纪律通过：查了 ${#rust_files[@]} 个 .rs 文件、$declaration_count 个声明的名字"

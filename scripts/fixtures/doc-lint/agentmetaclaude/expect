@@ -1,0 +1,2 @@
+exit=1
+want=.claude/agents/judge.md  agent 定义缺 frontmatter 的 name 或 description

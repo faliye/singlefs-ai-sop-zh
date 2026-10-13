@@ -5,7 +5,7 @@
 
 读 settings.json 的钩子、判「一条注册命令指向哪个钩子」都只在这一处。hooks-registered.sh 判「注册着没有、事件挂全没有」，
 gate-overlap.py 判「新钩子和谁挂在同一个触发点上」，两边各写一份的话，一边认了新写法、另一边没跟，
-就会一个说注册着、一个说找不到（rules/kb-discipline.md 第 4 条）。
+就会一个说注册着、一个说找不到（rules/kb-discipline.md 第 4 条「矛盾比空白更糟」）。
 
 用法：
   hook-registrations.py <settings.json>               全部注册
@@ -27,9 +27,9 @@ def registered_hooks(settings_path):
         settings = json.load(settings_file)
     registrations = []
     for event_name, event_entries in (settings.get('hooks') or {}).items():
-        for entry in event_entries or []:
-            matcher = entry.get('matcher') or ''
-            for hook in entry.get('hooks') or []:
+        for matcher_entry in event_entries or []:
+            matcher = matcher_entry.get('matcher') or ''
+            for hook in matcher_entry.get('hooks') or []:
                 command = hook.get('command') or ''
                 if command:
                     registrations.append((event_name, matcher, command))
@@ -54,8 +54,9 @@ def main():
         arguments = arguments[2:]
     if len(arguments) != 1:
         sys.exit(1)
+    settings_path = arguments[0]
     try:
-        registrations = registered_hooks(arguments[0])
+        registrations = registered_hooks(settings_path)
     except (OSError, ValueError, AttributeError, TypeError):
         sys.exit(1)
     for event_name, matcher, command in registrations:

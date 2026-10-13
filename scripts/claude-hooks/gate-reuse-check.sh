@@ -33,7 +33,7 @@
 set -uo pipefail
 HOOK_DIRECTORY="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PACKAGE_ROOT="$(cd "$HOOK_DIRECTORY/../.." && pwd)"
-GATE_OVERLAP="$PACKAGE_ROOT/scripts/gate-overlap.py"
+GATE_OVERLAP_SCRIPT="$PACKAGE_ROOT/scripts/gate-overlap.py"
 STATE_DIRECTORY="${GATE_REUSE_CHECK_STATE_DIRECTORY:-${TMPDIR:-/tmp}/gate-reuse-check}"
 source "$PACKAGE_ROOT/scripts/claude-hook-lib.sh"
 source "$PACKAGE_ROOT/scripts/preflight.sh"
@@ -61,13 +61,13 @@ judge_stop() { # judge_stop < 钩子 JSON → 退出码 0 放行、2 拦下、1 
     return 1
   fi
   # 外层设的 diff 窗口不带进来：收工钩子按这个会话开始的时刻算
-  judgement="$(env -u GATE_DIFF_BASE -u GATE_BASE python3 "$GATE_OVERLAP" --touched-by "$transcript" "$project_root" 2>&1)"
+  judgement="$(env -u GATE_DIFF_BASE -u GATE_BASE python3 "$GATE_OVERLAP_SCRIPT" --touched-by "$transcript" "$project_root" 2>&1)"
   judgement_exit_code=$?
   case "$judgement_exit_code" in
     0|77) return 0 ;;
     1) ;;
     *)
-      printf '%s\n' "! gate-reuse-check：判定脚本 $GATE_OVERLAP 退出码 $judgement_exit_code（判不了），这一次收工没判（放行）。它的输出：" \
+      printf '%s\n' "! gate-reuse-check：判定脚本 $GATE_OVERLAP_SCRIPT 退出码 $judgement_exit_code（判不了），这一次收工没判（放行）。它的输出：" \
         "$judgement" >&2
       return 1 ;;
   esac
@@ -88,46 +88,46 @@ judge_stop() { # judge_stop < 钩子 JSON → 退出码 0 放行、2 拦下、1 
 }
 
 run_selftest() {
-  local scratch project base_date session_date passed=0 failed=0
-  scratch="$(mktemp -d)"
-  project="$scratch/project"
+  local scratch_directory selftest_project base_commit_date session_date passed_case_count=0 failed_case_count=0
+  scratch_directory="$(mktemp -d)"
+  selftest_project="$scratch_directory/project"
   # 收工钩子的窗口从「会话开始之前的最后一个提交」算起：起点提交钉在会话记录的第一个时间戳之前
-  base_date="$(date -u -d '-2 days' +%Y-%m-%dT%H:%M:%SZ)"
+  base_commit_date="$(date -u -d '-2 days' +%Y-%m-%dT%H:%M:%SZ)"
   session_date="$(date -u -d '-1 day' +%Y-%m-%dT%H:%M:%SZ)"
-  mkdir -p "$project/.claude/hooks"
-  git -C "$project" init -q
-  printf '#!/usr/bin/env bash\n# 已有的钩子：拦 Bash 里的一种写法\necho "拦一种写法"\n' > "$project/.claude/hooks/old-guard.sh"
+  mkdir -p "$selftest_project/.claude/hooks"
+  git -C "$selftest_project" init -q
+  printf '#!/usr/bin/env bash\n# 已有的钩子：拦 Bash 里的一种写法\necho "拦一种写法"\n' > "$selftest_project/.claude/hooks/old-guard.sh"
   printf '{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"bash .claude/hooks/old-guard.sh"},{"type":"command","command":"bash .claude/hooks/new-guard.sh"}]}]}}\n' \
-    > "$project/.claude/settings.json"
-  git -C "$project" add -A
-  GIT_COMMITTER_DATE="$base_date" GIT_AUTHOR_DATE="$base_date" \
-    git -C "$project" -c user.name=selftest -c user.email=selftest@invalid commit -qm base
-  printf '#!/usr/bin/env bash\n# 新加的钩子：拦 Bash 里的另一种写法\necho "拦另一种写法"\n' > "$project/.claude/hooks/new-guard.sh"
+    > "$selftest_project/.claude/settings.json"
+  git -C "$selftest_project" add -A
+  GIT_COMMITTER_DATE="$base_commit_date" GIT_AUTHOR_DATE="$base_commit_date" \
+    git -C "$selftest_project" -c user.name=selftest -c user.email=selftest@invalid commit -qm base
+  printf '#!/usr/bin/env bash\n# 新加的钩子：拦 Bash 里的另一种写法\necho "拦另一种写法"\n' > "$selftest_project/.claude/hooks/new-guard.sh"
 
   transcript_with() { # transcript_with <文件名> <工具名> <输入的 JSON 对象>：写一份只有这一次工具调用的会话记录
     printf '{"type":"user","timestamp":"%s","message":{"role":"user","content":"开工"}}\n{"type":"assistant","timestamp":"%s","message":{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"%s","input":%s}]}}\n' \
-      "$session_date" "$session_date" "$2" "$3" > "$scratch/$1"
+      "$session_date" "$session_date" "$2" "$3" > "$scratch_directory/$1"
   }
-  transcript_with writes.jsonl Write "{\"file_path\":\"$project/.claude/hooks/new-guard.sh\",\"content\":\"…\"}"
-  transcript_with reads.jsonl Read "{\"file_path\":\"$project/.claude/hooks/new-guard.sh\"}"
+  transcript_with writes.jsonl Write "{\"file_path\":\"$selftest_project/.claude/hooks/new-guard.sh\",\"content\":\"…\"}"
+  transcript_with reads.jsonl Read "{\"file_path\":\"$selftest_project/.claude/hooks/new-guard.sh\"}"
   transcript_with runs-with-redirect.jsonl Bash '{"command":"bash .claude/hooks/new-guard.sh --selftest > /tmp/log 2>&1 | tail -3; cp .claude/hooks/new-guard.sh /tmp/backup.sh"}'
   transcript_with bash-heredoc.jsonl Bash '{"command":"cat > .claude/hooks/new-guard.sh <<'"'"'EOF'"'"'\necho > not-a-target\nEOF"}'
   transcript_with bash-cd.jsonl Bash '{"command":"cd .claude/hooks && printf x > new-guard.sh"}'
-  transcript_with edits-existing.jsonl Edit "{\"file_path\":\"$project/.claude/hooks/old-guard.sh\",\"old_string\":\"a\",\"new_string\":\"b\"}"
+  transcript_with edits-existing.jsonl Edit "{\"file_path\":\"$selftest_project/.claude/hooks/old-guard.sh\",\"old_string\":\"a\",\"new_string\":\"b\"}"
 
   stop_input() { # stop_input <事件> <stop_hook_active> <会话记录> [子 agent 自己的会话记录]
     printf '{"hook_event_name":"%s","session_id":"selftest-%s","stop_hook_active":%s,"transcript_path":"%s","cwd":"%s"%s}' \
-      "$1" "$$" "$2" "$scratch/$3" "$project" "${4:+,\"agent_id\":\"sub\",\"agent_transcript_path\":\"$scratch/$4\"}"
+      "$1" "$$" "$2" "$scratch_directory/$3" "$selftest_project" "${4:+,\"agent_id\":\"sub\",\"agent_transcript_path\":\"$scratch_directory/$4\"}"
   }
   expect_stop() { # expect_stop <情形> <期望退出码> <输出里要有的片段或空> <钩子 JSON>
     local label="$1" wanted_exit_code="$2" wanted_text="$3" output exit_code
-    output="$(printf '%s' "$4" | env -u CLAUDE_PROJECT_DIR GATE_REUSE_CHECK_STATE_DIRECTORY="$scratch/state" \
+    output="$(printf '%s' "$4" | env -u CLAUDE_PROJECT_DIR GATE_REUSE_CHECK_STATE_DIRECTORY="$scratch_directory/state" \
       bash "$HOOK_DIRECTORY/gate-reuse-check.sh" 2>&1)"
     exit_code=$?
     if [[ "$exit_code" == "$wanted_exit_code" && ( -z "$wanted_text" || "$output" == *"$wanted_text"* ) ]]; then
-      passed=$((passed + 1))
+      passed_case_count=$((passed_case_count + 1))
     else
-      failed=$((failed + 1))
+      failed_case_count=$((failed_case_count + 1))
       printf '  ✗ 自证「%s」：期望退出 %s%s，实测 %s\n' "$label" "$wanted_exit_code" "${wanted_text:+、输出含「$wanted_text」}" "$exit_code"   # gate-lint:detail
       printf '%s\n' "$output" | sed 's/^/      /'
     fi
@@ -139,31 +139,31 @@ run_selftest() {
   expect_stop "Bash 先 cd 再写的也算" 2 "new-guard.sh 是新加的" "$(stop_input Stop false bash-cd.jsonl)"
   expect_stop "只读、只跑、只备份的命令不算写" 0 "" "$(stop_input Stop false runs-with-redirect.jsonl)"
   expect_stop "别的会话写的钩子不拦这个会话" 0 "" "$(stop_input Stop false reads.jsonl)"
-  printf 'echo "多拦一种写法"\n' >> "$project/.claude/hooks/old-guard.sh"
+  printf 'echo "多拦一种写法"\n' >> "$selftest_project/.claude/hooks/old-guard.sh"
   expect_stop "往开工前就有的钩子里追加不算新建" 0 "" "$(stop_input Stop false edits-existing.jsonl)"
   expect_stop "子 agent 认它自己的会话记录" 2 "new-guard.sh 是新加的" "$(stop_input SubagentStop false reads.jsonl writes.jsonl)"
   expect_stop "输入不是 JSON 不拦" 1 "不是 JSON 对象" "不是 JSON"
   expect_stop "会话记录不在时判不了、不拦" 1 "找不到这个会话的会话记录" "$(stop_input Stop false no-such-transcript.jsonl)"
   expect_stop "项目根不在时判不了、不拦" 1 "找不到项目根" \
-    "$(stop_input Stop false writes.jsonl | sed "s|\"cwd\":\"$project\"|\"cwd\":\"$scratch/no-such-project\"|")"
-  cp "$project/.claude/settings.json" "$scratch/settings.json.good"
-  printf '{ 坏掉的 JSON\n' > "$project/.claude/settings.json"
+    "$(stop_input Stop false writes.jsonl | sed "s|\"cwd\":\"$selftest_project\"|\"cwd\":\"$scratch_directory/no-such-project\"|")"
+  cp "$selftest_project/.claude/settings.json" "$scratch_directory/settings.json.good"
+  printf '{ 坏掉的 JSON\n' > "$selftest_project/.claude/settings.json"
   expect_stop "判定脚本判不了时不拦" 1 "判不了" "$(stop_input Stop false writes.jsonl)"
-  cp "$scratch/settings.json.good" "$project/.claude/settings.json"
+  cp "$scratch_directory/settings.json.good" "$selftest_project/.claude/settings.json"
   # 改了一半：写了 hook-events 与「无」，同一触发点上的 old-guard 还没点名——判定结果变了，续跑里照样再拦
   printf '#!/usr/bin/env bash\n# hook-events: PreToolUse\n# gate-similar: 无 查过全表，没有管同一件事的\necho "拦另一种写法"\n' \
-    > "$project/.claude/hooks/new-guard.sh"
+    > "$selftest_project/.claude/hooks/new-guard.sh"
   expect_stop "续跑里结果变了照样再拦" 2 "old-guard.sh  挂在同一个触发点上" "$(stop_input Stop true writes.jsonl)"
   printf '#!/usr/bin/env bash\n# hook-events: PreToolUse\n# gate-similar: old-guard.sh 它拦的是另一类命令，拒绝时给的出路也不同\necho "拦另一种写法"\n' \
-    > "$project/.claude/hooks/new-guard.sh"
+    > "$selftest_project/.claude/hooks/new-guard.sh"
   expect_stop "写明为什么不并进已有的就放行" 0 "" "$(stop_input Stop false writes.jsonl)"
-  rm -rf "${scratch:?}"
-  if (( failed > 0 )); then
-    printf '  ✗ gate-reuse-check 自证：%s 种情形判错（共 %s 种）\n' "$failed" "$((passed + failed))"   # gate-lint:summary
+  rm -rf "${scratch_directory:?}"
+  if (( failed_case_count > 0 )); then
+    printf '  ✗ gate-reuse-check 自证：%s 种情形判错（共 %s 种）\n' "$failed_case_count" "$((passed_case_count + failed_case_count))"   # gate-lint:summary
     printf '%s\n' '     → 怎么办：看上面判错的那几种情形，修 gate-reuse-check.sh 或它调的 gate-overlap.py，再跑 bash gate-reuse-check.sh --selftest。'
     return 1
   fi
-  printf '  ✓ gate-reuse-check 自证：%s 种情形判得都对\n' "$passed"
+  printf '  ✓ gate-reuse-check 自证：%s 种情形判得都对\n' "$passed_case_count"
   return 0
 }
 

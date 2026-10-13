@@ -141,20 +141,20 @@ def header_lines(path):
 
 def parse_declarations(path):
     """→ (声明列表, 问题列表)。只认文件头注释块里的声明；写在代码之后的不算，也不报——lint 另查「写在了别处」。"""
-    declaration_re = RUST_DECLARATION_RE if source_language(path) == 'rust' else SHELL_DECLARATION_RE
+    declaration_pattern = RUST_DECLARATION_RE if source_language(path) == 'rust' else SHELL_DECLARATION_RE
     declarations, problems = [], []
     for line_number, line in header_lines(path):
-        matched = declaration_re.match(line)
-        if not matched:
+        declaration_match = declaration_pattern.match(line)
+        if not declaration_match:
             continue
-        section, body = matched.group(1), matched.group(2)
-        kind, _, rest = body.partition(' ')
-        rest = rest.strip()
+        section, declaration_body = declaration_match.group(1), declaration_match.group(2)
+        kind, _, declaration_arguments = declaration_body.partition(' ')
+        declaration_arguments = declaration_arguments.strip()
         if kind not in KINDS[section]:
             problems.append(Problem(line_number, f'{section}: 认不出「{kind}」',
                                     f'{section} 只认这几种：{" / ".join(KINDS[section])}（写法见 {RULE_FILE}）'))
             continue
-        declaration = Declaration(line_number, section, kind, rest)
+        declaration = Declaration(line_number, section, kind, declaration_arguments)
         problem = fill_declaration(declaration)
         if problem:
             problems.append(problem)
@@ -165,17 +165,17 @@ def parse_declarations(path):
 
 def fill_declaration(declaration):
     """按种类解析参数；写坏了返回 Problem。"""
-    section, kind, rest = declaration.section, declaration.kind, declaration.text
+    section, kind, declaration_arguments = declaration.section, declaration.kind, declaration.text
     if kind in ('always', 'none'):
-        if len(rest) < MINIMUM_REASON_CHARACTERS:
-            return Problem(declaration.line_number, f'{section}: {kind} 后面的理由不足 {MINIMUM_REASON_CHARACTERS} 个字：「{rest}」',
+        if len(declaration_arguments) < MINIMUM_REASON_CHARACTERS:
+            return Problem(declaration.line_number, f'{section}: {kind} 后面的理由不足 {MINIMUM_REASON_CHARACTERS} 个字：「{declaration_arguments}」',
                            '写清为什么每次调都有意义（always）或为什么没有环境要求（none）')
-        declaration.reason = rest
+        declaration.reason = declaration_arguments
         return None
     if kind == 'check':
-        command, separator, next_step = rest.rpartition(' :: ')
+        command, separator, next_step = declaration_arguments.rpartition(' :: ')
         if not separator or not command.strip():
-            return Problem(declaration.line_number, f'{section}: check 要写成「<命令> :: <不满足时怎么办>」：「{rest}」',
+            return Problem(declaration.line_number, f'{section}: check 要写成「<命令> :: <不满足时怎么办>」：「{declaration_arguments}」',
                            '命令与出路之间用「 :: 」隔开，出路写不满足时下一步做什么')
         if len(next_step.strip()) < MINIMUM_REASON_CHARACTERS:
             return Problem(declaration.line_number, f'{section}: check 的出路不足 {MINIMUM_REASON_CHARACTERS} 个字：「{next_step.strip()}」',
@@ -184,24 +184,24 @@ def fill_declaration(declaration):
         declaration.next_step = next_step.strip()
         return None
     if kind == 'command':
-        declaration.executable_names = rest.split()
+        declaration.executable_names = declaration_arguments.split()
         if not declaration.executable_names:
             return Problem(declaration.line_number, f'{section}: command 后面没写可执行文件名',
                            '写出它要调的外部命令，空格隔开： command git python3')
         return None
     if kind == 'single-instance':
-        if rest:
-            return Problem(declaration.line_number, f'run-condition: single-instance 不带参数，多出来：「{rest}」',
+        if declaration_arguments:
+            return Problem(declaration.line_number, f'run-condition: single-instance 不带参数，多出来：「{declaration_arguments}」',
                            '去掉后面的字；要说明为什么不能并行，写在它上一行的注释里')
         return None
     # inputs-changed
-    for token in rest.split():
+    for token in declaration_arguments.split():
         if token == 'arguments':
             declaration.includes_arguments = True
-        elif token.startswith('env:') and re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', token[4:]):
-            declaration.environment_variable_names.append(token[4:])
-        elif token.startswith('tool:') and re.fullmatch(r'[A-Za-z0-9_.+-]+', token[5:]):
-            declaration.tool_names.append(token[5:])
+        elif token.startswith('env:') and re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', token[len('env:'):]):
+            declaration.environment_variable_names.append(token[len('env:'):])
+        elif token.startswith('tool:') and re.fullmatch(r'[A-Za-z0-9_.+-]+', token[len('tool:'):]):
+            declaration.tool_names.append(token[len('tool:'):])
         else:
             declaration.input_paths.append(token)
     if not declaration.input_paths:
@@ -217,12 +217,12 @@ def git_environment():
     """调 git 用的环境：去掉 git 钩子留下的 GIT_DIR / GIT_INDEX_FILE 这一组，它们压过 `git -C`。那一组的名单只问 git 一次。"""
     if not GIT_LOCAL_VARIABLE_NAMES:
         try:
-            listed = subprocess.run(['git', 'rev-parse', '--local-env-vars'], stdin=subprocess.DEVNULL, capture_output=True, text=True)
-            names = listed.stdout.split() if listed.returncode == 0 else []
+            local_environment_variables_run = subprocess.run(['git', 'rev-parse', '--local-env-vars'], stdin=subprocess.DEVNULL, capture_output=True, text=True)
+            local_variable_names = local_environment_variables_run.stdout.split() if local_environment_variables_run.returncode == 0 else []
         except FileNotFoundError:
-            names = []
-        GIT_LOCAL_VARIABLE_NAMES.extend(names or ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR'])
-    return {key: value for key, value in os.environ.items() if key not in GIT_LOCAL_VARIABLE_NAMES}
+            local_variable_names = []
+        GIT_LOCAL_VARIABLE_NAMES.extend(local_variable_names or ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR'])
+    return {variable_name: variable_value for variable_name, variable_value in os.environ.items() if variable_name not in GIT_LOCAL_VARIABLE_NAMES}
 
 
 def run_git(arguments, **options):
@@ -231,20 +231,20 @@ def run_git(arguments, **options):
         return subprocess.run(['git'] + arguments, env=git_environment(), stdin=subprocess.DEVNULL, **options)
     except FileNotFoundError:
         # 没有 git：当成「不在 git 仓里」往下判；声明了 command git 的那一条会按条件不满足拒绝，给出路
-        empty = '' if options.get('text') else b''
-        return subprocess.CompletedProcess(['git'] + arguments, 127, empty, empty)
+        empty_output = '' if options.get('text') else b''
+        return subprocess.CompletedProcess(['git'] + arguments, 127, empty_output, empty_output)
 
 
 def repository_toplevel(directory):
-    completed = run_git(['-C', directory, 'rev-parse', '--show-toplevel'], capture_output=True, text=True)
-    return completed.stdout.strip() if completed.returncode == 0 and completed.stdout.strip() else None
+    toplevel_run = run_git(['-C', directory, 'rev-parse', '--show-toplevel'], capture_output=True, text=True)
+    return toplevel_run.stdout.strip() if toplevel_run.returncode == 0 and toplevel_run.stdout.strip() else None
 
 
 def git_common_directory(directory):
-    completed = run_git(['-C', directory, 'rev-parse', '--git-common-dir'], capture_output=True, text=True)
-    if completed.returncode != 0 or not completed.stdout.strip():
+    common_directory_run = run_git(['-C', directory, 'rev-parse', '--git-common-dir'], capture_output=True, text=True)
+    if common_directory_run.returncode != 0 or not common_directory_run.stdout.strip():
         return None
-    return os.path.normpath(os.path.join(directory, completed.stdout.strip()))
+    return os.path.normpath(os.path.join(directory, common_directory_run.stdout.strip()))
 
 
 # 项目登记的门禁目录与钩子目录（rules/sop-first.md）：与 lib.sh 的 project_gate_dir / project_hooks_dir 同一份登记，
@@ -255,20 +255,20 @@ HOOKS_DIRECTORY_REGISTRATION_FILE = '.claude/hooks-directory'
 HOOKS_DIRECTORY_DEFAULT = '.claude/hooks'
 
 
-def _project_registered_directory(toplevel, registration_file, default):
+def _project_registered_directory(toplevel, registration_file, default_directory):
     path = os.path.join(toplevel, registration_file)
     if not os.path.isfile(path):
-        return default
+        return default_directory
     with open(path, encoding='utf-8') as handle:
-        lines = [cleaned for line in handle
+        registered_paths = [cleaned for line in handle
                  if (stripped := line.strip()) and not stripped.startswith('#')
                  and (cleaned := stripped.split('#', 1)[0].strip())]
-    if not lines:
+    if not registered_paths:
         print(f'  ✗ {path} 登记了但一行有效路径都没有', file=sys.stderr)
-        print(f'     → 怎么办： 写一行相对项目根的路径（比如 scripts/gates），或者删掉这个文件改用默认值 {default}。',
+        print(f'     → 怎么办： 写一行相对项目根的路径（比如 scripts/gates），或者删掉这个文件改用默认值 {default_directory}。',
               file=sys.stderr)
         sys.exit(1)
-    return lines[0].rstrip('/')
+    return registered_paths[0].rstrip('/')
 
 
 def project_gate_directory(toplevel):
@@ -289,47 +289,47 @@ def files_under(path, toplevel):
     """这个输入路径下要算进指纹的文件：在 git 仓里、没被忽略时取 git 认的（跟踪的与没被忽略的未跟踪文件）；
     被忽略的（装进项目的规范副本就是）或不在 git 仓里的，整个目录照实走一遍。"""
     if toplevel:
-        ignored = run_git(['-C', toplevel, 'check-ignore', '-q', '--', path]).returncode == 0
-        if not ignored:
-            listed = run_git(['-C', toplevel, 'ls-files', '-z', '-co', '--exclude-standard', '--', path], capture_output=True)
-            if listed.returncode == 0:
-                return sorted(os.path.join(toplevel, name.decode()) for name in listed.stdout.split(b'\0') if name)
+        is_ignored = run_git(['-C', toplevel, 'check-ignore', '-q', '--', path]).returncode == 0
+        if not is_ignored:
+            ls_files_run = run_git(['-C', toplevel, 'ls-files', '-z', '-co', '--exclude-standard', '--', path], capture_output=True)
+            if ls_files_run.returncode == 0:
+                return sorted(os.path.join(toplevel, listed_path.decode()) for listed_path in ls_files_run.stdout.split(b'\0') if listed_path)
     if os.path.isfile(path):
         return [path]
-    found = []
+    walked_files = []
     for directory, subdirectories, file_names in os.walk(path):
-        subdirectories[:] = sorted(name for name in subdirectories if name != '__pycache__')
-        found.extend(os.path.join(directory, name) for name in file_names)
-    return sorted(found)
+        subdirectories[:] = sorted(subdirectory_name for subdirectory_name in subdirectories if subdirectory_name != '__pycache__')
+        walked_files.extend(os.path.join(directory, file_name) for file_name in file_names)
+    return sorted(walked_files)
 
 
 def combined_inputs(declarations):
     """全部 inputs-changed 行合成一份：路径与环境变量取并集，任一行写了 arguments 就把参数算进去。没有这类声明时是 None。"""
-    inputs = [declaration for declaration in declarations if declaration.kind == 'inputs-changed']
-    if not inputs:
+    inputs_declarations = [declaration for declaration in declarations if declaration.kind == 'inputs-changed']
+    if not inputs_declarations:
         return None
-    combined = Declaration(inputs[0].line_number, ADMISSION, 'inputs-changed', ' '.join(declaration.text for declaration in inputs))
-    for declaration in inputs:
+    combined = Declaration(inputs_declarations[0].line_number, ADMISSION, 'inputs-changed', ' '.join(declaration.text for declaration in inputs_declarations))
+    for declaration in inputs_declarations:
         combined.input_paths += [path for path in declaration.input_paths if path not in combined.input_paths]
-        combined.environment_variable_names += [name for name in declaration.environment_variable_names
-                                                if name not in combined.environment_variable_names]
-        combined.tool_names += [name for name in declaration.tool_names if name not in combined.tool_names]
+        combined.environment_variable_names += [variable_name for variable_name in declaration.environment_variable_names
+                                                if variable_name not in combined.environment_variable_names]
+        combined.tool_names += [tool_name for tool_name in declaration.tool_names if tool_name not in combined.tool_names]
         combined.includes_arguments = combined.includes_arguments or declaration.includes_arguments
     return combined
 
 
-def tool_fingerprint(name):
+def tool_fingerprint(tool_name):
     """→ (这个工具此刻是谁的字节串, None) 或 (None, 判不了的原因)。取值是 PATH 上解析到的真实路径加 --version 的标准输出与退出码；
     不在 PATH 上时是 <absent>。结果取决于工具链的脚本登记它：装上、换了版本、换了一份，下一次都算输入变了。"""
-    resolved = shutil.which(name)
-    if resolved is None:
+    resolved_executable = shutil.which(tool_name)
+    if resolved_executable is None:
         return b'<absent>', None
     try:
-        completed = subprocess.run([resolved, '--version'], stdin=subprocess.DEVNULL, capture_output=True, timeout=CHECK_TIMEOUT_SECONDS)
+        version_run = subprocess.run([resolved_executable, '--version'], stdin=subprocess.DEVNULL, capture_output=True, timeout=CHECK_TIMEOUT_SECONDS)
     except (OSError, subprocess.TimeoutExpired) as error:
-        return None, f'登记的工具 {name}（{resolved}）取不到 --version：{error}'
+        return None, f'登记的工具 {tool_name}（{resolved_executable}）取不到 --version：{error}'
     # stderr 不算：包装程序（rustup 这类）往 stderr 打的提示随时会变，算进来就每次都「变了」
-    return os.path.realpath(resolved).encode() + b'\0' + str(completed.returncode).encode() + b'\0' + completed.stdout, None
+    return os.path.realpath(resolved_executable).encode() + b'\0' + str(version_run.returncode).encode() + b'\0' + version_run.stdout, None
 
 
 def input_fingerprint(script_path, declaration, arguments):
@@ -339,26 +339,26 @@ def input_fingerprint(script_path, declaration, arguments):
     digest = hashlib.sha256()
     input_files = [script_path]
     for declared_path in declaration.input_paths:
-        resolved = resolve_input_path(script_path, toplevel, declared_path)
-        if not os.path.exists(resolved):
-            return None, f'登记的输入 {declared_path} 不存在（解析成 {resolved}）'
-        input_files.extend(files_under(resolved, toplevel))
-    anchor = toplevel or script_directory
+        resolved_input_path = resolve_input_path(script_path, toplevel, declared_path)
+        if not os.path.exists(resolved_input_path):
+            return None, f'登记的输入 {declared_path} 不存在（解析成 {resolved_input_path}）'
+        input_files.extend(files_under(resolved_input_path, toplevel))
+    relative_path_base = toplevel or script_directory
     for input_file in sorted(set(input_files)):
-        digest.update(os.path.relpath(input_file, anchor).encode() + b'\0')
+        digest.update(os.path.relpath(input_file, relative_path_base).encode() + b'\0')
         try:
             with open(input_file, 'rb') as handle:
                 digest.update(hashlib.sha256(handle.read()).digest())
         except OSError:
             digest.update(b'<unreadable>')
-    for name in sorted(declaration.environment_variable_names):
-        value = os.environ.get(name)
-        digest.update(f'env:{name}='.encode() + (b'<unset>' if value is None else value.encode()) + b'\0')
-    for name in sorted(declaration.tool_names):
-        tool_identity, cannot_judge = tool_fingerprint(name)
+    for variable_name in sorted(declaration.environment_variable_names):
+        variable_value = os.environ.get(variable_name)
+        digest.update(f'env:{variable_name}='.encode() + (b'<unset>' if variable_value is None else variable_value.encode()) + b'\0')
+    for tool_name in sorted(declaration.tool_names):
+        tool_identity, cannot_judge = tool_fingerprint(tool_name)
         if cannot_judge:
             return None, cannot_judge
-        digest.update(f'tool:{name}='.encode() + tool_identity + b'\0')
+        digest.update(f'tool:{tool_name}='.encode() + tool_identity + b'\0')
     if declaration.includes_arguments:
         digest.update(b'arguments:' + '\0'.join(arguments).encode())
     return digest.hexdigest(), None
@@ -371,17 +371,17 @@ def stamp_path(script_path):
     common_directory = git_common_directory(script_directory)
     if not toplevel or not common_directory:
         return None
-    relative = os.path.relpath(script_path, toplevel)
-    # 按路径百分号转义起名：只把 / 换成别的字的话，a/b__c.sh 与 a__b/c.sh 会记到同一个文件里
-    return os.path.join(common_directory, STAMP_DIRECTORY_NAME, urllib.parse.quote(relative, safe=''))
+    script_relative_path = os.path.relpath(script_path, toplevel)
+    # 按路径百分号转义起名：只把 / 换成别的字的话，gates/run__all.sh 与 gates__run/all.sh 会记到同一个文件里
+    return os.path.join(common_directory, STAMP_DIRECTORY_NAME, urllib.parse.quote(script_relative_path, safe=''))
 
 
 def read_stamp(script_path):
-    path = stamp_path(script_path)
-    if not path:
+    stamp_file = stamp_path(script_path)
+    if not stamp_file:
         return None, None
     try:
-        with open(path, encoding='utf-8') as handle:
+        with open(stamp_file, encoding='utf-8') as handle:
             fingerprint, _, recorded_at = handle.read().strip().partition('\t')
         return fingerprint, recorded_at.split('\t')[0]
     except OSError:
@@ -398,26 +398,26 @@ def load_package_module(module_name, file_name):
     return module
 
 
-# 解释器命令行里带一个值的选项：跳过选项时连它的值一起跳过，否则会把值当成脚本（bash -o pipefail x.sh）
+# 解释器命令行里带一个值的选项：跳过选项时连它的值一起跳过，否则会把值当成脚本（bash -o pipefail script.sh）
 INTERPRETER_OPTIONS_TAKING_A_VALUE = {'-o', '+o', '-O', '+O', '--rcfile', '--init-file', '-W', '-X', '-Q'}
 
 
 def script_operand(arguments):
     """解释器命令行里被当成脚本文件跑的那个参数；-c / -m 跑的是字符串或模块，返回 None。"""
-    index = 1
-    while index < len(arguments):
-        value = arguments[index]
-        if value == '--':
-            return arguments[index + 1] if index + 1 < len(arguments) else None
-        if value in INTERPRETER_OPTIONS_TAKING_A_VALUE:
-            index += 2
+    argument_index = 1
+    while argument_index < len(arguments):
+        argument = arguments[argument_index]
+        if argument == '--':
+            return arguments[argument_index + 1] if argument_index + 1 < len(arguments) else None
+        if argument in INTERPRETER_OPTIONS_TAKING_A_VALUE:
+            argument_index += 2
             continue
-        if value.startswith('-') or value.startswith('+'):
-            if value == '-m' or (not value.startswith('--') and 'c' in value[1:]):
+        if argument.startswith('-') or argument.startswith('+'):
+            if argument == '-m' or (not argument.startswith('--') and 'c' in argument[1:]):
                 return None
-            index += 1
+            argument_index += 1
             continue
-        return value
+        return argument
     return None
 
 
@@ -435,33 +435,33 @@ def other_instances(script_path):
             return None
         if INTERPRETER_NAME_RE.match(os.path.basename(script_path)):
             return None
-    hits = []
-    for entry in os.listdir('/proc'):
-        if not entry.isdigit() or int(entry) in excluded:
+    other_instance_processes = []
+    for process_table_entry_name in os.listdir('/proc'):
+        if not process_table_entry_name.isdigit() or int(process_table_entry_name) in excluded:
             continue
-        process_id = int(entry)
+        process_id = int(process_table_entry_name)
         arguments = process_module.arguments_of(process_id)
         if not arguments or not process_module.is_alive(process_id):
             continue
         try:
             if os.path.realpath(f'/proc/{process_id}/exe') == script_path:
-                hits.append((process_id, arguments))
+                other_instance_processes.append((process_id, arguments))
                 continue
         except OSError:
             pass
         if not INTERPRETER_NAME_RE.match(os.path.basename(arguments[0])):
             continue
-        operand = script_operand(arguments)
-        if not operand:
+        script_argument = script_operand(arguments)
+        if not script_argument:
             continue
-        if not os.path.isabs(operand):
+        if not os.path.isabs(script_argument):
             try:
-                operand = os.path.join(os.readlink(f'/proc/{process_id}/cwd'), operand)
+                script_argument = os.path.join(os.readlink(f'/proc/{process_id}/cwd'), script_argument)
             except OSError:
                 continue
-        if os.path.realpath(operand) == script_path:
-            hits.append((process_id, arguments))
-    return sorted(hits)
+        if os.path.realpath(script_argument) == script_path:
+            other_instance_processes.append((process_id, arguments))
+    return sorted(other_instance_processes)
 
 
 def evaluate(script_path, declaration, arguments):
@@ -470,44 +470,44 @@ def evaluate(script_path, declaration, arguments):
     if kind in ('always', 'none'):
         return None
     if kind == 'command':
-        missing = [name for name in declaration.executable_names if shutil.which(name) is None]
-        if missing:
-            return Unmet(declaration, f'缺 {" ".join(missing)}', '装上它，或把它放进 PATH，再跑', CATEGORY_CONDITION)
+        missing_executables = [executable_name for executable_name in declaration.executable_names if shutil.which(executable_name) is None]
+        if missing_executables:
+            return Unmet(declaration, f'缺 {" ".join(missing_executables)}', '装上它，或把它放进 PATH，再跑', CATEGORY_CONDITION)
         return None
     if kind == 'check':
         toplevel = repository_toplevel(os.path.dirname(script_path))
         environment = dict(git_environment(), PREFLIGHT_SCRIPT=script_path, PREFLIGHT_SCRIPT_DIRECTORY=os.path.dirname(script_path))
         try:
-            completed = subprocess.run(['bash', '-c', declaration.command], cwd=toplevel or os.path.dirname(script_path), env=environment,
+            check_run = subprocess.run(['bash', '-c', declaration.command], cwd=toplevel or os.path.dirname(script_path), env=environment,
                                        stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=CHECK_TIMEOUT_SECONDS)
         except subprocess.TimeoutExpired:
             return Unmet(declaration, f'判据 {CHECK_TIMEOUT_SECONDS} 秒没跑完：{declaration.command}', declaration.next_step, CATEGORY_CONDITION)
-        if completed.returncode != 0:
-            return Unmet(declaration, f'判据不成立（退出码 {completed.returncode}）：{declaration.command}', declaration.next_step, CATEGORY_CONDITION)
+        if check_run.returncode != 0:
+            return Unmet(declaration, f'判据不成立（退出码 {check_run.returncode}）：{declaration.command}', declaration.next_step, CATEGORY_CONDITION)
         return None
     if kind == 'single-instance':
         if not os.path.isdir('/proc'):
             return Unmet(declaration, '判不了有没有别的实例在跑：这台机器没有 /proc', '在 Linux 上跑；确认没有别的实例在跑再加 --force', CATEGORY_CONDITION)
-        hits = other_instances(script_path)
-        if hits is None:
+        other_instance_processes = other_instances(script_path)
+        if other_instance_processes is None:
             return Unmet(declaration, '判不了有没有别的实例在跑：调 preflight.py 的是一个解释器（经 sh -c 调的），认不出跑的是哪个二进制',
                          '在 Rust 里直接起 python3 调 preflight.py，别经 sh -c；确认没有别的实例在跑再加 --force', CATEGORY_CONDITION)
-        if hits:
-            listed = '；'.join(f'{process_id}（{" ".join(arguments)[:120]}）' for process_id, arguments in hits)
-            return Unmet(declaration, f'同一个脚本已有 {len(hits)} 个实例在跑：{listed}',
+        if other_instance_processes:
+            instances_text = '；'.join(f'{process_id}（{" ".join(arguments)[:120]}）' for process_id, arguments in other_instance_processes)
+            return Unmet(declaration, f'同一个脚本已有 {len(other_instance_processes)} 个实例在跑：{instances_text}',
                          f'等它跑完：python3 {os.path.join(os.path.dirname(os.path.realpath(__file__)), "proc.py")} wait <进程号> --timeout <秒>', CATEGORY_CONDITION)
         return None
     raise ValueError(f'evaluate 不判 {kind}：inputs-changed 由 evaluate_inputs 合成一份判')
 
 
-def evaluate_inputs(script_path, inputs, arguments):
+def evaluate_inputs(script_path, combined_declaration, arguments):
     """合成之后的 inputs-changed → (开跑时的指纹或 -, Unmet 或 None)。"""
-    fingerprint, cannot_judge = input_fingerprint(script_path, inputs, arguments)
+    fingerprint, cannot_judge = input_fingerprint(script_path, combined_declaration, arguments)
     if cannot_judge:
-        return '-', Unmet(inputs, cannot_judge, '改对文件头里登记的路径，或者把那份输入补上', CATEGORY_CONDITION)
+        return '-', Unmet(combined_declaration, cannot_judge, '改对文件头里登记的路径，或者把那份输入补上', CATEGORY_CONDITION)
     recorded_fingerprint, recorded_at = read_stamp(script_path)
     if recorded_fingerprint == fingerprint:
-        return fingerprint, Unmet(inputs, f'脚本与登记的输入自上次成功跑完（{recorded_at}）以来没变，重跑得不到新信息',
+        return fingerprint, Unmet(combined_declaration, f'脚本与登记的输入自上次成功跑完（{recorded_at}）以来没变，重跑得不到新信息',
                                   '改了代码、决策或登记的输入再跑；确要重跑（复现、换了机器或环境）就加 --force，这一次的结果记成「强制跑」',
                                   CATEGORY_INPUTS_UNCHANGED)
     return fingerprint, None
@@ -538,37 +538,37 @@ def display_path(script_path):
 def judge(script_file, arguments, force):
     """现判一个脚本的准入与运行条件；人读的报告写 stderr。"""
     script_path = os.path.realpath(script_file)
-    shown = display_path(script_path)
+    shown_path = display_path(script_path)
     declarations, problems = parse_declarations(script_path)
     if problems:
         for problem in problems:
-            print(f'  ✗ {shown}:{problem.line_number} 准入与运行条件写坏了，判不了能不能跑：{problem.what}', file=sys.stderr)
+            print(f'  ✗ {shown_path}:{problem.line_number} 准入与运行条件写坏了，判不了能不能跑：{problem.what}', file=sys.stderr)
             print(f'     → 怎么办： {problem.next_step}', file=sys.stderr)
-        return Outcome('malformed', summary=f'{shown} 的条件写坏了 {len(problems)} 处')
+        return Outcome('malformed', summary=f'{shown_path} 的条件写坏了 {len(problems)} 处')
     if not declarations:
-        print(f'  ! {shown} 的文件头没写准入与运行条件（{RULE_FILE}），照跑；门禁阶段「准入与运行条件」判它', file=sys.stderr)
+        print(f'  ! {shown_path} 的文件头没写准入与运行条件（{RULE_FILE}），照跑；门禁阶段「准入与运行条件」判它', file=sys.stderr)
         return Outcome('undeclared')
-    unmet = [result for result in (evaluate(script_path, declaration, arguments) for declaration in declarations
-                                   if declaration.kind != 'inputs-changed') if result]
+    unmet_conditions = [unmet_condition for unmet_condition in (evaluate(script_path, declaration, arguments) for declaration in declarations
+                                                                if declaration.kind != 'inputs-changed') if unmet_condition]
     fingerprint = '-'
-    inputs = combined_inputs(declarations)
-    if inputs:
-        fingerprint, inputs_unmet = evaluate_inputs(script_path, inputs, arguments)
-        if inputs_unmet:
-            unmet.append(inputs_unmet)
-    if not unmet:
+    combined_declaration = combined_inputs(declarations)
+    if combined_declaration:
+        fingerprint, inputs_unmet_condition = evaluate_inputs(script_path, combined_declaration, arguments)
+        if inputs_unmet_condition:
+            unmet_conditions.append(inputs_unmet_condition)
+    if not unmet_conditions:
         return Outcome('met', fingerprint=fingerprint)
-    category = CATEGORY_INPUTS_UNCHANGED if all(result.category == CATEGORY_INPUTS_UNCHANGED for result in unmet) else CATEGORY_CONDITION
-    summary = '；'.join(f'{result.declaration.label()}：{result.what}' for result in unmet)
+    category = CATEGORY_INPUTS_UNCHANGED if all(unmet_condition.category == CATEGORY_INPUTS_UNCHANGED for unmet_condition in unmet_conditions) else CATEGORY_CONDITION
+    summary = '；'.join(f'{unmet_condition.declaration.label()}：{unmet_condition.what}' for unmet_condition in unmet_conditions)
     if force:
-        print(f'  ! {shown}：{len(unmet)} 条条件没满足，--force 强制跑（这一次的结果记成「强制跑」，写产物的把 PREFLIGHT_FORCED 写进产物）：', file=sys.stderr)
-        for result in unmet:
-            print(f'       - {result.declaration.label()}（第 {result.declaration.line_number} 行）：{result.what}', file=sys.stderr)
+        print(f'  ! {shown_path}：{len(unmet_conditions)} 条条件没满足，--force 强制跑（这一次的结果记成「强制跑」，写产物的把 PREFLIGHT_FORCED 写进产物）：', file=sys.stderr)
+        for unmet_condition in unmet_conditions:
+            print(f'       - {unmet_condition.declaration.label()}（第 {unmet_condition.declaration.line_number} 行）：{unmet_condition.what}', file=sys.stderr)
         return Outcome('forced', category, summary)
-    print(f'  ✗ {shown}：{len(unmet)} 条条件没满足，拒绝执行（退出码 {EXIT_REFUSED}）：', file=sys.stderr)
-    for result in unmet:
-        print(f'       - {result.declaration.label()}（第 {result.declaration.line_number} 行）：{result.what}', file=sys.stderr)
-        print(f'         → {result.next_step}', file=sys.stderr)
+    print(f'  ✗ {shown_path}：{len(unmet_conditions)} 条条件没满足，拒绝执行（退出码 {EXIT_REFUSED}）：', file=sys.stderr)
+    for unmet_condition in unmet_conditions:
+        print(f'       - {unmet_condition.declaration.label()}（第 {unmet_condition.declaration.line_number} 行）：{unmet_condition.what}', file=sys.stderr)
+        print(f'         → {unmet_condition.next_step}', file=sys.stderr)
     print(f'     → 怎么办： 按上面每一条的出路补齐条件再跑；确认要在条件不满足时照跑，加 --force（结果记成「强制跑」，规矩见 {RULE_FILE}）', file=sys.stderr)
     return Outcome('refused', category, summary)
 
@@ -580,23 +580,23 @@ def record(script_file, arguments, fingerprint_at_start=None):
     declarations, problems = parse_declarations(script_path)
     if problems:
         return False, f'{display_path(script_path)} 的条件写坏了，记不了'
-    inputs = combined_inputs(declarations)
-    if not inputs:
+    combined_declaration = combined_inputs(declarations)
+    if not combined_declaration:
         return False, None
-    fingerprint, cannot_judge = input_fingerprint(script_path, inputs, arguments)
+    fingerprint, cannot_judge = input_fingerprint(script_path, combined_declaration, arguments)
     if cannot_judge:
         return False, cannot_judge
     if fingerprint_at_start and fingerprint_at_start != fingerprint:
         return False, (f'跑的过程中登记的输入变了（开跑时 {fingerprint_at_start[:12]}，收尾时 {fingerprint[:12]}）：'
                        '这一次测的不是现在这一版，不记（下一次照跑）')
-    path = stamp_path(script_path)
-    if not path:
+    stamp_file = stamp_path(script_path)
+    if not stamp_file:
         return False, '不在 git 仓里，没处记（下一次照跑）'
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    temporary_path = f'{path}.{os.getpid()}.partial'
+    os.makedirs(os.path.dirname(stamp_file), exist_ok=True)
+    temporary_path = f'{stamp_file}.{os.getpid()}.partial'
     with open(temporary_path, 'w', encoding='utf-8') as handle:
         handle.write(f'{fingerprint}\t{datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}\t{display_path(script_path)}\n')
-    os.replace(temporary_path, path)
+    os.replace(temporary_path, stamp_file)
     return True, None
 
 
@@ -610,20 +610,20 @@ def preflight(script_file, arguments=None):
     """python 脚本开头调它：摘掉 --force、现判条件。不满足就退 78；强制跑时置环境变量 PREFLIGHT_FORCED（没满足的条件摘要）。
     arguments 不给时判 sys.argv[1:]，并把 --force 从 sys.argv 里摘掉；返回摘掉之后的参数。"""
     uses_process_arguments = arguments is None
-    given = sys.argv[1:] if uses_process_arguments else list(arguments)
-    force = '--force' in given
-    remaining = [value for value in given if value != '--force']
+    given_arguments = sys.argv[1:] if uses_process_arguments else list(arguments)
+    force = '--force' in given_arguments
+    remaining_arguments = [argument for argument in given_arguments if argument != '--force']
     if uses_process_arguments:
-        sys.argv[1:] = remaining
-    outcome = judge(script_file, remaining, force)
+        sys.argv[1:] = remaining_arguments
+    outcome = judge(script_file, remaining_arguments, force)
     if outcome.verdict == 'refused':
         sys.exit(EXIT_REFUSED)
     if outcome.verdict == 'malformed':
         sys.exit(EXIT_MALFORMED_IN_SCRIPT)
-    PREFLIGHT_STATE.update(script=os.path.realpath(script_file), arguments=remaining, fingerprint=outcome.fingerprint,
+    PREFLIGHT_STATE.update(script=os.path.realpath(script_file), arguments=remaining_arguments, fingerprint=outcome.fingerprint,
                            forced=outcome.summary if outcome.verdict == 'forced' else '')
     os.environ['PREFLIGHT_FORCED'] = PREFLIGHT_STATE['forced']
-    return remaining
+    return remaining_arguments
 
 
 def preflight_record_success():
@@ -643,20 +643,20 @@ def preflight_record_success():
         print(f'  ! 没记下这一次的输入指纹：{not_recorded}', file=sys.stderr)
 
 
-def split_command_line(values):
+def split_command_line(command_line_words):
     """<脚本> [--force] [--fingerprint <开跑时的指纹>] [-- <参数…>] → (脚本, 强制, 指纹或 None, 参数)；认不出返回脚本为 None。"""
-    if not values:
+    if not command_line_words:
         return None, False, None, []
-    script, rest = values[0], values[1:]
+    script, remaining_words = command_line_words[0], command_line_words[1:]
     force, fingerprint = False, None
-    while rest and rest[0] != '--':
-        if rest[0] == '--force':
-            force, rest = True, rest[1:]
-        elif rest[0] == '--fingerprint' and len(rest) > 1:
-            fingerprint, rest = rest[1], rest[2:]
+    while remaining_words and remaining_words[0] != '--':
+        if remaining_words[0] == '--force':
+            force, remaining_words = True, remaining_words[1:]
+        elif remaining_words[0] == '--fingerprint' and len(remaining_words) > 1:
+            fingerprint, remaining_words = remaining_words[1], remaining_words[2:]
         else:
             return None, False, None, []
-    return script, force, fingerprint, rest[1:] if rest else []
+    return script, force, fingerprint, remaining_words[1:] if remaining_words else []
 
 
 def main():
@@ -666,16 +666,16 @@ def main():
         print(f'  ✗ {usage}', file=sys.stderr)
         print(f'     → 怎么办： 照这个用法再调一次；规矩见 {RULE_FILE}', file=sys.stderr)
         return EXIT_USAGE
-    command = sys.argv[1]
+    subcommand = sys.argv[1]
     script, force, fingerprint, arguments = split_command_line(sys.argv[2:])
     if script is None or not os.path.isfile(script):
         print(f'  ✗ 找不到要判的脚本，或参数不对：{" ".join(sys.argv[2:])}', file=sys.stderr)
         print(f'     → 怎么办： {usage}', file=sys.stderr)
         return EXIT_USAGE
-    if command == 'declared':
+    if subcommand == 'declared':
         declarations, problems = parse_declarations(os.path.realpath(script))
         return 0 if declarations or problems else 1
-    if command == 'record':
+    if subcommand == 'record':
         if force:
             print('  ✗ record 不收 --force：强制跑的那一次不记成「上次成功」', file=sys.stderr)
             print('     → 怎么办： 调用方判到这一次是强制跑的，就别调 record', file=sys.stderr)

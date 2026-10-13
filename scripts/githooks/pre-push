@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# admission: always git 在每一次 push 之前调它，判的是这一次要推的 ref
-# run-condition: none 只读 git 从标准输入喂进来的 ref，不碰别的环境（判条件本身要 python3，见 preflight.sh）
+# admission: always git 在每一次 push 之前调它，判的是这一次要推的引用
+# run-condition: none 只读 git 从标准输入喂进来的引用，不碰别的环境（判条件本身要 python3，见 preflight.sh）
 # git 的 pre-push 钩子：直接 git push master 一律拒绝，指回 scripts/push-all.sh。
 #   启用（每个语言仓各一次）：git config core.hooksPath scripts/githooks
 # 推 master 要全部语言仓一起验、一起推，而验证要十几分钟。git push 是先连上远端、再跑这个钩子的，
@@ -9,11 +9,11 @@
 source "$(dirname "${BASH_SOURCE[0]}")/../preflight.sh"
 preflight "${BASH_SOURCE[0]}" "$@"; set -- ${PREFLIGHT_ARGUMENTS[@]+"${PREFLIGHT_ARGUMENTS[@]}"}
 [[ "${SOP_PUSH_ALL_INNER:-}" == 1 ]] && exit 0
-# git 把要推的 ref 从标准输入喂进来，一行一条：<本地ref> <本地sha> <远端ref> <远端sha>。
+# git 把要推的引用从标准输入喂进来，一行一条：<本地引用> <本地提交的 sha> <远端引用> <远端提交的 sha>。
 # 只有推 master 才拦；推一个特性分支、一个 tag，按普通 push 放行。
 pushing_master=0
-while read -r _local_ref _local_sha remote_ref _remote_sha; do
-  [[ "$remote_ref" == refs/heads/master ]] && pushing_master=1
+while read -r _local_reference _local_commit_sha remote_reference _remote_commit_sha; do
+  [[ "$remote_reference" == refs/heads/master ]] && pushing_master=1
 done
 if [[ $pushing_master -eq 0 ]]; then
   printf '  ! 推的不是 master，不走「全部语言仓一起验、一起推」\n'

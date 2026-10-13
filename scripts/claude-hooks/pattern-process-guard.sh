@@ -33,10 +33,10 @@
 #         -c 字符串里当数据写的同类形态也一样。要把这几个字当数据写进文件，放进喂给 cat 的 heredoc 正文。
 #   判不准——heredoc 所在的那一行按标点切出它属于哪条命令，不管引号：引号里的 ; | ( 会切错，切错时按「不进 shell」算；
 #         同一行开了几个 heredoc 的，按次序各找各的收尾行。
-HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$HOOK_DIR/../lib.sh"
+HOOK_DIRECTORY="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$HOOK_DIRECTORY/../lib.sh"
 preflight "${BASH_SOURCE[0]}" "$@"; set -- ${PREFLIGHT_ARGUMENTS[@]+"${PREFLIGHT_ARGUMENTS[@]}"}
-PROC_PY="$(cd "$HOOK_DIR/.." && pwd)/proc.py"
+PROCESS_TOOL_SCRIPT="$(cd "$HOOK_DIRECTORY/.." && pwd)/proc.py"
 
 # 从钩子输入里取出要判的代码行，一行一条，写到标准输出。python 程序用 -c 传，标准输入留给钩子的 JSON。
 # 输入不是 JSON 对象时退出码 3。
@@ -78,22 +78,22 @@ def is_shell_word(word):
 
 def heredoc_feeds_shell(line, operator):
     """正文进不进 shell：开 heredoc 的那条简单命令里有 shell（bash <<EOF、sudo bash <<EOF），或它的输出经管道进 shell（cat <<EOF | bash）。"""
-    head = line[:operator.start()]
-    boundaries = list(COMMAND_BOUNDARY.finditer(head))
+    command_before_heredoc = line[:operator.start()]
+    boundaries = list(COMMAND_BOUNDARY.finditer(command_before_heredoc))
     if boundaries:
-        head = head[boundaries[-1].end():]
-    head_words = words_of(head)
-    if any(is_shell_word(word) for word in (head.split() if head_words is None else head_words)):
+        command_before_heredoc = command_before_heredoc[boundaries[-1].end():]
+    command_before_heredoc_words = words_of(command_before_heredoc)
+    if any(is_shell_word(word) for word in (command_before_heredoc.split() if command_before_heredoc_words is None else command_before_heredoc_words)):
         return True
-    tail = line[operator.end():]
-    tail_words = words_of(tail)
-    piped = False
-    for word in (tail.split() if tail_words is None else tail_words):
+    text_after_heredoc_operator = line[operator.end():]
+    text_after_heredoc_operator_words = words_of(text_after_heredoc_operator)
+    is_piped = False
+    for word in (text_after_heredoc_operator.split() if text_after_heredoc_operator_words is None else text_after_heredoc_operator_words):
         if ends_command(word):
             if word not in ("|", "|&"):
                 return False
-            piped = True
-        elif piped and is_shell_word(word):
+            is_piped = True
+        elif is_piped and is_shell_word(word):
             return True
     return False
 
@@ -123,10 +123,10 @@ def separate_heredoc_bodies(text):
 
 def strings_run_by_shell(command_words):
     """一条简单命令里交给 shell 当代码跑的字符串：bash -c '…'（-lc、-ec 这类合并写法也算）与 bash <<< '…'。"""
-    found = []
+    strings_for_shell = []
     for position, word in enumerate(command_words):
         if word == "<<<" and position + 1 < len(command_words) and any(is_shell_word(earlier) for earlier in command_words[:position]):
-            found.append(command_words[position + 1])
+            strings_for_shell.append(command_words[position + 1])
         if not is_shell_word(word):
             continue
         option_index = position + 1
@@ -139,10 +139,10 @@ def strings_run_by_shell(command_words):
                 break
             if re.fullmatch(r"-[A-Za-z]*c[A-Za-z]*", option):
                 if option_index + 1 < len(command_words):
-                    found.append(command_words[option_index + 1])
+                    strings_for_shell.append(command_words[option_index + 1])
                 break
             option_index += 1
-    return found
+    return strings_for_shell
 
 
 def shell_strings_in(text):
@@ -153,14 +153,14 @@ def shell_strings_in(text):
         for line in text.split("\n"):
             words.extend(words_of(line) or [])
             words.append(";")
-    found, command_words = [], []
+    strings_for_shell, command_words = [], []
     for word in words + [";"]:
         if ends_command(word):
-            found.extend(strings_run_by_shell(command_words))
+            strings_for_shell.extend(strings_run_by_shell(command_words))
             command_words = []
         else:
             command_words.append(word)
-    return found
+    return strings_for_shell
 
 
 def code_lines_of(text, nesting):
@@ -201,17 +201,17 @@ if ! code_lines="$(python3 -c "$EXTRACT_CODE_LINES")"; then
   exit 1
 fi
 [[ -n "$code_lines" ]] || exit 0
-hits="$(printf '%s\n' "$code_lines" | grep -vE '^[[:space:]]*#' | grep -E "$PATTERN_KILL_RE|$PATTERN_PGREP_RE" || true)"
-[[ -n "$hits" ]] || exit 0
-hit_count="$(printf '%s\n' "$hits" | wc -l)"
-first_hit="${hits%%$'\n'*}"
+matched_lines="$(printf '%s\n' "$code_lines" | grep -vE '^[[:space:]]*#' | grep -E "$PATTERN_KILL_RE|$PATTERN_PGREP_RE" || true)"
+[[ -n "$matched_lines" ]] || exit 0
+matched_line_count="$(printf '%s\n' "$matched_lines" | wc -l)"
+matched_line_shown_in_message="${matched_lines%%$'\n'*}"
 {
-  printf '✗ 这条命令里有按模式找进程的写法（pgrep 或 pkill 带 -f / --full，或 killall），执行前拒绝。共 %s 处，第一处：%s\n' "$hit_count" "${first_hit:0:160}"
+  printf '✗ 这条命令里有按模式找进程的写法（pgrep 或 pkill 带 -f / --full，或 killall），执行前拒绝。共 %s 处，第一处：%s\n' "$matched_line_count" "${matched_line_shown_in_message:0:160}"
   printf '%s\n' '→ 怎么办：模式串会命中发出这条命令的 shell 自己，拿它等进程的循环永远不退出，拿它杀进程会连自己一起杀（rules/command-safety.md）。改成按进程号办事：' \
     '    自己起的进程：起的时候 pid=$! 记下来，用 wait "$pid"，或者 while kill -0 "$pid" 2>/dev/null; do sleep 5; done，外面套 timeout；' \
     '    要会话在它跑完时叫醒你：放后台起（run_in_background），等完成通知，不写轮询；' \
-    "    不是自己起的进程：python3 $PROC_PY find 可执行文件名 [--argument 参数] 拿进程号（不列发出命令的那一支），" \
-    "      再 python3 $PROC_PY wait 进程号 --timeout 秒，或 python3 $PROC_PY stop 进程号；" \
+    "    不是自己起的进程：python3 $PROCESS_TOOL_SCRIPT find 可执行文件名 [--argument 参数] 拿进程号（不列发出命令的那一支），" \
+    "      再 python3 $PROCESS_TOOL_SCRIPT wait 进程号 --timeout 秒，或 python3 $PROCESS_TOOL_SCRIPT stop 进程号；" \
     '    只是要把这几个字当数据写进文件：写进喂给 cat 的 heredoc 正文（正文不判）。'
 } >&2
 exit 2

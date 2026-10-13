@@ -28,7 +28,7 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 from preflight import preflight  # noqa: E402
 
-BROKEN = os.environ.get("PROC_BREAK", "")
+ENABLED_BREAK_SWITCH = os.environ.get("PROC_BREAK", "")
 
 
 def ancestor_process_ids():
@@ -47,7 +47,7 @@ def ancestor_process_ids():
 def arguments_of(process_id):
     try:
         with open(f"/proc/{process_id}/cmdline", "rb") as handle:
-            return [part.decode(errors="replace") for part in handle.read().split(b"\0") if part]
+            return [argument_bytes.decode(errors="replace") for argument_bytes in handle.read().split(b"\0") if argument_bytes]
     except OSError:
         return []
 
@@ -72,16 +72,16 @@ def is_alive(process_id):
 
 
 def find(executable_name, argument):
-    excluded = set() if BROKEN == "ancestors" else ancestor_process_ids()
+    excluded = set() if ENABLED_BREAK_SWITCH == "ancestors" else ancestor_process_ids()
     matches = []
-    for entry in os.listdir("/proc"):
-        if not entry.isdigit() or int(entry) in excluded:
+    for process_table_entry_name in os.listdir("/proc"):
+        if not process_table_entry_name.isdigit() or int(process_table_entry_name) in excluded:
             continue
-        process_id = int(entry)
+        process_id = int(process_table_entry_name)
         arguments = arguments_of(process_id)
         if not arguments or executable_name not in executable_name_of(process_id, arguments):
             continue
-        if argument is not None and not any(value == argument or os.path.basename(value) == os.path.basename(argument) for value in arguments[1:]):
+        if argument is not None and not any(process_argument == argument or os.path.basename(process_argument) == os.path.basename(argument) for process_argument in arguments[1:]):
             continue
         matches.append((process_id, arguments))
     return sorted(matches)
@@ -93,13 +93,13 @@ def wait(process_ids, timeout_seconds, interval_seconds):
         alive = [process_id for process_id in process_ids if is_alive(process_id)]
         if not alive:
             return []
-        if BROKEN != "timeout" and time.monotonic() >= deadline:
+        if ENABLED_BREAK_SWITCH != "timeout" and time.monotonic() >= deadline:
             return alive
         time.sleep(min(interval_seconds, max(0.05, deadline - time.monotonic())))
 
 
 def stop(process_id, grace_seconds):
-    if process_id in ancestor_process_ids() and BROKEN != "stopself":
+    if process_id in ancestor_process_ids() and ENABLED_BREAK_SWITCH != "stopself":
         return "refused"
     if not is_alive(process_id):
         return "missing"
@@ -115,33 +115,35 @@ def selftest():
     # 参数带本进程号：几份自证同时跑时（几个语言仓并行跑 selftest），写死的话 find 会列出别的那份起的 sleep，两份一起判红（实测）
     marker = f"4242.{os.getpid()}"
     sleepers = [subprocess.Popen(["sleep", marker]) for _ in range(2)]
+    # 等超时与停进程两项都拿这一个；另一个只给 find 凑「列出全部」的数
+    sleeper_to_wait_and_stop = sleepers[0]
     try:
-        found_ids = [process_id for process_id, _ in find("sleep", marker)]
-        if sorted(found_ids) != sorted(process.pid for process in sleepers):
-            failures.append(f"find sleep --argument {marker} 应当正好列出起的两个 sleep {[p.pid for p in sleepers]}，实际 {found_ids}")
-        own_ids = [process_id for process_id, _ in find(os.path.basename(sys.executable), None)]
-        if os.getpid() in own_ids:
+        sleep_process_ids_found = [process_id for process_id, _ in find("sleep", marker)]
+        if sorted(sleep_process_ids_found) != sorted(process.pid for process in sleepers):
+            failures.append(f"find sleep --argument {marker} 应当正好列出起的两个 sleep {[sleeper.pid for sleeper in sleepers]}，实际 {sleep_process_ids_found}")
+        python_process_ids_found = [process_id for process_id, _ in find(os.path.basename(sys.executable), None)]
+        if os.getpid() in python_process_ids_found:
             failures.append("find 列出了发出这条命令的进程自己（祖先那一支应当排除）")
         # 超时那一项在子进程里跑、外面套硬超时：破坏开关打开时 wait 不会自己返回，不能把自证挂死
         try:
-            timed = subprocess.run([sys.executable, os.path.abspath(__file__), "wait", str(sleepers[0].pid), "--timeout", "0.3", "--interval", "0.05"],
-                                   capture_output=True, text=True, timeout=10)
-            if timed.returncode != 3:
-                failures.append(f"wait 在进程还活着时应当超时退出码 3，实际 {timed.returncode}")
+            wait_timeout_run = subprocess.run([sys.executable, os.path.abspath(__file__), "wait", str(sleeper_to_wait_and_stop.pid), "--timeout", "0.3", "--interval", "0.05"],
+                                              capture_output=True, text=True, timeout=10)
+            if wait_timeout_run.returncode != 3:
+                failures.append(f"wait 在进程还活着时应当超时退出码 3，实际 {wait_timeout_run.returncode}")
         except subprocess.TimeoutExpired:
             failures.append("wait 给了 --timeout 0.3 却 10 秒没返回")
-        outcome = stop(sleepers[0].pid, 2)
-        sleepers[0].wait()
+        outcome = stop(sleeper_to_wait_and_stop.pid, 2)
+        sleeper_to_wait_and_stop.wait()
         if outcome not in ("terminated", "killed"):
             failures.append(f"stop 应当停掉 sleep，实际 {outcome}")
-        if wait([sleepers[0].pid], 2, 0.05) != []:
+        if wait([sleeper_to_wait_and_stop.pid], 2, 0.05) != []:
             failures.append("停掉之后 wait 应当立刻返回")
         # 拒绝停祖先：让 proc.py 去停一次性的 bash（它的父进程）。破坏开关打开时停掉的只是这个 bash，
         # 不是跑自证的那一支（实测：拿真的 getppid 试，把调用它的 shell 一起停了）
-        refusal = subprocess.run(["bash", "-c", f'"{sys.executable}" "{os.path.abspath(__file__)}" stop $$ --grace 1; echo "exit=$?"'],
-                                 capture_output=True, text=True, timeout=30)
-        if "exit=2" not in refusal.stdout:
-            failures.append(f"stop 停自己的祖先应当拒绝（退出码 2），实际输出 {refusal.stdout.strip()[:80]!r}、bash 退出码 {refusal.returncode}")
+        stop_ancestor_run = subprocess.run(["bash", "-c", f'"{sys.executable}" "{os.path.abspath(__file__)}" stop $$ --grace 1; echo "exit=$?"'],
+                                           capture_output=True, text=True, timeout=30)
+        if "exit=2" not in stop_ancestor_run.stdout:
+            failures.append(f"stop 停自己的祖先应当拒绝（退出码 2），实际输出 {stop_ancestor_run.stdout.strip()[:80]!r}、bash 退出码 {stop_ancestor_run.returncode}")
     finally:
         for process in sleepers:
             if process.poll() is None:
@@ -160,15 +162,15 @@ def main():
     if len(sys.argv) >= 2 and sys.argv[1] == "--selftest":
         return selftest()
     parser = argparse.ArgumentParser(description="找进程、按 pid 等进程、按 pid 停进程（替掉 pgrep -f / pkill -f / killall）")
-    commands = parser.add_subparsers(dest="command", required=True)
-    find_command = commands.add_parser("find")
+    subcommand_parsers = parser.add_subparsers(dest="command", required=True)
+    find_command = subcommand_parsers.add_parser("find")
     find_command.add_argument("executable_name")
     find_command.add_argument("--argument")
-    wait_command = commands.add_parser("wait")
+    wait_command = subcommand_parsers.add_parser("wait")
     wait_command.add_argument("process_ids", nargs="+", type=int)
     wait_command.add_argument("--timeout", type=float, required=True)
     wait_command.add_argument("--interval", type=float, default=5)
-    stop_command = commands.add_parser("stop")
+    stop_command = subcommand_parsers.add_parser("stop")
     stop_command.add_argument("process_id", type=int)
     stop_command.add_argument("--grace", type=float, default=10)
     arguments = parser.parse_args()
@@ -180,7 +182,7 @@ def main():
         alive = wait(arguments.process_ids, arguments.timeout, arguments.interval)
         if alive:
             print(f"  ✗ 等了 {arguments.timeout:g} 秒，这些进程还在：{alive}")
-            print("    → 怎么办：看它在不在动（ps -o pid,etimes,time,args -p 进程号），在动就再等一次；不动就报给调度的一方定，不自己停")
+            print("    → 怎么办：看它在不在动（ps -o pid,etimes,time,args -p 进程号），在动就再等一次；不动就报给调度的一方定，不自己停；报了之后调度的一方没有响应，可以终止它（proc.py stop 进程号）")
             return 3
         print(f"  ✓ {arguments.process_ids} 都已退出")
         return 0
