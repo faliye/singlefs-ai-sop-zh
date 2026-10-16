@@ -13,10 +13,36 @@ preflight "${BASH_SOURCE[0]}" "$@"; set -- ${PREFLIGHT_ARGUMENTS[@]+"${PREFLIGHT
 PACKAGE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 I18N_FILE="$PACKAGE_ROOT/I18N"
 
-NEW_VERSION="${1:-}"
-[[ "$NEW_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { bad "用法: bump.sh <x.y.z>"
+NEW_VERSION=""
+LANGUAGE_REPOSITORIES_PARENT="$(dirname "$PACKAGE_ROOT")"
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --root)
+      [[ $# -ge 2 ]] || die "--root 后面要跟目录路径" "用法: bump.sh <x.y.z> [--root <各语言仓所在目录>]"
+      LANGUAGE_REPOSITORIES_PARENT="$2"
+      shift 2
+      ;;
+    --root=*)
+      LANGUAGE_REPOSITORIES_PARENT="${1#*=}"
+      shift
+      ;;
+    -*)
+      die "认不出的参数：$1" "用法: bump.sh <x.y.z> [--root <各语言仓所在目录>]"
+      ;;
+    *)
+      if [[ -z "$NEW_VERSION" ]]; then
+        NEW_VERSION="$1"
+      else
+        die "收到了多余的位置参数：$1" "用法: bump.sh <x.y.z> [--root <各语言仓所在目录>]"
+      fi
+      shift
+      ;;
+  esac
+done
+
+[[ "$NEW_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { bad "用法: bump.sh <x.y.z> [--root <各语言仓所在目录>]"
   howto "版本号必须是三段数字，例： bash scripts/bump.sh 1.1.0"; exit 1; }
-LANGUAGE_REPOSITORIES_PARENT="${3:-$(dirname "$PACKAGE_ROOT")}"
 [[ -f "$I18N_FILE" ]] || die "缺 I18N" \
   "I18N 声明了语言族与已发布的语言，没有它就不知道要升哪几个仓。" \
   "从参照仓拷一份过来，或照 README 的「多语言」一节新建。"

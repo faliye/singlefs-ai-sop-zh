@@ -80,8 +80,6 @@ def _frozen_evidence_directories(repository_root="."):
         pass
     return tuple(registered_directories)
 
-
-FROZEN_EVIDENCE_DIRECTORIES = ()
 SKIPPED_DIRECTORY_NAMES = (".git", "target", "node_modules", "__pycache__")
 SCANNED_SUFFIXES = (".rs", ".py")
 WEAK_MODE_ENVIRONMENT_VARIABLE = "RELAY_TIMING_LINT_IGNORE_OUTPUT"

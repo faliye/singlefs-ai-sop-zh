@@ -3,6 +3,25 @@
 规则与门禁的版本历史。`CLAUDE.md` 与 `rules/*.md` 不留历史节（design-doc-discipline），
 历史一律记在这里；逐条改动细节见 `git log`，提交信息即变更说明。
 
+## 0.0.66 — 2026-10-15
+
+**修复 `diff_base` 在过闸后基准跌落漏洞，消解 `inputs-unchanged` 视觉假报警；将 `.gitignore` 纳入多语言共享与保护；完善无 `.rs` 时 `naming-lint` 退出码与排除名单校验；`bump.sh` 严谨解析参数；`pattern-process-guard` 内建自测；清理 Python 字节码与死变量**
+
+规则：
+- `code-discipline.md`：新加一节「修了 bug，要严查全库里逻辑和代码相似的地方」——修完拆出代码形态与逻辑形态两种模式，全库搜、逐个判、相似处同次改掉并各配红测试，提交信息写搜了什么、命中与改动的条数；「门禁管哪一半」记为靠 review。
+
+脚本与门禁：
+- `lib.sh`：修复 `diff_base` 漏洞。此前在默认分支上当 `refs/sop/gate-ok` 恰好等于 `HEAD` 时，因不满足不等于条件而跌落至 `HEAD~1`，导致上一轮抬过的版本掩盖工作区当前未抬版本的修改；现判定只要 `gate-ok` 存在且是 `HEAD` 的祖先即直接返回 `gate-ok`。
+- `gate.sh`：捕获 `stage_admitted` 中 `preflight.py check` 的 stderr。当判定结果为 `inputs-unchanged`（输入自上次成功以来未变）时，消除红色 `✗` 视觉假报警并改用黄色 `warn` 警示跳过；其余未满足条件与异常正常打印详细原因与出路。
+- `i18n-sync.sh`：将 `.gitignore` 纳入 `SHARED` 共享列表，多语言同步覆盖写入；增加存在性守卫，避免样本工程缺失共享文件时被 `diff -rq` 误判为不一致。
+- `naming-lint.sh`：被检工程没有 `.rs` 文件时改用 `warn`，解决原本打印打勾却退出 3 的自相矛盾；增加对 `.claude/naming-sweep-exclude` 的路径有效性与排除理由守卫，防止排除空路径或失效条目。
+- `bump.sh`：改用 `while / case` 循环解析 `--root` 选项并拦截非法参数；在 `selftest.sh` 补充覆盖用例。
+- `claude-hooks/pattern-process-guard.sh`：内建 `--selftest` 驱动模式，覆盖 19 组红绿样本。
+- `package-family.py`、`session-transcript.py`：设置 `sys.dont_write_bytecode = True`，`.gitignore` 拦截字节码缓存文件。
+- `relay-timing-lint.py`：清理未引用的死变量 `FROZEN_EVIDENCE_DIRECTORIES`。
+- `templates/CLAUDE.project.md`：补齐 `doc-lint.sh` 说明。
+- `selftest.sh`：新增 `version-discipline/门禁过闸后新改动不提版本要拦住` 测试用例，锁定 `diff_base` 在 `gate-ok == HEAD` 时的基准守卫；自测用例数提升至 668 例。
+
 ## 0.0.65 — 2026-10-13
 
 **名字与注释纪律的射程扩到全部代码与文本（不分语言、不分目录，文档也算）；新加「不拿序号、位置当名字」「注释里不写缩写，不用代号指东西」两条，并照它们把本仓的脚本与三语文档统一改了一遍；调度的一方不响应时，报告的一方可以终止卡住的进程或子 agent；只改 `.rs` 注释的改动不算改了代码；规则里继续删论证与经过**

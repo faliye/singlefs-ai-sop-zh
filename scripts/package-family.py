@@ -7,6 +7,10 @@ I18N 读不到时取本包目录的真实名字：装进项目的副本，目录
 不单独跑，由别的脚本按路径载入（preflight.py 的 load_package_module），函数照原名调。
 """
 import os
+import sys
+
+# 不写 __pycache__：避免门禁跑的过程中生成未跟踪文件
+sys.dont_write_bytecode = True
 
 PACKAGE_ROOT = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 

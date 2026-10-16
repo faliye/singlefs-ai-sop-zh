@@ -4,6 +4,7 @@
 # 准入门禁。rules/show-me-test.md的可执行形式。
 #
 # 用法：gate.sh [项目根] [--staged] [--force]（顺序不限）
+#   GATE_STAGED_TREE=<树对象名> gate.sh --staged …：里层判的就是这棵树，不再自己读暂存区（外壳先 git write-tree 记下要判的树、跑完按它记账时用）
 # 退出码：0 = 没有阶段判红；非 0 = 有阶段失败。准入或运行条件不满足没起的阶段记失败（只因为「输入没变」没起的记本次未跑）；
 #   带 --force 强制跑过的阶段不让退出码变非 0，但汇总里逐个列出、末句不说「全部通过」、不前移 gate-ok（rules/preflight-discipline.md）。
 # 未实现的阶段显式报告为未实现，不静默跳过（rules/show-me-test.md「门禁不许假装通过」）。
@@ -45,15 +46,35 @@ set -- ${GATE_ROOT_ARGUMENTS[@]+"${GATE_ROOT_ARGUMENTS[@]}"}
 # 几个会话共写一个仓时，工作区里混着别人没收尾的改动与未跟踪文件，门禁在工作区上判的红分不清是谁的
 # （rules/session-wrapup.md 第 4 条「同一个仓里有没有别的会话在飞？」）。这里在临时 worktree 上把 `git diff --cached` 套到 HEAD 上，再对那棵树跑一遍整道门禁。
 # 规范副本不进 git 时（项目常把 .claude/<包名>/ 放进 .gitignore）原样拷进 worktree，否则项目里的包装脚本转发不到。
-# worktree 里的构建从零开始；要复用构建产物，自己设 CARGO_TARGET_DIR 之类的环境变量。
+# 临时 worktree 的路径按仓根固定（不用 mktemp）：cargo 给路径依赖算的指纹带着包的路径，worktree 每趟换路径就每趟全重编；
+# 调用方设了 CARGO_TARGET_DIR 的，构建产物跨趟能命中；不设就在 worktree 自己的 target/ 里编、跑完随 worktree 删。
+# 同一个仓同一时刻只许一趟 --staged：目录里记着的 pid 还活着就拒绝，不排队、不动它的 worktree；pid 不在了的算残留，清掉接着跑。
 if [[ $WANT_STAGED -eq 1 ]]; then
   source_repository_root="$(cd "${1:-$(project_root)}" 2>/dev/null && pwd)" || die "找不到项目根：${1:-当前目录}" \
     "在项目根跑 bash .claude/scripts/gate.sh --staged（包装自己会带上项目根，别再给一个）；" \
     "直接调共享脚本时才把项目根作为参数： bash <规范副本>/scripts/gate.sh --staged <项目根>"
   git -C "$source_repository_root" rev-parse --git-dir >/dev/null 2>&1 || die "--staged 要在 git 仓里跑，而 $source_repository_root 不是" \
     "去掉 --staged 直接跑，或者到仓里再跑。"
-  staged_scratch_directory="$(mktemp -d)"; staged_tree="$staged_scratch_directory/tree"
-  if ! git -C "$source_repository_root" diff --cached --binary > "$staged_scratch_directory/staged.patch"; then
+  staged_scratch_directory="${TMPDIR:-/tmp}/gate-staged-$(printf '%s' "$source_repository_root" | git -C "$source_repository_root" hash-object --stdin | cut -c1-12)"
+  staged_tree="$staged_scratch_directory/tree"
+  if [[ -d "$staged_scratch_directory" ]]; then
+    staged_other_pid="$(cat "$staged_scratch_directory/pid" 2>/dev/null || true)"
+    if [[ -n "$staged_other_pid" ]] && kill -0 "$staged_other_pid" 2>/dev/null; then
+      die "另一趟 gate.sh --staged（进程 $staged_other_pid）正在这个仓上跑，临时树 $staged_tree 被它占着" \
+        "等它跑完再跑；它早就不在而目录还在的，清掉：git -C $source_repository_root worktree remove --force $staged_tree; rm -rf $staged_scratch_directory"
+    fi
+    git -C "$source_repository_root" worktree remove --force "$staged_tree" >/dev/null 2>&1 || true
+    rm -rf "${staged_scratch_directory:?}"
+  fi
+  mkdir -p "$staged_scratch_directory" || die "建不出临时目录 $staged_scratch_directory" "看 TMPDIR 指的目录在不在、能不能写。"
+  printf '%s\n' "$$" > "$staged_scratch_directory/pid"
+  # 调用方给了一棵树就判那一棵：外壳按它记账，里层再读一次暂存区的话，两次之间暂存区或 HEAD 被别的会话挪动，判的与记的就不是同一棵。
+  staged_given_tree="${GATE_STAGED_TREE:-}"; unset GATE_STAGED_TREE
+  if [[ -n "$staged_given_tree" ]]; then
+    if [[ "$(git -C "$source_repository_root" cat-file -t "$staged_given_tree" 2>/dev/null)" != tree ]]; then
+      rm -rf "${staged_scratch_directory:?}"; die "GATE_STAGED_TREE=$staged_given_tree 不是这个仓里的一棵树" "给 git write-tree 算出来的树对象名，或者不设它（里层自己读暂存区）。"
+    fi
+  elif ! git -C "$source_repository_root" diff --cached --binary > "$staged_scratch_directory/staged.patch"; then
     rm -rf "${staged_scratch_directory:?}"; die "取不到暂存区的 diff" "确认 git 可用，再跑一次。"
   fi
   if ! staged_worktree_add_error="$(git -C "$source_repository_root" worktree add --detach "$staged_tree" HEAD 2>&1)"; then
@@ -84,7 +105,9 @@ if [[ $WANT_STAGED -eq 1 ]]; then
   trap 'staged_exit_guard' EXIT
   trap 'staged_cleanup; exit 130' INT
   trap 'staged_cleanup; exit 143' TERM
-  if [[ -s "$staged_scratch_directory/staged.patch" ]] && ! git -C "$staged_tree" apply --index "$staged_scratch_directory/staged.patch"; then
+  if [[ -n "$staged_given_tree" ]]; then
+    git -C "$staged_tree" read-tree --reset -u "$staged_given_tree" || die "把 GATE_STAGED_TREE 那棵树铺进临时 worktree 失败" "确认那棵树还在仓里（git cat-file -t $staged_given_tree），再跑一次。"
+  elif [[ -s "$staged_scratch_directory/staged.patch" ]] && ! git -C "$staged_tree" apply --index "$staged_scratch_directory/staged.patch"; then
     die "暂存区的 diff 套不上 HEAD" "先 git status 看暂存区是不是基于当前 HEAD，再跑一次。"
   fi
   staged_family="$(sed -n 's/^family=//p' "$SCRIPTS_DIRECTORY/../I18N" 2>/dev/null || true)"; staged_family="${staged_family:-singlefs-ai-sop}"
@@ -108,6 +131,7 @@ if [[ $WANT_STAGED -eq 1 ]]; then
   fi
   head1 "只拿 HEAD + 暂存区跑（--staged）"
   ok "临时 worktree：$staged_tree（跑完删掉）"
+  if [[ -n "$staged_given_tree" ]]; then ok "被判的树：$staged_given_tree（调用方经 GATE_STAGED_TREE 给的，里层没再读暂存区）"; fi
   ok "不进这一轮的：工作区里没暂存的 $(git -C "$source_repository_root" diff --name-only | wc -l) 个文件、未跟踪的 $(git -C "$source_repository_root" ls-files --others --exclude-standard | wc -l) 个文件"
   ok "diff 基准 $staged_diff_base（在源仓上算的，与不带 --staged 时相同）"
   # 退出码要在 if 里取：lib.sh 开着 set -e，写成「里层; staged_exit_code=$?」的话，里层一判红外层就在这一行退出，
@@ -217,12 +241,17 @@ STAGE_FORCE_OPTION=(); STAGE_FORCED_SUMMARY=""
 GATE_OK_HELD_BY=()
 stage_admitted() { # stage_admitted <阶段名> <脚本> [脚本的参数…] → 0 起它；1 不起（已记好）
   local name="$1" script="$2"; shift 2
-  local preflight_status preflight_exit_code=0 refused_category
+  local preflight_status preflight_exit_code=0 refused_category preflight_stderr_file
   STAGE_FORCE_OPTION=(); STAGE_FORCED_SUMMARY=""
-  preflight_status="$(python3 "$SCRIPTS_DIRECTORY/preflight.py" check "$script" ${GATE_FORCE_OPTION[@]+"${GATE_FORCE_OPTION[@]}"} -- "$@")" \
+  preflight_stderr_file="$(mktemp "${GATE_RUN_TMPDIR:-${TMPDIR:-/tmp}}/preflight-stderr.XXXXXX")"
+  preflight_status="$(python3 "$SCRIPTS_DIRECTORY/preflight.py" check "$script" ${GATE_FORCE_OPTION[@]+"${GATE_FORCE_OPTION[@]}"} -- "$@" 2>"$preflight_stderr_file")" \
     || preflight_exit_code=$?
   case "$preflight_exit_code" in
     0)
+      if [[ -s "$preflight_stderr_file" ]]; then
+        cat "$preflight_stderr_file" >&2
+      fi
+      rm -f "$preflight_stderr_file"
       if [[ "$preflight_status" == forced* ]]; then
         STAGE_FORCE_OPTION=(--force); STAGE_FORCED_SUMMARY="${preflight_status#forced*$'\t'*$'\t'}"
       fi
@@ -230,14 +259,19 @@ stage_admitted() { # stage_admitted <阶段名> <脚本> [脚本的参数…] �
     "$EXIT_REFUSED_BY_PREFLIGHT")
       refused_category="${preflight_status#refused$'\t'}"; refused_category="${refused_category%%$'\t'*}"
       if [[ "$refused_category" == inputs-unchanged ]]; then
+        warn "$name：输入自上次成功跑完以来没变，跳过（重跑使用 gate.sh --force）"
         NOT_RUN+=("$name        本次未跑：输入自上次成功跑完以来没变，重跑得不到新信息——${preflight_status##*$'\t'}。确认要照跑就 gate.sh --force")
       else
+        cat "$preflight_stderr_file" >&2
         bad "$name：条件不满足，没起它，按失败记——${preflight_status##*$'\t'}"
         howto "按上面每一条的出路补齐条件再跑；确认要在条件不满足时照跑就 gate.sh --force（记「强制跑过」，不记通过）。"
         record "$name" FAIL
       fi
+      rm -f "$preflight_stderr_file"
       return 1 ;;
     *)
+      cat "$preflight_stderr_file" >&2
+      rm -f "$preflight_stderr_file"
       bad "$name：判不了它的准入与运行条件（preflight.py 退出码 $preflight_exit_code），没起它"
       howto "照上面 preflight.py 的原话改 $script 的文件头；写法见 rules/preflight-discipline.md。"
       record "$name" FAIL

@@ -94,7 +94,7 @@ stale_articles() { # stale_articles <译本仓>
 
 # 原样复制到各语言仓的部分：只有不含面向人的散文的东西（脚本与配置），别的一律走清单逐篇翻译。
 # GLOSSARY.md 例外留在这里：它本身就是各语言并列的一张对照表，说明列自带三语。
-SHARED=(install.sh scripts GLOSSARY.md)
+SHARED=(install.sh scripts GLOSSARY.md .gitignore)
 
 # gate.sh 当阶段跑时它已打过同名标题，别打两遍（GATE_IN_STAGE 由 run_stage 设）
 [[ -n "${GATE_IN_STAGE:-}" ]] || head1 "各语言同步"
@@ -237,7 +237,9 @@ for language in $LANGUAGES; do
       failed_language_count=$((failed_language_count+1)); continue; }
     for shared_item in "${SHARED[@]}"; do
       rm -rf "${translation_repository:?}/$shared_item"
-      cp -a "$PACKAGE_ROOT/$shared_item" "$translation_repository/$shared_item"
+      if [[ -e "$PACKAGE_ROOT/$shared_item" ]]; then
+        cp -a "$PACKAGE_ROOT/$shared_item" "$translation_repository/$shared_item"
+      fi
     done
     # I18N 只有 this= 一行按语言不同，其余照抄——各仓分头维护它必然漂
     sed "s/^this=.*/this=$language/" "$I18N_FILE" > "$translation_repository/I18N"
@@ -246,6 +248,9 @@ for language in $LANGUAGES; do
 
   differing_shared_items=""
   for shared_item in "${SHARED[@]}"; do
+    if [[ ! -e "$PACKAGE_ROOT/$shared_item" && ! -e "$translation_repository/$shared_item" ]]; then
+      continue
+    fi
     diff -rq "$PACKAGE_ROOT/$shared_item" "$translation_repository/$shared_item" >/dev/null 2>&1 || differing_shared_items+="$shared_item "
   done
   if [[ -n "$differing_shared_items" ]]; then

@@ -38,6 +38,50 @@ source "$HOOK_DIRECTORY/../lib.sh"
 preflight "${BASH_SOURCE[0]}" "$@"; set -- ${PREFLIGHT_ARGUMENTS[@]+"${PREFLIGHT_ARGUMENTS[@]}"}
 PROCESS_TOOL_SCRIPT="$(cd "$HOOK_DIRECTORY/.." && pwd)/proc.py"
 
+if [[ "${1:-}" == "--selftest" ]]; then
+  fixtures_dir="$(cd "$HOOK_DIRECTORY/../fixtures/pattern-process-guard" 2>/dev/null && pwd)"
+  [[ -d "$fixtures_dir" ]] || die "找不到样本目录：$HOOK_DIRECTORY/../fixtures/pattern-process-guard" \
+    "自证依赖样本目录；确认样本在场再跑。"
+  failed_cases=()
+  checked_count=0
+  for case_dir in "$fixtures_dir"/*/; do
+    [[ -d "$case_dir" ]] || continue
+    checked_count=$((checked_count + 1))
+    case_name="$(basename "$case_dir")"
+    expected_exit=0
+    expected_wants=()
+    if [[ -f "$case_dir/expect" ]]; then
+      while IFS= read -r expect_line || [[ -n "$expect_line" ]]; do
+        case "$expect_line" in
+          exit=*) expected_exit="${expect_line#exit=}" ;;
+          want=*) expected_wants+=("${expect_line#want=}") ;;
+        esac
+      done < "$case_dir/expect"
+    fi
+    actual_exit=0
+    case_output="$(bash "${BASH_SOURCE[0]}" < "$case_dir/input.json" 2>&1)" || actual_exit=$?
+    if [[ "$actual_exit" -ne "$expected_exit" ]]; then
+      failed_cases+=("$case_name: 期望退出码 $expected_exit，实际 $actual_exit")
+      continue
+    fi
+    for want_text in ${expected_wants[@]+"${expected_wants[@]}"}; do
+      if ! grep -Fq "$want_text" <<<"$case_output"; then
+        failed_cases+=("$case_name: 输出中未出现期望片段「$want_text」")
+      fi
+    done
+  done
+  if ((${#failed_cases[@]} > 0)); then
+    bad "pattern-process-guard 自证失败（${#failed_cases[@]} 处）："
+    for failed_case in "${failed_cases[@]}"; do
+      say "        $failed_case"
+    done
+    howto "看上面失败的情形，修好再跑；钩子自己的自证过不了，这道闸就不能信。"
+    exit 1
+  fi
+  ok "pattern-process-guard 自证：$checked_count 种情形判得都对"
+  exit 0
+fi
+
 # 从钩子输入里取出要判的代码行，一行一条，写到标准输出。python 程序用 -c 传，标准输入留给钩子的 JSON。
 # 输入不是 JSON 对象时退出码 3。
 IFS= read -r -d '' EXTRACT_CODE_LINES <<'PY' || true

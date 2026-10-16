@@ -9,7 +9,11 @@ Claude Code 的记录格式一变，一边跟上了、另一边还按旧格式�
 """
 import json
 import re
+import sys
 from datetime import datetime
+
+# 不写 __pycache__：避免门禁跑的过程中生成未跟踪文件
+sys.dont_write_bytecode = True
 
 # 后台任务（run_in_background）的完成通知里带着发起它的那次工具调用的编号
 TOOL_USE_ID_IN_NOTIFICATION_RE = re.compile(r'<tool-use-id>([A-Za-z0-9_-]+)</tool-use-id>')

@@ -91,6 +91,42 @@ if [[ -f "$EXCLUDE_FILE" ]]; then
   done < "$EXCLUDE_FILE"
 fi
 
+# ── 命名回扫排除表 ──────────────────────────────────────
+# 回扫旧代码与脚本时没改完的文件逐个列进来，改完一个删一行，排除只缩不涨；路径不存在判红。
+SWEEP_EXCLUDE_FILE="$PROJECT_ROOT/.claude/naming-sweep-exclude"
+if [[ -f "$SWEEP_EXCLUDE_FILE" ]]; then
+  sweep_line_number=0
+  while IFS= read -r sweep_line || [[ -n "$sweep_line" ]]; do
+    sweep_line_number=$((sweep_line_number+1))
+    [[ -z "${sweep_line//[[:space:]]/}" || "${sweep_line#"${sweep_line%%[![:space:]]*}"}" == \#* ]] && continue
+    if [[ "$sweep_line" != *\#* ]]; then
+      bad ".claude/naming-sweep-exclude:$sweep_line_number  这一条没写理由：$sweep_line"
+      howto "在 # 后面写清为什么这批名字暂不回扫。"
+      failure_count=$((failure_count+1)); continue
+    fi
+    sweep_path="${sweep_line%%#*}"; sweep_reason="${sweep_line#*#}"
+    sweep_path="${sweep_path#"${sweep_path%%[![:space:]]*}"}"; sweep_path="${sweep_path%"${sweep_path##*[![:space:]]}"}"
+    sweep_reason="${sweep_reason#"${sweep_reason%%[![:space:]]*}"}"; sweep_reason="${sweep_reason%"${sweep_reason##*[![:space:]]}"}"
+    if [[ -z "$sweep_reason" ]]; then
+      bad ".claude/naming-sweep-exclude:$sweep_line_number  # 后面是空的，等于没写理由"
+      howto "在 # 后面写清为什么这批名字暂不回扫。"
+      failure_count=$((failure_count+1)); continue
+    fi
+    if [[ -z "$sweep_path" || "$sweep_path" == "." || "$sweep_path" == /* || "$sweep_path" == *..* ]]; then
+      bad ".claude/naming-sweep-exclude:$sweep_line_number  路径不合法：「$sweep_path」"
+      howto "只收项目根之下的相对路径或目录，例： scripts/fixtures/" \
+            "不收 . 、绝对路径、含 .. 的路径。"
+      failure_count=$((failure_count+1)); continue
+    fi
+    if [[ ! -e "$PROJECT_ROOT/$sweep_path" ]]; then
+      bad ".claude/naming-sweep-exclude:$sweep_line_number  路径不存在：$sweep_path"
+      howto "路径拼错了就改对；那批文件已经删了或改完了，就把这一行删掉。" \
+            "留着的排除项会让人以为还有东西在被绕开。"
+      failure_count=$((failure_count+1)); continue
+    fi
+  done < "$SWEEP_EXCLUDE_FILE"
+fi
+
 # ── 缩写登记表 ──────────────────────────────────────────
 # 登记表是缩写唯一的权威定义：不写含义的、单字母的、登记两遍的都判红，它们让「这个缩写指什么」答不上来。
 ABBREVIATIONS_FILE="$PROJECT_ROOT/.claude/abbreviations"
@@ -158,7 +194,7 @@ if [[ $failure_count -gt 0 ]]; then
   exit 1
 fi
 if [[ ${#rust_files[@]} -eq 0 ]]; then
-  ok "没有要查的 .rs 文件（${#rust_files[@]} 个），本阶段无对象可判"
+  warn "没有要查的 .rs 文件（${#rust_files[@]} 个），本阶段无对象可判（这不是通过）"
   # 退 3 而不退 0：退 0 在汇总里与「判过了」分不出，而这一轮一个名字都没看（rules/show-me-test.md「门禁不许假装通过」）。
   exit 3
 fi

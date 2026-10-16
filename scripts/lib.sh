@@ -173,7 +173,7 @@ diff_base() {
           fi
           local gate_ok_commit
           if gate_ok_commit="$(git -C "$root" rev-parse -q --verify refs/sop/gate-ok 2>/dev/null)" \
-             && [[ -n "$gate_ok_commit" && "$gate_ok_commit" != "$(git -C "$root" rev-parse HEAD)" ]] \
+             && [[ -n "$gate_ok_commit" ]] \
              && git -C "$root" merge-base --is-ancestor "$gate_ok_commit" HEAD 2>/dev/null; then
             printf '%s' "$gate_ok_commit"; return 0
           fi

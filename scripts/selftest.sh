@@ -57,7 +57,7 @@ judge() { # judge <名> <期望exit> <实际exit> <输出文件> [want片段...]
   return 0
 }
 
-# 三种跑法起子进程时都清掉 GATE_BASE、GATE_STAGED_FROM 与 GATE_DIFF_BASE：gate.sh 把本脚本当一个阶段跑，这三样都在环境里，
+# 三种跑法起子进程时都清掉 GATE_BASE、GATE_STAGED_FROM、GATE_DIFF_BASE 与 GATE_STAGED_TREE：gate.sh 把本脚本当一个阶段跑，前三样都在环境里，
 # 漏给嵌套跑的 gate.sh / show-me-test.sh / history-ordinal.sh，它们就按外面那个项目的基准与兄弟目录判。对应的用例在 gate 那一节。
 # 要给样本一个基准的用例，自己在命令里写 env GATE_DIFF_BASE=…（env 在清完之后才设它）。
 # ── 样本目录跑法：expect 文件驱动 ───────────────────────
@@ -73,7 +73,7 @@ run_fixture() { # run_fixture <标签> <样本目录> <命令...>（命令自行
   local output_file="$temporary_directory/$(printf '%s' "$label" | tr '/ ' '__').out"
   local exit_code=0
   # 超时保护：挂死的检查在门禁输出里既不红也不绿，只是永远不回来，比红的门禁危险。
-  set +e; timeout "${SELFTEST_TIMEOUT:-60}" env -u GATE_BASE -u GATE_STAGED_FROM -u GATE_DIFF_BASE "$@" > "$output_file" 2>&1; exit_code=$?; set -e
+  set +e; timeout "${SELFTEST_TIMEOUT:-60}" env -u GATE_BASE -u GATE_STAGED_FROM -u GATE_DIFF_BASE -u GATE_STAGED_TREE "$@" > "$output_file" 2>&1; exit_code=$?; set -e
   [[ $exit_code == 124 ]] && say "        （超时 ${SELFTEST_TIMEOUT:-60}s，按判错记）"
   judge "$label" "$expected_exit_code" "$exit_code" "$output_file" ${wanted_fragments[@]+"${wanted_fragments[@]}"}
 }
@@ -97,7 +97,7 @@ spawn_fixture() { # spawn_fixture <标签> <样本目录> <命令...>（命令�
   rm -f "$output_file" "$output_file.exit-code"
   # 退出码在 if 里取：lib.sh 开着 set -e，写成「里层; echo $? > 文件」的话，样本一判红子 shell 就在那一行退出，.exit-code 一个字都不写。
   ( fixture_exit_code=0
-    if timeout "${SELFTEST_TIMEOUT:-60}" env -u GATE_BASE -u GATE_STAGED_FROM -u GATE_DIFF_BASE "$@" > "$output_file" 2>&1
+    if timeout "${SELFTEST_TIMEOUT:-60}" env -u GATE_BASE -u GATE_STAGED_FROM -u GATE_DIFF_BASE -u GATE_STAGED_TREE "$@" > "$output_file" 2>&1
     then fixture_exit_code=0; else fixture_exit_code=$?; fi
     echo "$fixture_exit_code" > "$output_file.exit-code" ) &
   in_flight_job_count=$((in_flight_job_count+1))
@@ -144,7 +144,7 @@ run_scripted() { # run_scripted <名> <期望exit> <want...> -- <命令...>
   shift
   local output_file="$temporary_directory/$(printf '%s' "$case_name" | tr '/ ' '__').out"
   local exit_code=0
-  set +e; timeout "${SELFTEST_TIMEOUT:-60}" env -u GATE_BASE -u GATE_STAGED_FROM -u GATE_DIFF_BASE "$@" > "$output_file" 2>&1; exit_code=$?; set -e
+  set +e; timeout "${SELFTEST_TIMEOUT:-60}" env -u GATE_BASE -u GATE_STAGED_FROM -u GATE_DIFF_BASE -u GATE_STAGED_TREE "$@" > "$output_file" 2>&1; exit_code=$?; set -e
   [[ $exit_code == 124 ]] && say "        （超时 ${SELFTEST_TIMEOUT:-60}s，按判错记）"
   judge "$case_name" "$expected_exit_code" "$exit_code" "$output_file" ${wanted_fragments[@]+"${wanted_fragments[@]}"}
 }
@@ -1223,6 +1223,11 @@ run_scripted "bump/有语言仓不在就一份都不写" 1 "找不到" "VERSION 
   bash -c 'bash "$1/f-zh/scripts/bump.sh" 0.0.2; bump_exit_code=$?; echo "VERSION 仍是 $(cat "$1/f-zh/VERSION")"; exit $bump_exit_code' bump_missing "$bump_family_directory"
 bump_family_directory="$temporary_directory/bump-ok"; make_bump_package "$bump_family_directory" zh en; mkdir -p "$bump_family_directory/f-en"
 run_scripted "bump/全部语言仓都在就一起升" 0 "f-zh  → 0.0.2" "f-en  → 0.0.2" -- bash "$bump_family_directory/f-zh/scripts/bump.sh" 0.0.2
+bump_custom_root_scenario="$temporary_directory/bump-custom-root"; mkdir -p "$bump_custom_root_scenario/other-dir"
+make_bump_package "$bump_custom_root_scenario/other-dir" zh en; mkdir -p "$bump_custom_root_scenario/other-dir/f-en"
+run_scripted "bump/支持 --root 显式指定语言仓目录" 0 "f-zh  → 0.0.3" "f-en  → 0.0.3" -- bash "$bump_custom_root_scenario/other-dir/f-zh/scripts/bump.sh" 0.0.3 --root "$bump_custom_root_scenario/other-dir"
+run_scripted "bump/认不出选项时拒绝" 1 "认不出的参数" -- bash "$bump_custom_root_scenario/other-dir/f-zh/scripts/bump.sh" 0.0.3 --unknown
+
 
 # ════ install.sh ═════════════════════════════════════════
 head1 "门禁自证：install.sh 的判别力"
@@ -1352,6 +1357,27 @@ run_scripted "gate/--staged 不算没暂存的改动" 0 "只拿 HEAD + 暂存区
 run_scripted "gate/不带 --staged 时同一处要算进来" 1 门禁未通过 -- bash "$gate_scenario_directory/package/scripts/gate.sh" "$gate_scenario_directory/project"
 printf 'BAD（这一轮的）\n' >> "$gate_scenario_directory/project/kb/b.md"; git -C "$gate_scenario_directory/project" add kb/b.md
 run_scripted "gate/--staged 算暂存了的改动" 1 门禁未通过 -- bash "$gate_scenario_directory/package/scripts/gate.sh" --staged "$gate_scenario_directory/project"
+# 调用方给了 GATE_STAGED_TREE，里层判那一棵、不再读暂存区：此刻暂存区里有 BAD，给的是 HEAD 那棵干净的树，要绿；
+# 反过来暂存区干净、给的树里有 BAD，要红。两例缺一例，「判的是给的树」与「判的是暂存区」分不开。
+run_scripted "gate/--staged 给了 GATE_STAGED_TREE 就判那棵树，不读暂存区" 0 "被判的树" "已实现的门禁阶段全部通过" -- \
+  env GATE_STAGED_TREE="$(git -C "$gate_scenario_directory/project" rev-parse "HEAD^{tree}")" bash "$gate_scenario_directory/package/scripts/gate.sh" --staged "$gate_scenario_directory/project"
+gate_given_tree_directory="$temporary_directory/gate-staged-given-tree"; make_gate_package "$gate_given_tree_directory/package"; make_staged_project "$gate_given_tree_directory/project"
+printf 'BAD（只在给的树里）\n' > "$gate_given_tree_directory/bad-b.md"
+gate_given_tree_blob="$(git -C "$gate_given_tree_directory/project" hash-object -w "$gate_given_tree_directory/bad-b.md")"
+GIT_INDEX_FILE="$gate_given_tree_directory/given.index" git -C "$gate_given_tree_directory/project" read-tree HEAD
+GIT_INDEX_FILE="$gate_given_tree_directory/given.index" git -C "$gate_given_tree_directory/project" update-index --cacheinfo "100644,$gate_given_tree_blob,kb/b.md"
+gate_given_bad_tree="$(GIT_INDEX_FILE="$gate_given_tree_directory/given.index" git -C "$gate_given_tree_directory/project" write-tree)"
+run_scripted "gate/--staged 给的树里有红就判红，暂存区干净也一样" 1 "被判的树" 门禁未通过 -- \
+  env GATE_STAGED_TREE="$gate_given_bad_tree" bash "$gate_given_tree_directory/package/scripts/gate.sh" --staged "$gate_given_tree_directory/project"
+run_scripted "gate/--staged 给的 GATE_STAGED_TREE 不是树要拒绝" 1 "不是这个仓里的一棵树" -- \
+  env GATE_STAGED_TREE=0000000000000000000000000000000000000000 bash "$gate_given_tree_directory/package/scripts/gate.sh" --staged "$gate_given_tree_directory/project"
+# 同一个仓同一时刻只许一趟 --staged：临时树目录按仓根固定，里面记的 pid 还活着就拒绝；pid 不在了的算残留，清掉接着跑、判法照旧。
+gate_busy_scratch="${TMPDIR:-/tmp}/gate-staged-$(printf '%s' "$(cd "$gate_given_tree_directory/project" && pwd)" | git hash-object --stdin | cut -c1-12)"
+mkdir -p "$gate_busy_scratch"; printf '%s\n' "$$" > "$gate_busy_scratch/pid"
+run_scripted "gate/--staged 另一趟还在跑就拒绝" 1 "正在这个仓上跑" -- bash "$gate_given_tree_directory/package/scripts/gate.sh" --staged "$gate_given_tree_directory/project"
+printf '%s\n' 4000000000 > "$gate_busy_scratch/pid"
+run_scripted "gate/--staged 残留的临时树目录清掉接着跑" 0 "已实现的门禁阶段全部通过" -- bash "$gate_given_tree_directory/package/scripts/gate.sh" --staged "$gate_given_tree_directory/project"
+rm -rf "${gate_busy_scratch:?}"
 # 判红的那一次也要清掉临时 worktree。外层在 set -e 下跑里层，写成「里层; rc=$?」时里层一红外层就当场退出，清理走不到。
 staged_red_cleanup=(bash -c '
   bash "$1/scripts/gate.sh" --staged "$2" >/dev/null 2>&1; gate_exit_code=$?
@@ -1867,6 +1893,17 @@ printf 'echo more\n' >> "$version_discipline_repository/scripts/x.sh"
 printf '0.0.2\n' > "$version_discipline_repository/VERSION"
 run_scripted "version-discipline/带着版本一起改" 0 "抬到了 0.0.2" -- bash "$SCRIPTS/version-discipline.sh" "$version_discipline_repository"
 
+# 门禁上次过闸位置（refs/sop/gate-ok）如果就是 HEAD，随后的工作区改动必须以 HEAD 为基准，
+# 不能跌落至 HEAD~1（否则上一轮抬过的版本会掩盖这一轮未抬版本）。
+version_discipline_repository="$temporary_directory/version-discipline-gate-ok-head"; make_sop_repository "$version_discipline_repository"
+printf '0.0.2\n' > "$version_discipline_repository/VERSION"
+printf 'echo v2\n' >> "$version_discipline_repository/scripts/x.sh"
+git -C "$version_discipline_repository" add -A
+git -C "$version_discipline_repository" -c user.email=selftest@local -c user.name=selftest commit -qm "bump to 0.0.2"
+git -C "$version_discipline_repository" update-ref refs/sop/gate-ok HEAD
+printf 'echo v2-modified\n' >> "$version_discipline_repository/scripts/x.sh"
+run_scripted "version-discipline/门禁过闸后新改动不提版本要拦住" 1 没抬 -- bash "$SCRIPTS/version-discipline.sh" "$version_discipline_repository"
+
 # 判据是「抬了」不是「动过」：往 VERSION 末尾加个空行就过闸的话，
 # 消费项目读到的内容一个字没变。
 version_discipline_repository="$temporary_directory/version-discipline-touch"; make_sop_repository "$version_discipline_repository"
@@ -1938,7 +1975,7 @@ make_reference_and_translation_pair() { # make_reference_and_translation_pair <�
   cp "$reference_repository/MANIFEST.sha256" "$translation_repository/SOURCE-MANIFEST.sha256"
   cp "$reference_repository/VERSION" "$translation_repository/VERSION"
   local shared_item
-  for shared_item in install.sh scripts skills templates GLOSSARY.md; do
+  for shared_item in install.sh scripts skills templates GLOSSARY.md .gitignore; do
     [[ -e "$reference_repository/$shared_item" ]] && cp -a "$reference_repository/$shared_item" "$translation_repository/$shared_item"
   done
   sed 's/^this=.*/this=en/' "$reference_repository/I18N" > "$translation_repository/I18N"
@@ -1959,6 +1996,7 @@ make_reference_package() { # make_reference_package <目录> <族名> —— 最
   printf '# 规则甲\n' > "$1/rules/a.md"
   printf '# 术语\n' > "$1/GLOSSARY.md"
   printf 'echo install\n' > "$1/install.sh"
+  printf '*.pyc\n' > "$1/.gitignore"
   printf '# 骨架\n' > "$1/templates/t.md"
   printf -- '---\nname: a\ndescription: 样本 agent\n---\n\n正文。\n' > "$1/agents/a.md"
   mkdir -p "$1/skills/s"
