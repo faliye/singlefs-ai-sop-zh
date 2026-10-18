@@ -96,6 +96,7 @@ fi
 SWEEP_EXCLUDE_FILE="$PROJECT_ROOT/.claude/naming-sweep-exclude"
 if [[ -f "$SWEEP_EXCLUDE_FILE" ]]; then
   sweep_line_number=0
+  sweep_registered_paths=()
   while IFS= read -r sweep_line || [[ -n "$sweep_line" ]]; do
     sweep_line_number=$((sweep_line_number+1))
     [[ -z "${sweep_line//[[:space:]]/}" || "${sweep_line#"${sweep_line%%[![:space:]]*}"}" == \#* ]] && continue
@@ -107,6 +108,8 @@ if [[ -f "$SWEEP_EXCLUDE_FILE" ]]; then
     sweep_path="${sweep_line%%#*}"; sweep_reason="${sweep_line#*#}"
     sweep_path="${sweep_path#"${sweep_path%%[![:space:]]*}"}"; sweep_path="${sweep_path%"${sweep_path##*[![:space:]]}"}"
     sweep_reason="${sweep_reason#"${sweep_reason%%[![:space:]]*}"}"; sweep_reason="${sweep_reason%"${sweep_reason##*[![:space:]]}"}"
+    while [[ "$sweep_path" == ./* ]]; do sweep_path="${sweep_path#./}"; done
+    while [[ "$sweep_path" == */ ]]; do sweep_path="${sweep_path%/}"; done
     if [[ -z "$sweep_reason" ]]; then
       bad ".claude/naming-sweep-exclude:$sweep_line_number  # 后面是空的，等于没写理由"
       howto "在 # 后面写清为什么这批名字暂不回扫。"
@@ -124,7 +127,11 @@ if [[ -f "$SWEEP_EXCLUDE_FILE" ]]; then
             "留着的排除项会让人以为还有东西在被绕开。"
       failure_count=$((failure_count+1)); continue
     fi
+    sweep_registered_paths+=("$sweep_path")
   done < "$SWEEP_EXCLUDE_FILE"
+  if [[ ${#sweep_registered_paths[@]} -gt 0 ]]; then
+    warn ".claude/naming-sweep-exclude 登记了 ${#sweep_registered_paths[@]} 条还没回扫的路径：${sweep_registered_paths[*]}"
+  fi
 fi
 
 # ── 缩写登记表 ──────────────────────────────────────────

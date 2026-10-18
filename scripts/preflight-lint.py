@@ -57,6 +57,7 @@ PACKAGE_EXCLUDED = {
     'scripts/claude-hook-lib.sh': '被钩子 source 的函数库，只定义函数，不单独调',
     'scripts/session-transcript.py': '被 gate-overlap.py 与 handback-scratch.py import 的库，没有自己的入口',
     'scripts/package-family.py': '被 link-targets.py、preflight-lint.py 与 number-name-sync.sh 载入的库，没有自己的入口',
+    'scripts/evidence-exclude.py': '被 link-targets.py、number-name-sync.sh 与 relay-timing-lint.py 载入的库，没有自己的入口',
     'scripts/preflight.py': '它就是判条件的那一个：自己再判一遍自己，会把要转给被判脚本的 --force 吃掉',
     'scripts/preflight.sh': '被 lib.sh 与钩子 source 的函数库（preflight、preflight_record_success），不单独调',
 }

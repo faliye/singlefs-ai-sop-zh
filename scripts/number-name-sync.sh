@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # gate-similar: doc-lint.sh 它判 markdown 里的「编号（简称）」；这一道把同一条判据延到 kb 之外的源码注释与记录。登记标题的解析两边各写了一份，没抽成共用：doc-lint 那份在 awk 里、按 markdown 的结构认，抽出来要先把它从 awk 里拆出来
-# gate-similar: link-targets.py 读 .claude/doc-lint-exclude 的函数，它、这一道与 relay-timing-lint.py 各写了一份，三份已经分叉（结尾斜杠的处理不同），抽成共用要先定哪一份的行为对，没在加查重门禁的这一次动它们；SOP 副本目录两边都从 package-family.py 取
+# gate-similar: link-targets.py 它判文档里的相对链接与节序号，判的对象与判法都不同；读 .claude/doc-lint-exclude 的那一段两边都调 evidence-exclude.py，不各抄一份
 # admission: always 判的是此刻仓里的源码注释与记录，几秒跑完；每一轮门禁都现判
 # run-condition: command python3
 # 编号与简称在 doc-lint 够不到的地方也要一致。
@@ -69,8 +69,13 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, os.environ['NUMBER_NAME_PACKAGE_SCRIPTS'])
 from preflight import load_package_module
 PACKAGE_FAMILY = load_package_module('package_family', 'package-family.py')
+EVIDENCE_EXCLUDE = load_package_module('evidence_exclude', 'evidence-exclude.py')
 
 KB_SCAN_DIRECTORIES = [directory for directory in os.environ.get('NUMBER_NAME_KB_DIRS', '.claude/kb').split() if directory]
+
+# 比对前与 doc-lint.sh 判「名字不符」同一个规整法：去掉强调标记 * 与 `，连续空白压成一个，去掉两端空白
+def normalized_short_name(text):
+    return re.sub(r'[ \t]+', ' ', re.sub(r'[*`]', '', text)).strip()
 
 registered_short_name_by_number = {}
 for kb_directory in KB_SCAN_DIRECTORIES:
@@ -81,25 +86,13 @@ for kb_directory in KB_SCAN_DIRECTORIES:
         if heading_match:
             registered_short_name_by_number[heading_match.group(1)] = heading_match.group(2).strip()
 
-def excluded_directories():
-    """冻结证据的清单与 doc-lint 共用一份（rules/evidence-discipline.md）。"""
-    excluded_prefixes = []
-    try:
-        with open('.claude/doc-lint-exclude', encoding='utf-8') as handle:
-            for line in handle:
-                line = line.split('#')[0].strip()
-                if line:
-                    excluded_prefixes.append(line.rstrip('/') + '/')
-    except OSError:
-        pass
-    return tuple(excluded_prefixes)
 
 
 SKIPPED_DIRECTORY_NAMES = {'.git', 'node_modules', 'target'}
 
 
 # 装进项目的 SOP 副本不扫：它是上游的文件，判它等于在项目侧判上游。
-SKIPPED_PATH_PREFIXES = tuple(directory.rstrip('/') + '/' for directory in KB_SCAN_DIRECTORIES) + (PACKAGE_FAMILY.installed_package_directory(),) + excluded_directories()
+SKIPPED_PATH_PREFIXES = tuple(directory.rstrip('/') + '/' for directory in KB_SCAN_DIRECTORIES) + (PACKAGE_FAMILY.installed_package_directory(),) + EVIDENCE_EXCLUDE.frozen_evidence_prefixes('.')
 # 不扫 .sh / .py：脚本里的 `D1（简称）` 多半是格式说明或样本数据，扫它们假红压倒真红（实测）。
 SCANNED_SUFFIXES = ('.rs', '.md')
 given_directories = [directory for directory in os.environ.get('NUMBER_NAME_DIRS', '').split() if directory]
@@ -121,15 +114,19 @@ for scanned_file in sorted(set(scanned_files)):
     for line_number, line in enumerate(open(scanned_file, encoding='utf-8', errors='ignore'), 1):
         # 简称可以含一层全角括号：[^）]* 吃到第一个「）」就停，这类引用怎么写都判红（实测）。
         for number, written_short_name in re.findall(r'([ED]\d+)（((?:[^（）]|（[^（）]*）)*)）', line):
-            if number in registered_short_name_by_number and registered_short_name_by_number[number] != written_short_name:
+            if number in registered_short_name_by_number and normalized_short_name(registered_short_name_by_number[number]) != normalized_short_name(written_short_name):
                 mismatches.append((scanned_file, line_number, number, written_short_name, registered_short_name_by_number[number]))
 
 if mismatches:
     print('  ✗ 编号的简称与登记位不符：')
-    for scanned_file, line_number, number, written_short_name, registered_short_name in mismatches[:15]:
-        print(f'     {scanned_file}:{line_number}  {number} 写的「{written_short_name[:24]}」，登记处是「{registered_short_name[:24]}」')
-    if len(mismatches) > 15:
-        print(f'     …… 另有 {len(mismatches)-15} 处')
+    # 默认只列前 15 处；NUMBER_NAME_SYNC_VERBOSE=1 逐处全列、不截断写的那一段（同 doc-lint 的 DOC_LINT_VERBOSE）
+    is_verbose = os.environ.get('NUMBER_NAME_SYNC_VERBOSE') == '1'
+    listed_mismatches = mismatches if is_verbose else mismatches[:15]
+    for scanned_file, line_number, number, written_short_name, registered_short_name in listed_mismatches:
+        written_text = written_short_name if is_verbose else written_short_name[:24]
+        print(f'     {scanned_file}:{line_number}  {number} 写的「{written_text}」，登记处是「{registered_short_name}」')
+    if len(mismatches) > len(listed_mismatches):
+        print(f'     …… 另有 {len(mismatches)-len(listed_mismatches)} 处；全量清单：NUMBER_NAME_SYNC_VERBOSE=1')
     print('     → 简称照登记位抄（各正文首行 `## D<n> 简称 —— 状态`）。')
     print('     → 若是「）」写成了半角「)」，括注不闭合，正则会一路吃到下一个右括号。')
     print('     → 冻结证据目录不在扫描范围：那是原样保存的输入，改它等于让产物对不上输入。')

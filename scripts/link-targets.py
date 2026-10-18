@@ -20,29 +20,16 @@ preflight(__file__)
 
 SKIPPED_DIRECTORY_NAMES = {'.git', 'node_modules', 'target'}
 # `gate.d/fixtures/` 里的红样本故意放着坏链接；样本在临时目录里以那里为根判，本仓跳过它不影响自证。
-def _excluded_directories():
-    """从 .claude/doc-lint-exclude 读要绕开的目录（evidence-discipline.md「门禁也得绕开这批目录」）：
-    原样保存的证据不许事后改，要求人去改原件的检查只会逼断证据链。
-    """
-    excluded_directories = []
-    try:
-        with open('.claude/doc-lint-exclude', encoding='utf-8') as exclude_file:
-            for line in exclude_file:
-                line = line.split('#')[0].strip()
-                if line:
-                    excluded_directories.append(line if line.endswith('/') else line + '/')
-    except OSError:
-        pass
-    return tuple(excluded_directories)
 
 
 PACKAGE_FAMILY = load_package_module('package_family', 'package-family.py')
+EVIDENCE_EXCLUDE = load_package_module('evidence_exclude', 'evidence-exclude.py')
 
 # 装进项目的 SOP 副本不判：副本里的 templates/ 是给别的项目用的模板，相对路径按「拷到项目根之后」写，
 # 在副本里当然指不到；副本也不许在项目里就地改（改共享规则只能改上游）。templates/ 在 SOP 仓自己里也跳过，理由相同。
 # gate.sh 已经 cd 到项目根，project_gate_directory('.') 读的是这个项目登记的门禁目录（没登记就是默认值 .claude/gate.d）。
 SKIPPED_PATH_PREFIXES = (PACKAGE_FAMILY.installed_package_directory(), project_gate_directory('.') + '/fixtures/',
-                         'scripts/fixtures/', 'templates/') + _excluded_directories()
+                         'scripts/fixtures/', 'templates/') + EVIDENCE_EXCLUDE.frozen_evidence_prefixes('.')
 CHINESE_NUMERAL_VALUES = {'一':1,'二':2,'三':3,'四':4,'五':5,'六':6,'七':7,'八':8,'九':9,'十':10}
 
 def markdown_files(root='.'):

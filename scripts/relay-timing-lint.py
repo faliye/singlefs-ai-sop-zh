@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # gate-similar: shell-lint.sh 它按正则判 shell 脚本；这一道要解析 Rust 与 Python 的循环体（抹字符串、配花括号、走 ast），语言与解析法都不同
-# gate-similar: link-targets.py 读 .claude/doc-lint-exclude 的函数，它、这一道与 number-name-sync.sh 各写了一份，三份已经分叉；抽成共用要先定哪一份的行为对，没在加查重门禁的这一次动它们
+# gate-similar: link-targets.py 它判文档里的相对链接与节序号，判的对象与判法都不同；读 .claude/doc-lint-exclude 的那一段两边都调 evidence-exclude.py，不各抄一份
 # admission: always 判的是此刻仓里的 .rs 与 .py，几秒跑完；每一轮门禁都现判
 # run-condition: command git
 """读子进程输出的循环里，不许一边给行打时间戳、一边把行转打出去。
@@ -57,28 +57,14 @@ from typing import NamedTuple, Optional
 # 开跑之前先判准入与运行条件（rules/preflight-discipline.md）；不写 __pycache__：门禁跑到一半冒出一个未跟踪的目录，「工作区跑的过程中没变」就对不上
 sys.dont_write_bytecode = True
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
-from preflight import preflight  # noqa: E402
+from preflight import load_package_module, preflight  # noqa: E402
+EVIDENCE_EXCLUDE = load_package_module("evidence_exclude", "evidence-exclude.py")
 
 # 空着就扫仓根下所有目录（跳过 SKIP_DIRECTORIES）：项目的源码与装置住在哪由项目定，上游不写死目录名。
 SCANNED_TOP_DIRECTORIES = ()
 SKIP_DIRECTORIES = {".git", "node_modules", "target", "fixtures"}
 
 
-def _frozen_evidence_directories(repository_root="."):
-    """原样保存的证据不扫：门禁不许逼人回去改原件，那只会把证据链弄断或让检查被绕过
-    （rules/evidence-discipline.md「门禁也得绕开这批目录」）。
-    清单读项目根的 .claude/doc-lint-exclude，与 doc-lint 用的是同一份，不另抄一份。
-    """
-    registered_directories = []
-    try:
-        with open(os.path.join(str(repository_root), ".claude/doc-lint-exclude"), encoding="utf-8") as handle:
-            for line in handle:
-                line = line.split("#")[0].strip()
-                if line:
-                    registered_directories.append(line.rstrip("/"))
-    except OSError:
-        pass
-    return tuple(registered_directories)
 
 SKIPPED_DIRECTORY_NAMES = (".git", "target", "node_modules", "__pycache__")
 SCANNED_SUFFIXES = (".rs", ".py")
@@ -456,7 +442,7 @@ def analyze_python(relative_path: str, source: str) -> list:
 def scan(repository_root: pathlib.Path) -> ScanResult:
     scanned_file_count = 0
     # 冻结证据的清单按**被扫那个仓**现算：射程与排除表都不写死在这里。
-    frozen_directories = _frozen_evidence_directories(repository_root)
+    frozen_directories = EVIDENCE_EXCLUDE.frozen_evidence_directories(repository_root)
     frozen_file_counts = {directory: 0 for directory in frozen_directories}
     unparsable_files = []
     child_output_loops = []
@@ -510,7 +496,7 @@ def run(repository_root: pathlib.Path) -> int:
     unparsable_text = f"解析不了的 {len(scan_result.unparsable_files)} 个" + (
         "（" + "、".join(scan_result.unparsable_files) + "）" if scan_result.unparsable_files else "")
     statistics = (f"扫了 {scan_result.scanned_file_count} 个文件、{len(scan_result.child_output_loops)} 个读子进程输出的循环、"
-                  f"豁免 {len(exempted)} 处；没扫：{frozen_text}、{unparsable_text}")
+                  f"豁免 {len(exempted)} 处；没扫：{'、'.join(part for part in (frozen_text, unparsable_text) if part)}")
     if scan_result.scanned_file_count == 0:
         print(f"  ! 仓根下的顶层目录（{'、'.join(sorted(SKIP_DIRECTORIES))} 与点开头的不扫，.claude* 照扫）里没有可扫的 .rs / .py，"
               f"本轮无对象可判（{statistics}）")

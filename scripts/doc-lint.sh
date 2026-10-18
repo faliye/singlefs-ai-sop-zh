@@ -585,7 +585,7 @@ while IFS= read -r document_file; do
         term = $2; gsub(/^[ \t]+|[ \t]+$/, "", term)
         if (term ~ /^-+$/ || term == "中文" || term == "") next
         note = $5; gsub(/^[ \t]+|[ \t]+$/, "", note)
-        segment_count = split(note, segments, /<br>/)
+        segment_count = split(note, segments, /<br[[:space:]]*\/?>/)
         is_trilingual = (segment_count == 3)
         # 每段要有实质内容：写成 `-` / `—` / `TODO` / `n/a` 等于没写（`中文<br>-<br>-` 不算三语）
         if (is_trilingual) for (segment_index = 1; segment_index <= 3; segment_index++) {

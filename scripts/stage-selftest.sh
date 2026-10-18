@@ -37,8 +37,11 @@ gate_directory=""; requested_stages=(); list_items_only=0
 while (($#)); do
   case "$1" in
     --item)
-      if (($# < 2)) || [[ -z "$2" ]]; then requested_stages+=(""); shift; continue; fi
-      requested_stages+=("$2"); shift 2 ;;
+      if (($# < 2)) || [[ -z "${2//[[:space:]]/}" ]]; then requested_stages+=(""); shift; continue; fi
+      # 一个值里用空白隔开的几个名字各算一道；每个名字摘掉结尾的 .sh，与阶段名同一个写法
+      read -r -a requested_stage_words <<<"$2"
+      for requested_stage_word in "${requested_stage_words[@]}"; do requested_stages+=("${requested_stage_word%.sh}"); done
+      shift 2 ;;
     --list-items) list_items_only=1; shift ;;
     *) gate_directory="$1"; shift ;;
   esac
@@ -56,11 +59,13 @@ gate_directory="$(cd "$gate_directory" && pwd)"
 fixtures_directory="$gate_directory/fixtures"
 
 # 收集阶段：扁平的 <门禁目录>/<名>.sh（旧形态），与嵌套的 <门禁目录>/<名>/<名>.sh（新形态）。
-# 两份路径分别存，报告时按它属于哪种形态取用例的来源；名字（不带 .sh）两种形态里都唯一。
-STAGE_NAMES=(); STAGE_PATHS=(); STAGE_FORMS=()
+# 两份路径分别存，报告时按它属于哪种形态取用例的来源。阶段名两种形态都不带 .sh（--item 写了 .sh 的照认）；
+# 旧形态的样本目录仍按阶段文件名（带 .sh）找，存在 STAGE_FIXTURE_NAMES 里。两种形态撞了名的判红。
+STAGE_NAMES=(); STAGE_PATHS=(); STAGE_FORMS=(); STAGE_FIXTURE_NAMES=()
 while IFS= read -r stage_file; do
   [[ -n "$stage_file" ]] || continue
-  STAGE_NAMES+=("$(basename "$stage_file")"); STAGE_PATHS+=("$stage_file"); STAGE_FORMS+=(flat)
+  STAGE_NAMES+=("$(basename "$stage_file" .sh)"); STAGE_PATHS+=("$stage_file"); STAGE_FORMS+=(flat)
+  STAGE_FIXTURE_NAMES+=("$(basename "$stage_file")")
 done < <(find "$gate_directory" -maxdepth 1 -name '*.sh' \( -type f -o -type l \) | sort)
 while IFS= read -r stage_file; do
   [[ -n "$stage_file" ]] || continue
@@ -68,7 +73,14 @@ while IFS= read -r stage_file; do
   stage_file_name="$(basename "$stage_file" .sh)"
   [[ "$stage_directory_name" == "$stage_file_name" ]] || continue
   STAGE_NAMES+=("$stage_file_name"); STAGE_PATHS+=("$stage_file"); STAGE_FORMS+=(nested)
+  STAGE_FIXTURE_NAMES+=("")
 done < <(find "$gate_directory" -mindepth 2 -maxdepth 2 -name '*.sh' \( -type f -o -type l \) | sort)
+duplicated_stage_names="$(printf '%s\n' ${STAGE_NAMES[@]+"${STAGE_NAMES[@]}"} | sort | uniq -d)"
+if [[ -n "$duplicated_stage_names" ]]; then
+  bad "$gate_directory 下有同名的阶段（扁平的 <名>.sh 与嵌套的 <名>/<名>.sh 撞了）：$(tr '\n' ' ' <<<"$duplicated_stage_names")"
+  howto "--item 点名时分不清是哪一道：把其中一道改名，或把旧形态那道挪成新形态、删掉旧的那份。"
+  exit 1
+fi
 if ((${#STAGE_NAMES[@]} == 0)); then
   warn "$gate_directory 下没有本地阶段（扁平的 *.sh，或嵌套的 <名>/<名>.sh），本阶段无对象可判（这不是通过）"
   exit 77
@@ -80,7 +92,7 @@ stage_has_cases() { # stage_has_cases <下标>
   if [[ "${STAGE_FORMS[$index]}" == nested ]]; then
     compgen -G "$(dirname "${STAGE_PATHS[$index]}")/*.case.sh" >/dev/null
   else
-    [[ -d "$fixtures_directory/${STAGE_NAMES[$index]}" ]]
+    [[ -d "$fixtures_directory/${STAGE_FIXTURE_NAMES[$index]}" ]]
   fi
 }
 
@@ -132,6 +144,7 @@ for ((index = 0; index < ${#STAGE_NAMES[@]}; index++)); do
   name="${STAGE_NAMES[$index]}"
   stage="${STAGE_PATHS[$index]}"
   form="${STAGE_FORMS[$index]}"
+  fixture_name="${STAGE_FIXTURE_NAMES[$index]}"
   if ((${#requested_stages[@]})) && [[ ! " ${requested_stages[*]} " == *" $name "* ]]; then continue; fi
   if ! stage_has_cases "$index"; then stages_without_cases+=("$name"); continue; fi
   # 写了准入与运行条件的阶段带 --force 喂：输入没变、环境不齐也照判，强制跑不记成「上次成功」。
@@ -171,15 +184,19 @@ for ((index = 0; index < ${#STAGE_NAMES[@]}; index++)); do
   sample_kinds=(red green)
   while IFS= read -r extra_kind; do
     [[ "$extra_kind" == red || "$extra_kind" == green ]] || sample_kinds+=("$extra_kind")
-  done < <(find "$fixtures_directory/$name" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort)
+  done < <(find "$fixtures_directory/$fixture_name" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort)
   for kind in "${sample_kinds[@]}"; do
-    sample_directory="$fixtures_directory/$name/$kind"
+    sample_directory="$fixtures_directory/$fixture_name/$kind"
     [[ -d "$sample_directory" ]] || continue
     if [[ ! -f "$sample_directory/expect" ]]; then
       say "  ✗ $(printf '%-28s %-16s' "$name" "$kind") 样本目录里没有 expect，判不了它该红还是该绿"   # gate-lint:detail
       wrong_case_count=$((wrong_case_count + 1)); continue
     fi
-    want_exit="$(sed -n 's/^exit=//p' "$sample_directory/expect")"
+    want_exit="$(sed -n 's/^exit=//p' "$sample_directory/expect" | head -1)"
+    if [[ ! "$want_exit" =~ ^[0-9]+$ ]]; then
+      say "  ✗ $(printf '%-28s %-16s' "$name" "$kind") expect 里没有 exit=<退出码>（或写的不是数），判不了它该红还是该绿"   # gate-lint:detail
+      wrong_case_count=$((wrong_case_count + 1)); continue
+    fi
     mapfile -t want_list < <(sed -n 's/^want=//p' "$sample_directory/expect")
     work_directory="$(mktemp -d)"
     cp -a "$sample_directory/." "$work_directory/"
@@ -198,7 +215,7 @@ done
 
 if ((${#stages_without_cases[@]})); then
   for stage_without_samples in "${stages_without_cases[@]}"; do
-    report_not_run "$stage_without_samples 没有判别力用例，它会不会红没有验过（新形态配同目录下的 *.case.sh，旧形态配 fixtures/$stage_without_samples/{red,green}/）"
+    report_not_run "$stage_without_samples 没有判别力用例，它会不会红没有验过（新形态配同目录下的 *.case.sh，旧形态配 fixtures/$stage_without_samples.sh/{red,green}/）"
   done
   say "     一条永远不红的检查与没有这条检查，在门禁输出里长得一模一样：给它配用例，或者把这笔欠账记进项目的欠检查清单。"
 fi

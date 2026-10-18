@@ -39,7 +39,7 @@ repository_of() { # 本仓就用本仓自己的路径，不要求它也在兄弟
 
 work_directory="$(mktemp -d)"; trap 'rm -rf "${work_directory:?}"' EXIT
 failures=0; reference_language=""; reference_version=""
-declare -A verified_head=()
+declare -A verified_head=() push_remote=()
 
 head1 "各语言仓一起验"
 for language in "${languages[@]}"; do
@@ -61,6 +61,14 @@ for language in "${languages[@]}"; do
     failures=$((failures+1))
   fi
   verified_head[$language]="$(git -C "$repository" rev-parse HEAD)"
+  # 推往 master 跟踪的那个远端，不写死 origin：远端另起了名字的仓，验完十几分钟才在推那一步红，几个仓推了一半。
+  push_remote[$language]="$(git -C "$repository" config --get branch.master.remote || true)"
+  [[ -n "${push_remote[$language]}" ]] || push_remote[$language]=origin
+  if ! git -C "$repository" remote get-url "${push_remote[$language]}" >/dev/null 2>&1; then
+    bad "$language：没有远端 ${push_remote[$language]}（master 跟踪的远端，没设跟踪时取 origin）"
+    howto "在 $repository 里 git remote -v 看远端叫什么，再 git branch --set-upstream-to=<远端>/master master"
+    failures=$((failures+1))
+  fi
   version="$(cat "$repository/VERSION" 2>/dev/null || true)"
   if [[ -z "$reference_language" ]]; then
     reference_language="$language"; reference_version="$version"
@@ -122,7 +130,7 @@ pushed_languages=()
 for language in "${push_order[@]}"; do
   repository="$(repository_of "$language")"
   push_log="$work_directory/push-$language.log"
-  if SOP_PUSH_ALL_INNER=1 git -C "$repository" push origin "${verified_head[$language]}:refs/heads/master" > "$push_log" 2>&1; then
+  if SOP_PUSH_ALL_INNER=1 git -C "$repository" push "${push_remote[$language]}" "${verified_head[$language]}:refs/heads/master" > "$push_log" 2>&1; then
     pushed_languages+=("$language")
     ok "$language：已推（${verified_head[$language]:0:7}）"
   else

@@ -1,0 +1,5 @@
+exit=1
+want=.claude/naming-sweep-exclude:1  路径不合法：「」
+want=.claude/naming-sweep-exclude:3  路径不存在：ghost
+want=.claude/naming-sweep-exclude:4  这一条没写理由：bare
+want=登记了 1 条还没回扫的路径：real

@@ -39,27 +39,33 @@ preflight "${BASH_SOURCE[0]}" "$@"; set -- ${PREFLIGHT_ARGUMENTS[@]+"${PREFLIGHT
 PROCESS_TOOL_SCRIPT="$(cd "$HOOK_DIRECTORY/.." && pwd)/proc.py"
 
 if [[ "${1:-}" == "--selftest" ]]; then
-  fixtures_dir="$(cd "$HOOK_DIRECTORY/../fixtures/pattern-process-guard" 2>/dev/null && pwd)"
-  [[ -d "$fixtures_dir" ]] || die "找不到样本目录：$HOOK_DIRECTORY/../fixtures/pattern-process-guard" \
+  fixtures_directory="$(cd "$HOOK_DIRECTORY/../fixtures/pattern-process-guard" 2>/dev/null && pwd)"
+  [[ -d "$fixtures_directory" ]] || die "找不到样本目录：$HOOK_DIRECTORY/../fixtures/pattern-process-guard" \
     "自证依赖样本目录；确认样本在场再跑。"
   failed_cases=()
   checked_count=0
-  for case_dir in "$fixtures_dir"/*/; do
-    [[ -d "$case_dir" ]] || continue
+  for case_directory in "$fixtures_directory"/*/; do
+    [[ -d "$case_directory" ]] || continue
     checked_count=$((checked_count + 1))
-    case_name="$(basename "$case_dir")"
-    expected_exit=0
+    case_name="$(basename "$case_directory")"
+    expected_exit=""
     expected_wants=()
-    if [[ -f "$case_dir/expect" ]]; then
-      while IFS= read -r expect_line || [[ -n "$expect_line" ]]; do
-        case "$expect_line" in
-          exit=*) expected_exit="${expect_line#exit=}" ;;
-          want=*) expected_wants+=("${expect_line#want=}") ;;
-        esac
-      done < "$case_dir/expect"
+    if [[ ! -f "$case_directory/expect" ]]; then
+      failed_cases+=("$case_name: 缺 expect 文件，不知道该判几")
+      continue
+    fi
+    while IFS= read -r expect_line || [[ -n "$expect_line" ]]; do
+      case "$expect_line" in
+        exit=*) expected_exit="${expect_line#exit=}" ;;
+        want=*) expected_wants+=("${expect_line#want=}") ;;
+      esac
+    done < "$case_directory/expect"
+    if [[ ! "$expected_exit" =~ ^[0-9]+$ ]]; then
+      failed_cases+=("$case_name: expect 里的 exit= 不是数：「$expected_exit」")
+      continue
     fi
     actual_exit=0
-    case_output="$(bash "${BASH_SOURCE[0]}" < "$case_dir/input.json" 2>&1)" || actual_exit=$?
+    case_output="$(bash "${BASH_SOURCE[0]}" < "$case_directory/input.json" 2>&1)" || actual_exit=$?
     if [[ "$actual_exit" -ne "$expected_exit" ]]; then
       failed_cases+=("$case_name: 期望退出码 $expected_exit，实际 $actual_exit")
       continue

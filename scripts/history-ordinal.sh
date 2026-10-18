@@ -17,11 +17,19 @@
 # 不先过滤：没有历史节的文件一个键都不产。
 # 一份都没有时退 77（本次无对象可判），不报绿。
 #
-# 只认「日期」「其 <序号>」这两个中文形态。别的语言的仓里判不到撞号，也没报未实现：一个键都不产时照样报「没有撞号」。
+# 只认「日期」「其 <序号>」这两个中文形态：本包的语言（I18N 的 this=）不是中文时，报未实现、退 77，不报「没有撞号」。
+# HISTORY_ORDINAL_LANG 只给门禁自证用（样本的语言是样本的属性，不是仓的属性），设了就自报。
 set -uo pipefail
 # lib.sh 要在 cd 之前按绝对路径 source：cd 之后 BASH_SOURCE 的相对路径就指不到了。
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
 preflight "${BASH_SOURCE[0]}" "$@"; set -- ${PREFLIGHT_ARGUMENTS[@]+"${PREFLIGHT_ARGUMENTS[@]}"}
+HISTORY_PACKAGE_LANGUAGE="$(sed -n 's/^this=//p' "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/I18N" 2>/dev/null | head -1 || true)"
+HISTORY_LANGUAGE="${HISTORY_ORDINAL_LANG:-${HISTORY_PACKAGE_LANGUAGE:-zh}}"
+[[ -z "${HISTORY_ORDINAL_LANG:-}" ]] || warn "语言由 HISTORY_ORDINAL_LANG 指定为 $HISTORY_LANGUAGE"
+if [[ "$HISTORY_LANGUAGE" != zh ]]; then
+  warn "历史条目编号：只认中文的「日期」「其 <序号>」形态，$HISTORY_LANGUAGE 未实现，本阶段没有判（这不是通过）"
+  exit 77
+fi
 # 关掉 lib.sh 带进来的 set -e：下面 ((...)) 与 grep -c 条件为假时返回 1，-e 会在那一行退出整个脚本。
 set +e
 # 键提取器同样要在 cd 之前取绝对路径

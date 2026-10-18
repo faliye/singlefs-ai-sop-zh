@@ -3,6 +3,30 @@
 规则与门禁的版本历史。`CLAUDE.md` 与 `rules/*.md` 不留历史节（design-doc-discipline），
 历史一律记在这里；逐条改动细节见 `git log`，提交信息即变更说明。
 
+## 0.0.67 — 2026-10-18
+
+**撤回 0.0.63 加的 `test-script-discipline.md`，以及 0.0.64、0.0.66 加的三条规则；`evidence-discipline.md` 新加「产物归档出工作区之后，正文写成一行指针」；读冻结证据清单抽成共用库 `evidence-exclude.py`；`history-ordinal.sh` 在非中文仓报未实现；`stage-selftest.sh` 的阶段名统一不带 `.sh`；`push-all.sh` 推往 master 跟踪的远端；自证样本缺 `expect` 或 `exit=` 判红**
+
+规则：
+- 删掉 `rules/test-script-discipline.md`，`CLAUDE.md` 与 `templates/CLAUDE.project.md` 不再引用它。
+- `code-discipline.md`：删掉小节「修了 bug，要严查全库里逻辑和代码相似的地方」和「门禁管哪一半」里对应的那一行。
+- `sop-first.md`：删掉小节「立验证装置或测试入口之前，同样先找已有的」。
+- `test-discipline.md`：删掉「对照按单元钉」「登记时逐格写出对照由哪一跑担」「登记、单元测试、复跑三处的正式跑逐条对得上」三条，和「门禁管哪一半」里对应的两项。
+- `evidence-discipline.md`「引产物就整行抄」：新加一条，产物归档出工作区之后，正文里那一行写成一行指针 `产物行见 git show <提交>:<路径> 第 N 行（name=<名>）`，指到的那一行要以项目根 `.claude/product-line-prefixes` 登记的前缀起头；这道检查由项目在登记的门禁目录里接，没接之前记进欠账表。
+
+脚本与门禁：
+- `evidence-exclude.py`（新）：项目根 `.claude/doc-lint-exclude` 登记的冻结证据目录只在这一处读；`link-targets.py`、`number-name-sync.sh`、`relay-timing-lint.py` 原来各抄一份、结尾斜杠的处理已经分叉，现在都调它。`preflight-lint.py` 把它登记为库。
+- `history-ordinal.sh`：本包的语言不是中文时报未实现、退 77，不再报「没有撞号」；`HISTORY_ORDINAL_LANG` 只给自证钉样本的语言。`gate.sh` 里这一阶段的跳过句随之改写。
+- `gate.sh`：设了 `GATE_STAGED_TREE` 却没带 `--staged` 时拒绝；判另一个 `--staged` 还在不在跑时，核那个进程号的命令行里真有 `gate.sh`，进程号被复用的当残留。
+- `stage-selftest.sh`：阶段名两种形态都不带 `.sh`（`--item` 写了 `.sh` 照认，一个值里用空白隔开的几个名字各算一道）；扁平与嵌套两种形态撞名判红；`expect` 里没有 `exit=<数>` 判错，不再当成期望退出 0。
+- `selftest.sh`、`claude-hooks/pattern-process-guard.sh`：样本缺 `expect`、或 `exit=` 写的不是数，判红；`selftest.sh` 的准入输入加上 `rules/`、`CLAUDE.md`、`GLOSSARY.md`、`.gitignore`。
+- `push-all.sh`：推往 master 跟踪的远端（没设跟踪时取 origin）；远端不存在在验的那一步就判红，不等到推的时候。
+- `i18n-sync.sh`：共享部分加上 `.claude/abbreviations`、`.claude/settings.json`、`.claude/rules-lint-exclude`。
+- `number-name-sync.sh`：比对简称之前照 `doc-lint.sh` 的规整法去掉 `*`、`` ` `` 与多余空白；`NUMBER_NAME_SYNC_VERBOSE=1` 逐处全列。
+- `naming-lint.sh`：`.claude/naming-sweep-exclude` 登记了还没回扫的路径时逐个列出。
+- `doc-lint.sh`：GLOSSARY 说明列按 `<br>`、`<br/>`、`<br />` 都切得开。
+- `rules-lint.sh`：「否则」「不然」后面隔一个逗号再跟后果的句子也认。
+
 ## 0.0.66 — 2026-10-15
 
 **修复 `diff_base` 在过闸后基准跌落漏洞，消解 `inputs-unchanged` 视觉假报警；将 `.gitignore` 纳入多语言共享与保护；完善无 `.rs` 时 `naming-lint` 退出码与排除名单校验；`bump.sh` 严谨解析参数；`pattern-process-guard` 内建自测；清理 Python 字节码与死变量**

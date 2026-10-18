@@ -44,7 +44,6 @@
 @rules/kb-discipline.md
 @rules/rules-discipline.md
 @rules/test-discipline.md
-@rules/test-script-discipline.md
 @rules/evidence-discipline.md
 @rules/verify-before-claiming.md
 @rules/pushback-discipline.md

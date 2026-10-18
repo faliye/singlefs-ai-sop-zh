@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# admission: inputs-changed ./ ../I18N ../install.sh ../VERSION ../templates ../agents ../skills tool:cargo tool:rustc tool:cargo-clippy tool:rustfmt tool:git tool:python3 tool:gawk tool:bash
+# admission: inputs-changed ./ ../I18N ../install.sh ../VERSION ../templates ../agents ../skills ../rules ../CLAUDE.md ../GLOSSARY.md ../.gitignore tool:cargo tool:rustc tool:cargo-clippy tool:rustfmt tool:git tool:python3 tool:gawk tool:bash
 # run-condition: command git python3 gawk
 # 门禁自己的测试：拿一组「本该红」和「本该绿」的样本喂给各个门禁脚本，看它判得对不对。
 #
@@ -67,7 +67,11 @@ run_fixture() { # run_fixture <标签> <样本目录> <命令...>（命令自行
     bad "$label 缺 expect 文件"
     howto "写一行 exit=0 或 exit=1，红的样本再加至少一条 want=<输出片段>。"
     return 0; }
-  local expected_exit_code; expected_exit_code="$(sed -n 's/^exit=//p' "$fixture_directory/expect")"
+  local expected_exit_code; expected_exit_code="$(sed -n 's/^exit=//p' "$fixture_directory/expect" | head -1)"
+  [[ "$expected_exit_code" =~ ^[0-9]+$ ]] || { case_count=$((case_count+1)); failed_case_count=$((failed_case_count+1))
+    bad "$label 的 expect 里没有 exit=<退出码>（或写的不是数）"
+    howto "第一行写 exit=0 或 exit=1，红的样本再加至少一条 want=<输出片段>。"
+    return 0; }
   local wanted_fragments=(); local wanted_fragment
   while IFS= read -r wanted_fragment; do wanted_fragments+=("$wanted_fragment"); done < <(sed -n 's/^want=//p' "$fixture_directory/expect")
   local output_file="$temporary_directory/$(printf '%s' "$label" | tr '/ ' '__').out"
@@ -128,7 +132,13 @@ collect_fixtures() { # 等这一批跑完，按派活顺序逐个判
     fi
     exit_code="$(cat "$output_file.exit-code")"
     [[ $exit_code == 124 ]] && say "        （超时 ${SELFTEST_TIMEOUT:-60}s，按判错记）"
-    expected_exit_code="$(sed -n 's/^exit=//p' "$fixture_directory/expect")"
+    expected_exit_code="$(sed -n 's/^exit=//p' "$fixture_directory/expect" | head -1)"
+    if [[ ! "$expected_exit_code" =~ ^[0-9]+$ ]]; then
+      case_count=$((case_count+1)); failed_case_count=$((failed_case_count+1))
+      bad "$label 的 expect 里没有 exit=<退出码>（或写的不是数）"
+      howto "第一行写 exit=0 或 exit=1，红的样本再加至少一条 want=<输出片段>。"
+      continue
+    fi
     wanted_fragments=()
     while IFS= read -r wanted_fragment; do wanted_fragments+=("$wanted_fragment"); done < <(sed -n 's/^want=//p' "$fixture_directory/expect")
     judge "$label" "$expected_exit_code" "$exit_code" "$output_file" ${wanted_fragments[@]+"${wanted_fragments[@]}"}
@@ -300,6 +310,13 @@ collect_fixtures
 run_scripted "rules-lint/语言被覆盖时要自报" 0 "语言由 RULES_LINT_LANG 指定为 en" -- \
   env RULES_LINT_LANG=en RULES_LINT_DIR="$fixtures_directory/rules-lint-en/ok/rules" bash "$SCRIPTS/rules-lint.sh" "$fixtures_directory/rules-lint-en/ok"
 
+# 自证的样本缺 expect 要红，不能当成「期望退出码 0」放过去：拷一份脚本目录，删掉其中一个样本的 expect。
+pattern_guard_missing_expect_copy="$temporary_directory/pattern-guard-missing-expect"
+mkdir -p "$pattern_guard_missing_expect_copy"; cp -r "$SCRIPTS/." "$pattern_guard_missing_expect_copy/"
+rm -f "$pattern_guard_missing_expect_copy/fixtures/pattern-process-guard/commitheredoc/expect"
+run_scripted "pattern-process-guard/自证的样本缺 expect 要红" 1 "commitheredoc: 缺 expect 文件" -- \
+  bash "$pattern_guard_missing_expect_copy/claude-hooks/pattern-process-guard.sh" --selftest
+
 # ════ pattern-process-guard（会话钩子）═══════════════════
 # 样本是钩子的 JSON 输入（input.json），不是 .sh：shell-lint / gate-lint 不扫它们。
 # 红的 want 带「第一处：」那一行，钉住是哪一行命中的。
@@ -339,11 +356,11 @@ collect_fixtures
 make_preflight_package() { # make_preflight_package <目录>：只带判条件那几份真脚本的最小包
   mkdir -p "$1/scripts/claude-hooks" "$1/scripts/githooks"
   cp "$SCRIPTS/lib.sh" "$SCRIPTS/preflight.py" "$SCRIPTS/preflight.sh" "$SCRIPTS/proc.py" "$SCRIPTS/preflight-lint.py" \
-    "$SCRIPTS/claude-hook-lib.sh" "$SCRIPTS/session-transcript.py" "$SCRIPTS/package-family.py" "$1/scripts/"
+    "$SCRIPTS/claude-hook-lib.sh" "$SCRIPTS/session-transcript.py" "$SCRIPTS/package-family.py" "$SCRIPTS/evidence-exclude.py" "$1/scripts/"
   cp "$SCRIPTS/../I18N" "$1/I18N"
 }
 preflight_package="$temporary_directory/preflight-scope-clean"; make_preflight_package "$preflight_package"
-run_scripted "preflight-lint/本包的默认范围全写了就绿" 0 "判了 2 个脚本（脚本 2）" "排除 6 个" -- python3 "$preflight_package/scripts/preflight-lint.py" "$preflight_package"
+run_scripted "preflight-lint/本包的默认范围全写了就绿" 0 "判了 2 个脚本（脚本 2）" "排除 7 个" -- python3 "$preflight_package/scripts/preflight-lint.py" "$preflight_package"
 preflight_package="$temporary_directory/preflight-scope"; make_preflight_package "$preflight_package"
 for undeclared_script_path in install.sh scripts/undeclared.sh scripts/claude-hooks/undeclared-hook.sh scripts/githooks/pre-commit; do
   printf '#!/usr/bin/env bash\necho 没写条件\n' > "$preflight_package/$undeclared_script_path"
@@ -375,7 +392,7 @@ run_scripted "preflight-lint/门禁目录登记写坏就红" 1 "gate-directory �
 make_installed_copy() { # make_installed_copy <项目根> <family> [--without-i18n]：在 .claude/<family>/ 下装一份只带这三道与它们依赖的副本
   local copy="$1/.claude/$2"
   mkdir -p "$copy/scripts"
-  cp "$SCRIPTS/lib.sh" "$SCRIPTS/preflight.py" "$SCRIPTS/preflight.sh" "$SCRIPTS/proc.py" "$SCRIPTS/package-family.py" \
+  cp "$SCRIPTS/lib.sh" "$SCRIPTS/preflight.py" "$SCRIPTS/preflight.sh" "$SCRIPTS/proc.py" "$SCRIPTS/package-family.py" "$SCRIPTS/evidence-exclude.py" \
     "$SCRIPTS/preflight-lint.py" "$SCRIPTS/link-targets.py" "$SCRIPTS/number-name-sync.sh" "$copy/scripts/"
   [[ "${3:-}" == --without-i18n ]] || printf 'family=%s\nthis=zh\nreference=zh\ndefault=zh\nlanguages=zh\n' "$2" > "$copy/I18N"
 }
@@ -662,9 +679,21 @@ printf '## D1 数据可移动性 —— 已定\n\n正文。\n' > "$number_name_p
 printf '// 照 D1（数据可移动性）办。\n' > "$number_name_project/src/a.rs"
 run_scripted "number-name-sync/简称与登记位一致时通过" 0 "编号与简称一致" -- \
   bash "$SCRIPTS/number-name-sync.sh" "$number_name_project"
+printf '// 照 D1（**数据可移动性**）办，再照 D1（`数据可移动性`）。\n' > "$number_name_project/src/a.rs"
+run_scripted "number-name-sync/简称带强调标记与反引号照 doc-lint 的规整法算一致" 0 "编号与简称一致" -- \
+  bash "$SCRIPTS/number-name-sync.sh" "$number_name_project"
+printf '// 照 D1（数据可 移动性）办。\n' > "$number_name_project/src/a.rs"
+run_scripted "number-name-sync/简称里多一处空白仍判不符" 1 "登记处是「数据可移动性」" -- \
+  bash "$SCRIPTS/number-name-sync.sh" "$number_name_project"
 printf '// 照 D1（旧名字）办。\n' > "$number_name_project/src/a.rs"
 run_scripted "number-name-sync/简称与登记位不符判红" 1 "登记处是「数据可移动性」" -- \
   bash "$SCRIPTS/number-name-sync.sh" "$number_name_project"
+# 不符超过 15 处时默认只列前 15 处并给出看全量的开关；NUMBER_NAME_SYNC_VERBOSE=1 逐处全列
+for number_name_line_index in $(seq 1 16); do printf '// 第 %s 处照 D1（旧名字）办。\n' "$number_name_line_index"; done > "$number_name_project/src/a.rs"
+run_scripted "number-name-sync/超过 15 处默认截断并指出全量开关" 1 "另有 1 处；全量清单：NUMBER_NAME_SYNC_VERBOSE=1" -- \
+  bash "$SCRIPTS/number-name-sync.sh" "$number_name_project"
+run_scripted "number-name-sync/全量开关下第 16 处也列出来" 1 "src/a.rs:16  D1 写的「旧名字」" -- \
+  env NUMBER_NAME_SYNC_VERBOSE=1 bash "$SCRIPTS/number-name-sync.sh" "$number_name_project"
 mkdir -p "$temporary_directory/number-name-none"
 run_scripted "number-name-sync/没有 kb 退 77" 77 "" -- \
   bash "$SCRIPTS/number-name-sync.sh" "$temporary_directory/number-name-none"
@@ -693,7 +722,7 @@ run_scripted "relay-timing-lint/自证 16 个样本判得对" 0 "自证：16 个
   python3 "$SCRIPTS/relay-timing-lint.py" --selftest
 # 不给仓库根时判当前目录所在的仓：按本文件的位置往上数两层的话，装在包里时数到的是包根的上一层，被判的仓一个文件都没扫
 relay_timing_scenario_directory="$temporary_directory/relay-timing-root"; mkdir -p "$relay_timing_scenario_directory/outer/nested/package/scripts" "$relay_timing_scenario_directory/project/research"
-cp "$SCRIPTS/relay-timing-lint.py" "$SCRIPTS/preflight.py" "$SCRIPTS/proc.py" "$relay_timing_scenario_directory/outer/nested/package/scripts/"
+cp "$SCRIPTS/relay-timing-lint.py" "$SCRIPTS/preflight.py" "$SCRIPTS/proc.py" "$SCRIPTS/evidence-exclude.py" "$relay_timing_scenario_directory/outer/nested/package/scripts/"
 git -C "$relay_timing_scenario_directory/project" init -q
 printf 'import subprocess\nimport time\n\n\ndef relay():\n    process = subprocess.Popen(["child"], stdout=subprocess.PIPE, text=True)\n    for line in process.stdout:\n        print(time.monotonic(), line)\n' \
   > "$relay_timing_scenario_directory/project/research/relay.py"
@@ -920,6 +949,8 @@ run_scripted "gate-reuse-check/自证的每种情形都判得对" 0 "gate-reuse-
   bash "$SCRIPTS/claude-hooks/gate-reuse-check.sh" --selftest
 
 # ── 历史条目编号：本次新增的条目撞了已有的号 ──────────────
+# 样本是中文的：在英文、日文仓里跑自证也要按中文判，语言由 HISTORY_ORDINAL_LANG 钉住。
+export HISTORY_ORDINAL_LANG=zh
 history_repository="$temporary_directory/history-ordinal"; mkdir -p "$history_repository/.claude/kb"
 git -C "$history_repository" init -q
 printf '# 变更史\n\n### 2026-09-17（其一）：建档\n- 起点。\n' > "$history_repository/.claude/kb/decisions-history.md"
@@ -959,6 +990,9 @@ git -C "$history_repository" add -A; git -C "$history_repository" -c user.name=t
 printf '\n### 2026-09-17（其一）：又一条\n- 撞号了。\n' >> "$history_repository/crates/checker/invariants/history.md"
 run_scripted "history-ordinal/登记了自定义 kb 目录就扫那里" 1 "处撞号" -- \
   bash "$SCRIPTS/history-ordinal.sh" "$history_repository"
+run_scripted "history-ordinal/非中文的仓报未实现退 77，不报没有撞号" 77 "en 未实现" -- \
+  env HISTORY_ORDINAL_LANG=en bash "$SCRIPTS/history-ordinal.sh" "$history_repository"
+unset HISTORY_ORDINAL_LANG
 
 # ── 本地阶段判别力：项目在 .claude/gate.d/ 里接的阶段，自己会不会红 ──
 stage_selftest_project="$temporary_directory/stage-selftest"; mkdir -p "$stage_selftest_project/.claude/gate.d/fixtures/10-demo.sh/red" "$stage_selftest_project/.claude/gate.d/fixtures/10-demo.sh/green"
@@ -986,6 +1020,9 @@ run_scripted "stage-selftest/red 与 green 之外的样本目录也跑" 1 "third
 rm -f "$stage_selftest_project/.claude/gate.d/fixtures/10-demo.sh/third/expect"
 run_scripted "stage-selftest/样本目录没有 expect 要判错" 1 "样本目录里没有 expect" -- \
   bash "$SCRIPTS/stage-selftest.sh" "$stage_selftest_project/.claude/gate.d"
+printf 'want=x\n' > "$stage_selftest_project/.claude/gate.d/fixtures/10-demo.sh/third/expect"
+run_scripted "stage-selftest/expect 里没写 exit= 要判错" 1 "expect 里没有 exit=<退出码>" -- \
+  bash "$SCRIPTS/stage-selftest.sh" "$stage_selftest_project/.claude/gate.d"
 rm -rf "${stage_selftest_project:?}/.claude/gate.d/fixtures/10-demo.sh/third"
 # 新形态：一道阶段一个目录 <门禁目录>/<名>/<名>.sh，用例是同目录下的 *.case.sh，头部写 expect-exit / expect-want
 stage_selftest_project="$temporary_directory/stage-selftest-nested"; mkdir -p "$stage_selftest_project/.claude/gate.d/my-stage"
@@ -1010,6 +1047,11 @@ run_scripted "stage-selftest/新旧两种形态过渡期并存" 0 "有用例的�
 printf '#!/usr/bin/env bash\ntouch bad.txt\n' > "$stage_selftest_project/.claude/gate.d/my-stage/malformed.case.sh"
 run_scripted "stage-selftest/新形态：用例没写 expect-exit 要判错" 1 "malformed" "用例文件没写 # expect-exit" -- \
   bash "$SCRIPTS/stage-selftest.sh" "$stage_selftest_project/.claude/gate.d" --item my-stage
+# 扁平的 <名>.sh 与嵌套的 <名>/<名>.sh 撞名：--item 分不清点的是哪一道，判红
+cp "$stage_selftest_project/.claude/gate.d/10-demo.sh" "$stage_selftest_project/.claude/gate.d/my-stage.sh"
+run_scripted "stage-selftest/新旧两种形态撞名判红" 1 "有同名的阶段" "my-stage" -- \
+  bash "$SCRIPTS/stage-selftest.sh" "$stage_selftest_project/.claude/gate.d"
+rm -f "$stage_selftest_project/.claude/gate.d/my-stage.sh"
 # 没有本地阶段目录、或目录里没有阶段时退 77（本次无对象可判），不许报绿，而且要说出是哪一种：gate.sh 的跳过说明让人看它的输出
 run_scripted "stage-selftest/没有本地阶段目录退 77 并说出来" 77 "没有门禁目录" "这不是通过" -- \
   bash "$SCRIPTS/stage-selftest.sh" "$temporary_directory/stage-selftest-none"
@@ -1032,7 +1074,7 @@ printf 'exit=1\nwant=有 bad.txt\n' > "$stage_selftest_project/.claude/gate.d/fi
 : > "$stage_selftest_project/.claude/gate.d/fixtures/10-demo.sh/red/bad.txt"
 printf 'exit=0\n' > "$stage_selftest_project/.claude/gate.d/fixtures/10-demo.sh/green/expect"
 printf '#!/usr/bin/env bash\necho "  通过：没有样本的阶段"\n' > "$stage_selftest_project/.claude/gate.d/20-nosample.sh"
-run_scripted "stage-selftest/没有样本的阶段逐个报本次未跑" 0 "本次未跑（这不是通过）：20-nosample.sh 没有判别力用例" -- \
+run_scripted "stage-selftest/没有样本的阶段逐个报本次未跑" 0 "本次未跑（这不是通过）：20-nosample 没有判别力用例" -- \
   bash "$SCRIPTS/stage-selftest.sh" "$stage_selftest_project/.claude/gate.d"
 # 一个阶段都没配样本：一个样本都没判，是无对象可判，不许报「判得都对」
 stage_selftest_project="$temporary_directory/stage-selftest-no-samples"; mkdir -p "$stage_selftest_project/.claude/gate.d/fixtures"
@@ -1048,15 +1090,19 @@ printf '#!/usr/bin/env bash\necho "  通过：恒绿"\n' > "$stage_selftest_proj
 printf 'exit=1\nwant=有 bad.txt\n' > "$stage_selftest_project/.claude/gate.d/fixtures/30-broken.sh/red/expect"
 : > "$stage_selftest_project/.claude/gate.d/fixtures/30-broken.sh/red/bad.txt"
 printf '#!/usr/bin/env bash\necho "  通过：没有样本的阶段"\n' > "$stage_selftest_project/.claude/gate.d/20-nosample.sh"
-run_scripted "stage-selftest/--item 只喂点名的阶段" 0 "点名的 1 道阶段判得都对（2 个用例）：10-demo.sh" -- \
+run_scripted "stage-selftest/--item 只喂点名的阶段" 0 "点名的 1 道阶段判得都对（2 个用例）：10-demo" -- \
   bash "$SCRIPTS/stage-selftest.sh" "$stage_selftest_project/.claude/gate.d" --item 10-demo.sh
-run_scripted "stage-selftest/--item 点名坏阶段要红" 1 "30-broken.sh                 red              期望退出 1，实测 0" -- \
+run_scripted "stage-selftest/--item 一个值里用空格隔开两道，每道都摘 .sh" 1 "30-broken                    red              期望退出 1，实测 0" -- \
+  bash "$SCRIPTS/stage-selftest.sh" "$stage_selftest_project/.claude/gate.d" --item "10-demo.sh 30-broken.sh"
+run_scripted "stage-selftest/--item 点名旧形态阶段不带 .sh 也认" 0 "点名的 1 道阶段判得都对（2 个用例）：10-demo" -- \
+  bash "$SCRIPTS/stage-selftest.sh" "$stage_selftest_project/.claude/gate.d" --item 10-demo
+run_scripted "stage-selftest/--item 点名坏阶段要红" 1 "30-broken                    red              期望退出 1，实测 0" -- \
   bash "$SCRIPTS/stage-selftest.sh" "$stage_selftest_project/.claude/gate.d" --item 30-broken.sh
-run_scripted "stage-selftest/--item 写错退 2 并列出可点名的阶段" 2 "--item nope.sh：" "       10-demo.sh" "       30-broken.sh" -- \
+run_scripted "stage-selftest/--item 写错退 2 并列出可点名的阶段" 2 "--item nope：" "       10-demo" "       30-broken" -- \
   bash "$SCRIPTS/stage-selftest.sh" "$stage_selftest_project/.claude/gate.d" --item nope.sh
 run_scripted "stage-selftest/--item 缺阶段名退 2" 2 "--item （缺阶段名）" -- \
   bash "$SCRIPTS/stage-selftest.sh" "$stage_selftest_project/.claude/gate.d" --item
-run_scripted "stage-selftest/--list-items 只列配了样本的阶段" 0 "10-demo.sh" "30-broken.sh" -- \
+run_scripted "stage-selftest/--list-items 只列配了样本的阶段" 0 "10-demo" "30-broken" -- \
   bash "$SCRIPTS/stage-selftest.sh" "$stage_selftest_project/.claude/gate.d" --list-items
 
 # ── 脚本执行位：暂存区里丢了可执行位，工作区那份还是可执行的 ──────
@@ -1361,6 +1407,8 @@ run_scripted "gate/--staged 算暂存了的改动" 1 门禁未通过 -- bash "$g
 # 反过来暂存区干净、给的树里有 BAD，要红。两例缺一例，「判的是给的树」与「判的是暂存区」分不开。
 run_scripted "gate/--staged 给了 GATE_STAGED_TREE 就判那棵树，不读暂存区" 0 "被判的树" "已实现的门禁阶段全部通过" -- \
   env GATE_STAGED_TREE="$(git -C "$gate_scenario_directory/project" rev-parse "HEAD^{tree}")" bash "$gate_scenario_directory/package/scripts/gate.sh" --staged "$gate_scenario_directory/project"
+run_scripted "gate/设了 GATE_STAGED_TREE 却没带 --staged 要拒绝" 1 "没带 --staged" -- \
+  env GATE_STAGED_TREE="$(git -C "$gate_scenario_directory/project" rev-parse "HEAD^{tree}")" bash "$gate_scenario_directory/package/scripts/gate.sh" "$gate_scenario_directory/project"
 gate_given_tree_directory="$temporary_directory/gate-staged-given-tree"; make_gate_package "$gate_given_tree_directory/package"; make_staged_project "$gate_given_tree_directory/project"
 printf 'BAD（只在给的树里）\n' > "$gate_given_tree_directory/bad-b.md"
 gate_given_tree_blob="$(git -C "$gate_given_tree_directory/project" hash-object -w "$gate_given_tree_directory/bad-b.md")"
@@ -1373,9 +1421,14 @@ run_scripted "gate/--staged 给的 GATE_STAGED_TREE 不是树要拒绝" 1 "不�
   env GATE_STAGED_TREE=0000000000000000000000000000000000000000 bash "$gate_given_tree_directory/package/scripts/gate.sh" --staged "$gate_given_tree_directory/project"
 # 同一个仓同一时刻只许一趟 --staged：临时树目录按仓根固定，里面记的 pid 还活着就拒绝；pid 不在了的算残留，清掉接着跑、判法照旧。
 gate_busy_scratch="${TMPDIR:-/tmp}/gate-staged-$(printf '%s' "$(cd "$gate_given_tree_directory/project" && pwd)" | git hash-object --stdin | cut -c1-12)"
-mkdir -p "$gate_busy_scratch"; printf '%s\n' "$$" > "$gate_busy_scratch/pid"
+# 占着的那一趟用一个命令行里带 gate.sh 的进程扮；pid 活着而命令行里没有 gate.sh 的（被别的进程复用了）算残留。
+python3 -c 'import time; time.sleep(600)' fake-gate.sh & gate_busy_fake_pid=$!
+mkdir -p "$gate_busy_scratch"; printf '%s\n' "$gate_busy_fake_pid" > "$gate_busy_scratch/pid"
 run_scripted "gate/--staged 另一趟还在跑就拒绝" 1 "正在这个仓上跑" -- bash "$gate_given_tree_directory/package/scripts/gate.sh" --staged "$gate_given_tree_directory/project"
-printf '%s\n' 4000000000 > "$gate_busy_scratch/pid"
+kill "$gate_busy_fake_pid" 2>/dev/null || true; wait "$gate_busy_fake_pid" 2>/dev/null || true
+mkdir -p "$gate_busy_scratch"; printf '%s\n' "$$" > "$gate_busy_scratch/pid"
+run_scripted "gate/--staged 记着的 pid 活着但不是 gate.sh，算残留接着跑" 0 "已实现的门禁阶段全部通过" -- bash "$gate_given_tree_directory/package/scripts/gate.sh" --staged "$gate_given_tree_directory/project"
+mkdir -p "$gate_busy_scratch"; printf '%s\n' 4000000000 > "$gate_busy_scratch/pid"
 run_scripted "gate/--staged 残留的临时树目录清掉接着跑" 0 "已实现的门禁阶段全部通过" -- bash "$gate_given_tree_directory/package/scripts/gate.sh" --staged "$gate_given_tree_directory/project"
 rm -rf "${gate_busy_scratch:?}"
 # 判红的那一次也要清掉临时 worktree。外层在 set -e 下跑里层，写成「里层; rc=$?」时里层一红外层就当场退出，清理走不到。
@@ -2472,6 +2525,13 @@ run_scripted "link-targets/登记了自定义门禁目录就跳过它的 fixture
 link_targets_project="$temporary_directory/link-targets-copy"; make_installed_copy "$link_targets_project" demo-sop; mkdir -p "$link_targets_project/docs" "$link_targets_project/.claude/demo-sop/rules"
 printf '# 甲\n' > "$link_targets_project/docs/a.md"; printf '见 [不在](nowhere.md)。\n' > "$link_targets_project/.claude/demo-sop/rules/a.md"
 run_scripted "link-targets/副本按 I18N 的 family 认、不判" 0 "1 份文档" -- "${link_targets_run_in_directory[@]}" "$link_targets_project" "$link_targets_project/.claude/demo-sop/scripts"
+# 冻结证据目录（.claude/doc-lint-exclude）不判：登记写成 ./evidence/ 也认，读法与 number-name-sync、relay-timing-lint 共用 evidence-exclude.py
+link_targets_project="$temporary_directory/link-targets-frozen-evidence"; mkdir -p "$link_targets_project/docs" "$link_targets_project/evidence" "$link_targets_project/.claude"
+printf '# 甲\n' > "$link_targets_project/docs/a.md"; printf '见 [不在](nowhere.md)。\n' > "$link_targets_project/evidence/a.md"
+printf './evidence/  # 原样保存的证据\n' > "$link_targets_project/.claude/doc-lint-exclude"
+run_scripted "link-targets/冻结证据目录不判，登记带 ./ 也认" 0 "1 份文档" -- "${link_targets_run_in_directory[@]}" "$link_targets_project" "$SCRIPTS"
+rm -f "$link_targets_project/.claude/doc-lint-exclude"
+run_scripted "link-targets/没登记冻结证据时那份坏链接照判" 1 "nowhere.md" -- "${link_targets_run_in_directory[@]}" "$link_targets_project" "$SCRIPTS"
 
 # env.sh 的 git 版本下限（2.28）：主、次版本号拼成一个串再切的话，2.8–2.27 都会被算成够新
 fake_git_versions_directory="$temporary_directory/env-git"; mkdir -p "$fake_git_versions_directory/old" "$fake_git_versions_directory/new"
@@ -2586,6 +2646,21 @@ git -C "$push_family_directory/fam-zh" worktree add -q "$push_family_directory/w
 run_scripted "push-all/带着 GIT_DIR 在 git worktree 里跑也三个一起推" 0 "ja：已推" "en：已推" "zh：已推" -- \
   env GIT_DIR="$(git -C "$push_family_directory/worktree-zh" rev-parse --absolute-git-dir)" bash "$push_family_directory/worktree-zh/scripts/push-all.sh"
 run_scripted "push-all/worktree 里推完三个远端都到了本地的提交" 0 "远端对上本地的仓：3 个" -- "${remotes_state[@]}" "$push_family_directory" all
+
+# 远端不叫 origin：推往 master 跟踪的那个远端，不写死 origin
+push_family_directory="$temporary_directory/push-renamed-remote"; make_push_family "$push_family_directory"
+for push_language in zh en ja; do
+  git -C "$push_family_directory/fam-$push_language" remote rename origin upstream
+  git -C "$push_family_directory/fam-$push_language" config branch.master.remote upstream
+done
+run_scripted "push-all/远端不叫 origin 就推往 master 跟踪的那个" 0 "3 个语言仓都推上去了" -- \
+  bash "$push_family_directory/fam-zh/scripts/push-all.sh"
+run_scripted "push-all/远端改名之后三个远端都到了本地的提交" 0 "远端对上本地的仓：3 个" -- "${remotes_state[@]}" "$push_family_directory" all
+# 没设跟踪、也没有 origin：验的那一步就拒，一个都不推
+push_family_directory="$temporary_directory/push-no-remote"; make_push_family "$push_family_directory"
+git -C "$push_family_directory/fam-en" remote rename origin elsewhere
+run_scripted "push-all/找不到要推的远端就一个都不推" 1 "en：没有远端 origin" "一个仓都没推" -- \
+  bash "$push_family_directory/fam-zh/scripts/push-all.sh"
 
 # 推到一半失败：en 的远端有一个本地没有的提交 ⇒ ja 已推、en 被拒、zh 不推，而且要报出已推的是哪些
 push_family_directory="$temporary_directory/push-partial"; make_push_family "$push_family_directory"

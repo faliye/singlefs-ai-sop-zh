@@ -41,6 +41,8 @@ done
 [[ ${#GATE_ROOT_ARGUMENTS[@]} -le 1 ]] || die "只收一个项目根，收到 ${#GATE_ROOT_ARGUMENTS[@]} 个：${GATE_ROOT_ARGUMENTS[*]}" \
   "用法： gate.sh [项目根] [--staged] [--force]"
 set -- ${GATE_ROOT_ARGUMENTS[@]+"${GATE_ROOT_ARGUMENTS[@]}"}
+[[ $WANT_STAGED -eq 1 || -z "${GATE_STAGED_TREE:-}" ]] || die "设了 GATE_STAGED_TREE 却没带 --staged：它只在 --staged 下生效，不带就是在判脏工作区" \
+  "要判那棵树就加 --staged；要判工作区就先 unset GATE_STAGED_TREE。"
 
 # ── --staged：只拿「HEAD + 暂存区」跑整道门禁 ─────────────
 # 几个会话共写一个仓时，工作区里混着别人没收尾的改动与未跟踪文件，门禁在工作区上判的红分不清是谁的
@@ -59,7 +61,12 @@ if [[ $WANT_STAGED -eq 1 ]]; then
   staged_tree="$staged_scratch_directory/tree"
   if [[ -d "$staged_scratch_directory" ]]; then
     staged_other_pid="$(cat "$staged_scratch_directory/pid" 2>/dev/null || true)"
-    if [[ -n "$staged_other_pid" ]] && kill -0 "$staged_other_pid" 2>/dev/null; then
+    # pid 被别的进程复用时 kill -0 照样成功：再核它的命令行里真有 gate.sh，否则当残留。
+    staged_other_command_line=""
+    if [[ "$staged_other_pid" =~ ^[0-9]+$ ]] && kill -0 "$staged_other_pid" 2>/dev/null; then
+      staged_other_command_line="$(tr '\0' ' ' < "/proc/$staged_other_pid/cmdline" 2>/dev/null || true)"
+    fi
+    if [[ "$staged_other_command_line" == *gate.sh* ]]; then
       die "另一趟 gate.sh --staged（进程 $staged_other_pid）正在这个仓上跑，临时树 $staged_tree 被它占着" \
         "等它跑完再跑；它早就不在而目录还在的，清掉：git -C $source_repository_root worktree remove --force $staged_tree; rm -rf $staged_scratch_directory"
     fi
@@ -417,7 +424,7 @@ run_stage_may_skip "本地阶段判别力" "本次无对象可判：$PROJECT_GAT
 # 它按当前目录找文档：门禁开头已经 cd 到 $ROOT
 run_stage "链接指向" python3 "$SCRIPTS_DIRECTORY/link-targets.py"
 # 变更史的「其 N」是先到先得的公共编号：并发会话取号前不查最大号就会撞，同号条目被当锚点引用时指向哪一条无从判断。
-run_stage_may_skip "历史条目编号" "本次无对象可判：$ROOT/.claude/kb 下没有变更史文件" \
+run_stage_may_skip "历史条目编号" "本次没有判：kb 目录下没有变更史文件，或本包的语言没实现这一道（哪一种见上方它的输出）" \
   bash "$SCRIPTS_DIRECTORY/history-ordinal.sh" "$ROOT"
 # 工具层的闸：规则里的提醒拦不住手敲的命令，钩子能；而钩子被删掉或改坏时那道闸静默消失。
 run_stage_may_skip "工具层的闸" "本次无对象可判：项目与装进来的副本里一个钩子都没有" \

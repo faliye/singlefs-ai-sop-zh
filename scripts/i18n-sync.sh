@@ -94,7 +94,9 @@ stale_articles() { # stale_articles <译本仓>
 
 # 原样复制到各语言仓的部分：只有不含面向人的散文的东西（脚本与配置），别的一律走清单逐篇翻译。
 # GLOSSARY.md 例外留在这里：它本身就是各语言并列的一张对照表，说明列自带三语。
-SHARED=(install.sh scripts GLOSSARY.md .gitignore)
+# 本仓自己的 .claude/ 配置（缩写登记表、钩子注册、规则纪律排除表）是各语言仓门禁共用的判据，同样原样复制；
+# .claude/naming-sweep-exclude 不在内：参照仓登记 MANIFEST.sha256、译本仓登记 SOURCE-MANIFEST.sha256，内容本就不同。
+SHARED=(install.sh scripts GLOSSARY.md .gitignore .claude/abbreviations .claude/settings.json .claude/rules-lint-exclude)
 
 # gate.sh 当阶段跑时它已打过同名标题，别打两遍（GATE_IN_STAGE 由 run_stage 设）
 [[ -n "${GATE_IN_STAGE:-}" ]] || head1 "各语言同步"
@@ -238,6 +240,7 @@ for language in $LANGUAGES; do
     for shared_item in "${SHARED[@]}"; do
       rm -rf "${translation_repository:?}/$shared_item"
       if [[ -e "$PACKAGE_ROOT/$shared_item" ]]; then
+        mkdir -p "$(dirname "$translation_repository/$shared_item")"
         cp -a "$PACKAGE_ROOT/$shared_item" "$translation_repository/$shared_item"
       fi
     done
