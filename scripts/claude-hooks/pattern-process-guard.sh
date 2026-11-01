@@ -16,8 +16,14 @@
 #   - bash / sh / dash / zsh / ksh 的 -c 字符串参数（-lc、-ec 这类合并写法也算）与 <<< 字符串，当成额外几行代码；
 #   以 # 开头的注释行跳过。
 # 退出码：命中 2（Claude Code 拦下这条命令，把 stderr 交给模型）；没命中、或输入里没有命令 0；
-#   输入不是 JSON 对象、或 lib.sh 找不到 gawk 1；准入与运行条件不满足（缺 python3、GNU grep）78。
-#   1 与 78 都是「没判」：Claude Code 照常执行命令（只有 2 才拦），stderr 只在详细模式里给人看。
+#   判不了 1：输入不是 JSON 对象、从输入里抽命令行的 python 出错、判据的 grep 出错（退出码 2 及以上）、lib.sh 找不到 gawk；
+#   准入与运行条件不满足（缺 python3、GNU grep）78。
+#   1 与 78 都是「没判」：Claude Code 照常执行命令（只有 2 才拦），stderr 留一行「这条命令没判」与原因，只在详细模式里给人看。
+#
+# 弄坏开关 PATTERN_PROCESS_GUARD_BREAK（只给自证用，其余时候不设）：
+#   no-coproc       命令位置不认 coproc；样本 coprocpgrep 判错，--selftest 红
+#   quiet-unjudged  判据的 grep 出错时一声不响地放行、抽命令行的 python 出错时照报「不是 JSON 对象」；
+#                   scripts/selftest.sh 里 pattern-process-guard 判不了的那两格红
 #
 # 怎么注册：在项目的 .claude/settings.json 里给 hooks.PreToolUse 加一项
 #   {"matcher": "Bash", "hooks": [{"type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR\"/.claude/singlefs-ai-sop/scripts/claude-hooks/pattern-process-guard.sh"}]}
@@ -37,6 +43,12 @@ HOOK_DIRECTORY="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$HOOK_DIRECTORY/../lib.sh"
 preflight "${BASH_SOURCE[0]}" "$@"; set -- ${PREFLIGHT_ARGUMENTS[@]+"${PREFLIGHT_ARGUMENTS[@]}"}
 PROCESS_TOOL_SCRIPT="$(cd "$HOOK_DIRECTORY/.." && pwd)/proc.py"
+kill_pattern="$PATTERN_KILL_RE"; pgrep_pattern="$PATTERN_PGREP_RE"
+case "${PATTERN_PROCESS_GUARD_BREAK:-}" in
+  ""|quiet-unjudged) ;;
+  no-coproc) kill_pattern="${kill_pattern//|coproc/}"; pgrep_pattern="${pgrep_pattern//|coproc/}" ;;
+  *) die "PATTERN_PROCESS_GUARD_BREAK 的值不认：${PATTERN_PROCESS_GUARD_BREAK}" "只认 no-coproc、quiet-unjudged；不是在自证里弄坏判据的话，不要设这个变量。" ;;
+esac
 
 if [[ "${1:-}" == "--selftest" ]]; then
   fixtures_directory="$(cd "$HOOK_DIRECTORY/../fixtures/pattern-process-guard" 2>/dev/null && pwd)"
@@ -245,13 +257,31 @@ def main():
 sys.exit(main())
 PY
 
-if ! code_lines="$(python3 -c "$EXTRACT_CODE_LINES")"; then
+extract_exit_code=0
+code_lines="$(python3 -c "$EXTRACT_CODE_LINES")" || extract_exit_code=$?
+if [[ $extract_exit_code -eq 3 || ( $extract_exit_code -ne 0 && "${PATTERN_PROCESS_GUARD_BREAK:-}" == quiet-unjudged ) ]]; then
   printf '%s\n' "! pattern-process-guard：钩子输入不是 JSON 对象，这条命令没判（照常执行）。" \
     "  看一眼 .claude/settings.json 里这个钩子是不是挂在 PreToolUse 的 Bash 上；手喂时输入要形如 {\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"…\"}}。" >&2
   exit 1
 fi
+if [[ $extract_exit_code -ne 0 ]]; then
+  printf '%s\n' "! pattern-process-guard：从钩子输入里抽要判的命令行时出错（python 退出码 $extract_exit_code），这条命令没判（照常执行）。" \
+    "  它的报错在上面；手喂同一份输入复现： printf '%s' '<钩子 JSON>' | bash $HOOK_DIRECTORY/pattern-process-guard.sh" >&2
+  exit 1
+fi
 [[ -n "$code_lines" ]] || exit 0
-matched_lines="$(printf '%s\n' "$code_lines" | grep -vE '^[[:space:]]*#' | grep -E "$PATTERN_KILL_RE|$PATTERN_PGREP_RE" || true)"
+# grep 退 1 是「一行都没有」；退 2 及以上是 grep 自己出错（判据写坏了、读不了输入），这条命令没判，留一行再放行。
+grep_exit_code=0
+code_lines_without_comments="$(printf '%s\n' "$code_lines" | grep -vE '^[[:space:]]*#')" || grep_exit_code=$?
+matched_lines=""
+if [[ $grep_exit_code -eq 0 ]]; then
+  matched_lines="$(printf '%s\n' "$code_lines_without_comments" | grep -E "$kill_pattern|$pgrep_pattern")" || grep_exit_code=$?
+fi
+if [[ $grep_exit_code -ge 2 && "${PATTERN_PROCESS_GUARD_BREAK:-}" != quiet-unjudged ]]; then
+  printf '%s\n' "! pattern-process-guard：判据的 grep 出错（退出码 $grep_exit_code），这条命令没判（照常执行）。" \
+    "  grep 的报错在上面；判据是 $HOOK_DIRECTORY/../lib.sh 的 PATTERN_KILL_RE、PATTERN_PGREP_RE（与 shell-lint 的 S2、S3 同一份），修好再跑这个钩子的 --selftest。" >&2
+  exit 1
+fi
 [[ -n "$matched_lines" ]] || exit 0
 matched_line_count="$(printf '%s\n' "$matched_lines" | wc -l)"
 matched_line_shown_in_message="${matched_lines%%$'\n'*}"

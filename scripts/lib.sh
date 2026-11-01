@@ -55,7 +55,8 @@ source "$(dirname "${BASH_SOURCE[0]}")/preflight.sh"
 # ── 「命令位置」的唯一定义 ──────────────────────────────
 # gate-lint 与 shell-lint 都要判「这个记号是被执行了，还是只是出现在字符串里」。
 # 各写一份时一份漏了 `(){}`，`( bad "不合格" )` 与 `eval bad "..."` 整体漏检。
-CMD_POS='(^[[:space:]]*|[;&|(){}`!][[:space:]]*|(then|else|do|if|while|until|sudo|env|xargs|exec|eval|command|time)[[:space:]]+)'
+# coproc 后面跟的是它在后台起的那条命令，与 if / while / ! 后面同样算命令位置。
+CMD_POS='(^[[:space:]]*|[;&|(){}`!][[:space:]]*|(then|else|do|if|while|until|sudo|env|xargs|exec|eval|command|time|coproc)[[:space:]]+)'
 
 # ── 「按模式找进程」的唯一定义 ────────────────────────────
 # shell-lint（S2、S3，判脚本）与 claude-hooks/pattern-process-guard.sh（判手敲的命令）共用；
@@ -208,6 +209,9 @@ changed_files() {
 
 # 项目给 cargo 挂的前缀登记，相对项目根（rules/command-safety.md）。check.sh 读它；gate.sh --staged 查临时树里有没有它。
 CARGO_COMMAND_PREFIX_FILE=.claude/cargo-command-prefix
+# 项目给 clippy 登记的特性组合，相对项目根。check.sh 读它，一行一个组合、每个组合跑一趟；没有这个文件就跑默认的两趟（不带特性、--all-features）。
+# gate.sh --staged 同样查临时树里有没有它。
+CLIPPY_FEATURE_COMBINATIONS_FILE=.claude/clippy-feature-combinations
 
 # ── 项目登记的门禁目录与钩子目录（rules/sop-first.md）──────────────
 # 项目要把门禁或钩子挪出 .claude/ 时，各登记一个文件（项目根，一行，相对项目根的路径，去掉结尾的 /）；

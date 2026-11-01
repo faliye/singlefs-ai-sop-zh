@@ -7,6 +7,9 @@
 # 用法：gate-lint.sh [额外要扫的目录…]
 #   GATE_LINT_DIR  要扫的目录（selftest 拿样本喂它用），默认扫本包根；位置参数是额外要扫的目录（gate.sh 拿它传项目登记的门禁目录，默认 .claude/gate.d/）。
 #
+#   GATE_LINT_BREAK  自证拿它弄坏判据，其余时候不设：anywhere-mark 把 ✗ / ✓ 改回在行里哪都认（旧判法），
+#      selftest 的「gate-lint/弄坏开关 anywhere-mark」要在 printrejarrowtext 和 okmarkinnotice 两个样本上判红。
+#
 # 查四条：「bad 带出路」「die 带出路」「直接打印的拒绝带出路」是拒绝的形态，「成功句报数」是「通过」的形态。
 # 前两条与「成功句报数」只对 .sh 判，.py 只判「直接打印的拒绝带出路」。
 #   bad 带出路：从 bad 那一行起 HOWTO_WINDOW 个非注释行内要有命令位置上的 howto（命令位置见 lib.sh 的 CMD_POS）；
@@ -16,6 +19,8 @@
 #      确实不扫对象的单独写一行注释 `# gate-lint:nocount <理由>`，理由至少 8 个字。
 #   直接打印的拒绝带出路：直接打印的拒绝（`echo "  ✗ …"` / python 的 `print('  ✗ …')`）到下一处拒绝之前要出现「→」；
 #      循环里的明细行标 `# gate-lint:detail`，汇总行标 `# gate-lint:summary`，两种都要显式写。
+#   ✗ / ✓ 只认打印出来那一行的开头：引号之后、缩进与颜色占位（`%s`、`${变量}`、`\033[…m`）之后紧跟的才算；
+#      出路与错误说明正文里提到的 ✗ / ✓（「照它上面打的 ✗ 修」）不算下一处拒绝，也不算最后一句成功句。
 #
 # 认不出参数个数的形态（消息是变量、或引号被转义拆开）不判，交给 lib.sh 的运行期兜底。
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -40,6 +45,16 @@ DIE_CALL_PATTERN="$CMD_POS"'die[[:space:]]'
 HOWTO_CALL_PATTERN="$CMD_POS"'howto[[:space:]]'
 # 汇总行豁免只认行尾的显式标记：按消息文本猜的话，把拒绝写成「…检查失败：$n 处」就能永久免检。
 SUMMARY_MARKER_PATTERN='#[[:space:]]*gate-lint:summary[[:space:]]*$'
+# ✗ / ✓ 只认「打印出来的那一行的开头」：开引号之后，只隔着缩进与颜色占位就是标记。
+# 按「行里有没有」认的话，出路写成「照它上面打的 ✗ 修」就被当成下一处拒绝、错误说明里的 ✓ 被当成最后一句成功句，判出假红。
+MARK_LINE_START_PATTERN='["'"'"']([[:space:]]|\\n|\\t|%s|\$\{[A-Za-z_][A-Za-z0-9_]*\}|\$[A-Za-z_][A-Za-z0-9_]*|\\(033|e|x1[bB])\[[0-9;]*m)*'
+REJECTION_MARK_PATTERN="${MARK_LINE_START_PATTERN}✗"
+SUCCESS_MARK_PATTERN="(^|[^A-Za-z0-9_])(echo|printf|say)[[:space:]][^\"']*${MARK_LINE_START_PATTERN}✓"
+case "${GATE_LINT_BREAK:-}" in
+  '') ;;
+  anywhere-mark) REJECTION_MARK_PATTERN='✗'; SUCCESS_MARK_PATTERN='✓' ;;
+  *) die "GATE_LINT_BREAK 的值不认：${GATE_LINT_BREAK}" "只认 anywhere-mark；不是在自证里弄坏判据的话，不要设这个变量。" ;;
+esac
 
 # 这处 die 只带了一句话（没有第二个参数）吗？
 # 认不出来就返回非零 —— 「不判」与「判过」要分开，前者不该悄悄算通过。
@@ -172,7 +187,7 @@ fi   # ← 「bad 带出路」「die 带出路」到此为止，只对 shell 脚
       continue
     fi
     [[ "$line" =~ ^[[:space:]]*# ]] && continue
-    [[ "$line" == *✗* ]] || continue
+    [[ "$line" =~ $REJECTION_MARK_PATTERN ]] || continue
     [[ "$line" =~ (echo|printf|print\() ]] || continue
     rejection_line_indexes+=("$line_index")
   done
@@ -223,7 +238,7 @@ if [[ $is_shell -eq 1 ]]; then
     for ((line_index=0; line_index<${#FILE_LINES[@]}; line_index++)); do
       [[ "${FILE_LINES[$line_index]}" =~ ^[[:space:]]*# ]] && continue
       # 成功句可以跟在 && / || / ; / then / else / do 后面：(( failure_count == 0 )) && ok "…" 也是成功句
-      if [[ "${FILE_LINES[$line_index]}" =~ (^|&&|\|\||;|then|else|do)[[:space:]]*ok[[:space:]]+\" || "${FILE_LINES[$line_index]}" == *✓* ]]; then
+      if [[ "${FILE_LINES[$line_index]}" =~ (^|&&|\|\||;|then|else|do)[[:space:]]*ok[[:space:]]+\" || "${FILE_LINES[$line_index]}" =~ $SUCCESS_MARK_PATTERN ]]; then
         summary_line_number=$((line_index+1)); summary_line="${FILE_LINES[$line_index]}"
         for ((continuation_line_index=line_index; continuation_line_index+1<${#FILE_LINES[@]}; continuation_line_index++)); do
           [[ "${FILE_LINES[$continuation_line_index]}" == *\\ ]] || break

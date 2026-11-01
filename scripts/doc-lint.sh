@@ -7,6 +7,9 @@
 #   bash scripts/doc-lint.sh --not-impl    只报本语言没实现的检查，一行一条，退 0（gate.sh 收进汇总的未实现清单）
 #   DOC_LINT_LANG=<语言>    只给 scripts/selftest.sh 用，设了就自报（见「语言」一段）
 #   DOC_LINT_VERBOSE=1      逐份报结果，列出跳过的文件与编号引用的全量清单
+#   DOC_LINT_BREAK=<项>     只给 scripts/selftest.sh 弄坏判据用，其余时候不设：
+#                           read-once-copy-only  K 的项目那一路只认副本里的规则，开会话读一次登记的项目本地规则也报悬空；
+#                                                样本 projreadoncelocal 判红
 # 退出码：0 通过；1 判红或判不了。
 #
 # 检查 A–M（判据与堵过的绕法写在各段代码旁）：
@@ -19,7 +22,7 @@
 #   E   kb 引用的不变量编号（I-<类>.<号>）要有定义；F 编号只许一处登记位；G 引用带简称且与登记位一致；H 反复出现（≥3 次）的编号形状要登记
 #   I   给人读的 .md 里翻译腔、古风腔、过度解释的固定构式
 #   J   .claude/doc-lint-exclude 的排除项带理由、指向真实目录、真排到了东西
-#   K   rules/*.md 与 @ 引用逐项相等
+#   K   rules/*.md 与 @ 引用逐项相等；项目里开会话读一次登记的名字，在副本或项目本地的 .claude/rules/ 里有一份就不算悬空
 #   L   .claude/warnings/ 的警告记录：文件名 YYYY-MM-DD.md，每个 ## 小节四项齐全
 #   M   历史条目的 `### 日期` 与「实测（日期）」不许是编的
 # A、D、I 是词表型，只在有词表的语言上跑（日文另有 D-1、D-2），别的报未实现。围栏里的内容不查（那是示例）。
@@ -31,6 +34,10 @@
 
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 preflight "${BASH_SOURCE[0]}" "$@"; set -- ${PREFLIGHT_ARGUMENTS[@]+"${PREFLIGHT_ARGUMENTS[@]}"}
+case "${DOC_LINT_BREAK:-}" in
+  ""|read-once-copy-only) ;;
+  *) die "DOC_LINT_BREAK 的值不认：${DOC_LINT_BREAK}" "只认 read-once-copy-only；不是在自证里弄坏判据的话，不要设这个变量。" ;;
+esac
 
 # `--not-impl` 要在解析项目根之前认出来，不然它被当成项目根拒掉；项目根换成本包目录，这一支跑不到扫描。
 NOT_IMPLEMENTED_LIST_ONLY=0
@@ -943,7 +950,8 @@ fi
 #   项目的 CLAUDE.md ↔ 装进来的副本 .claude/<族名>/rules/
 # 项目本地的 .claude/rules/ 由项目自己的门禁阶段管。
 # 有意不 @ 常驻、开会话读一次的规则，在同一份 .md 文件里写 <!-- doc-lint:read-once <文件名> … -->（空格分隔）登记，不算漏引；
-# 登记了却不在 rules/ 里的照报「引用了不存在的文件」。
+# 登记了却不在 rules/ 里的照报「引用了不存在的文件」。项目那一路另认项目本地的 .claude/rules/：
+# 开会话读一次登记的名字在那里有一份，也不算悬空；两处都没有的照报。@ 引用只认副本那一个前缀，不另认。
 metadata_failure_count=0
 # `|| true`：I18N 不在时 sed 退 2，pipefail 下整条管道跟着退 2，set -e 把脚本当场带走。
 RULES_PACKAGE_FAMILY="$(sed -n 's/^family=//p' "$(dirname "${BASH_SOURCE[0]}")/../I18N" 2>/dev/null | head -1 || true)"
@@ -958,6 +966,15 @@ check_rule_references() { # check_rule_references <被查的 .md 文件，相对
                       <(printf '%s\n' "$referenced" | grep -v '^$' || true))"
   dangling_references="$(comm -13 <(printf '%s\n' "$rule_files_on_disk" | grep -v '^$' || true) \
                     <(printf '%s\n' "$referenced" | grep -v '^$' || true))"
+  if [[ "$reference_kind" == project && -n "$dangling_references" && "${DOC_LINT_BREAK:-}" != read-once-copy-only ]]; then
+    local dangling_reference still_dangling_references=""
+    while IFS= read -r dangling_reference; do
+      [[ -n "$dangling_reference" ]] || continue
+      if grep -qxF -- "$dangling_reference" <<<"$read_once_rules" && [[ -f "$PROJECT_ROOT/.claude/rules/$dangling_reference" ]]; then continue; fi
+      still_dangling_references+="$dangling_reference"$'\n'
+    done <<<"$dangling_references"
+    dangling_references="${still_dangling_references%$'\n'}"
+  fi
   if [[ -n "$unreferenced_rules" ]]; then
     case "$reference_kind" in
       sop) bad "这些规则文件存在，但 CLAUDE.md 没有 @ 引用：$(printf '%s' "$unreferenced_rules" | tr '\n' ' ')"
@@ -981,7 +998,8 @@ check_rule_references() { # check_rule_references <被查的 .md 文件，相对
            howto "把这几行删掉，或者改成现在的文件名。模板里悬空的引用会原样铺进新项目。" ;;
       project) bad "CLAUDE.md 引用了副本里没有的规则：$(printf '%s' "$dangling_references" | tr '\n' ' ')"
            howto "上游多半把这条规则合并或改名了：看 .claude/$RULES_PACKAGE_FAMILY/CHANGELOG.md 里是哪一版动的，" \
-                 "把这一行换成现在的文件名，或者删掉。悬空的引用不报错，那条规矩根本没进来。" ;;
+                 "把这一行换成现在的文件名，或者删掉。悬空的引用不报错，那条规矩根本没进来。" \
+                 "开会话读一次登记的是项目自己的规则的，规则文件要在 .claude/rules/ 下（那里有一份就不算悬空）。" ;;
     esac
     metadata_failure_count=$((metadata_failure_count+1))
   fi

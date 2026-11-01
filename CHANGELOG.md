@@ -3,6 +3,25 @@
 规则与门禁的版本历史。`CLAUDE.md` 与 `rules/*.md` 不留历史节（design-doc-discipline），
 历史一律记在这里；逐条改动细节见 `git log`，提交信息即变更说明。
 
+## 0.0.68 — 2026-10-31
+
+**新加五条：测试照真实条件造、每一个弄坏开关都必须会红、一处改动改全相关代码与配置、停掉子 agent 之后定它的改动与接手、后台与脚本任务的名字写清；`shell-lint.sh` 新加 S8（拿文件大小判 `/proc`、`/sys`、cgroupfs 的文件空不空）；`check.sh` 的 clippy 按特性组合各跑一趟。**
+
+规则：
+- `test-discipline.md`：新加小节「测试照真实的条件造，不虚构达不到的条件」「每一个弄坏开关都必须会红」。
+- `code-discipline.md`：新加小节「一处改动，改全相关的代码与配置」（本地配置与程序运行时写进系统的设置同样算在内）。
+- `command-safety.md`「起了后台任务和子 agent……」：新加两条，停掉子 agent 之后当场定它的改动与没做完的活交给谁；后台任务与脚本任务的名字照与使用者对话的语言写、写明是什么与在等哪一件，同时在跑的不许同名。
+- `command-safety.md`：新加小节「装置起的样本进程，放进它自己的进程组」「`/proc`、`/sys`、cgroupfs 下的文件，读内容判空不空」；`systemctl stop` 之后回读 `is-active` 的输出与 `cgroup.procs` 的内容；`coproc` 后面也算命令位置。
+- `session-wrapup.md`：新加一条，清索引之前先看暂存区里有没有别人暂存的，只清自己的路径。
+
+脚本与门禁：
+- `shell-lint.sh`：新加 S8，`[ -s ]`、`stat` 的 `%s`、`find` 的 `-size` 与 `-empty` 作用在 `/proc/`、`/sys/` 开头或 `cgroup.<名字>` 的路径上判红；S3 认 `coproc` 后面的 `pgrep -f`。
+- `check.sh`：clippy 照项目登记的特性组合（`.claude/clippy-feature-combinations`，没登记跑不带特性与 `--all-features` 两趟）各跑一趟；弄坏开关 `CHECK_BREAK=single-clippy-pass`。`gate.sh --staged` 核临时树里有没有这份登记。
+- `gate-lint.sh`：`✗`、`✓` 只认打印出来那一行的开头；弄坏开关 `GATE_LINT_BREAK=anywhere-mark`。
+- `doc-lint.sh`：K 那一路认项目登记的开会话读一次的本地规则；弄坏开关 `DOC_LINT_BREAK=read-once-copy-only`。
+- `claude-hooks/pattern-process-guard.sh`：判不了（输入不是 JSON、抽命令行出错、判据出错）退 1，运行条件不满足退 78，两种都照常放行、留一行「这条命令没判」。
+- `selftest.sh`：接上以上几处的新样本与弄坏开关。
+
 ## 0.0.67 — 2026-10-18
 
 **撤回 0.0.63 加的 `test-script-discipline.md`，以及 0.0.64、0.0.66 加的三条规则；`evidence-discipline.md` 新加「产物归档出工作区之后，正文写成一行指针」；读冻结证据清单抽成共用库 `evidence-exclude.py`；`history-ordinal.sh` 在非中文仓报未实现；`stage-selftest.sh` 的阶段名统一不带 `.sh`；`push-all.sh` 推往 master 跟踪的远端；自证样本缺 `expect` 或 `exit=` 判红**

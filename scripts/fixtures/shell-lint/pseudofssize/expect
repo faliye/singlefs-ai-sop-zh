@@ -1,0 +1,8 @@
+exit=1
+want=evil.sh:7
+want=evil.sh:8
+want=evil.sh:9
+want=evil.sh:10
+want=evil.sh:11
+want=evil.sh:12
+want=那里的文件大小不反映内容

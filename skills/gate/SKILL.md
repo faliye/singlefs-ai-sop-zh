@@ -26,7 +26,7 @@ bash .claude/scripts/gate.sh --staged # 只拿 HEAD + 暂存区跑：几个会�
 | 门禁自检 | 有条拒绝没给出路（`bad` 后面缺 `howto`、`die` 只带一句话、直接打印的 `✗` 后面没有 `→`），或者扫一批对象的检查成功时没报数。形态见 `rules/sop-first.md` |
 | 准入与运行条件 | 有脚本开头没写 `admission:` / `run-condition:`、写法认不出、写在第一行代码之后、`inputs-changed` 登记的路径不在、开头没先调 `preflight`、写了 `inputs-changed` 却没调 `preflight_record_success`，或者排除表、登记表指向不存在的路径。照 `rules/preflight-discipline.md` 补；库与样本登记进 `.claude/preflight-exclude` |
 | 门禁判别力 | 样本判出来跟预期不一样——**门禁自己坏了**，先修它，别的先放着 |
-| shell 纪律 | 脚本里有 `pkill -f` / `killall` / `pgrep -f`、靠子 shell 的赋值往外带值、git 的撤销命令、`rm -rf` 作用在没守卫的变量路径上、不带参数的 `wait`，或者设了 `pipefail` 的脚本里以 `grep -q` 收尾的管道。见 `rules/command-safety.md` |
+| shell 纪律 | 脚本里有 `pkill -f` / `killall` / `pgrep -f`、靠子 shell 的赋值往外带值、git 的撤销命令、`rm -rf` 作用在没守卫的变量路径上、不带参数的 `wait`，设了 `pipefail` 的脚本里以 `grep -q` 收尾的管道，或者拿文件大小判 `/proc`、`/sys`、cgroupfs 下的文件空不空。见 `rules/command-safety.md` |
 | 脚本执行位 | 暂存区里有 `.sh` 不是 `100755`，或者暂存区里的模式与工作区的执行位不一致（手工暂存时写死了 `100644`）。用 `git update-index --chmod=+x <路径>`（或 `-x`）改暂存区里的模式。射程里有空目录也判红：git 存不下空目录，要留的放一个 `.keep` 再 `git add` |
 | 本地阶段判别力 | `.claude/gate.d/fixtures/<阶段>/` 下有样本判错：退出码不对，或者输出里找不到 `want=` 那一句。先判是阶段坏了还是样本写错了，再修那一边；没配样本的阶段记「本次未跑」 |
 | 链接指向 | 文档里的相对链接指到不存在的路径，或者「第 <数字> 节」超出了目标文档的 `##` 节数、目标读不出来。相对路径按链接所在文件的目录算；「第 <数字> 节」改成指小节标题。原样保存的证据目录登记进 `.claude/doc-lint-exclude` 绕开 |

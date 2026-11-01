@@ -180,6 +180,12 @@ collect_fixtures
 run_scripted "doc-lint/语言被覆盖时要自报" 0 "语言由 DOC_LINT_LANG 指定为" -- \
   env DOC_LINT_LANG=zh bash "$SCRIPTS/doc-lint.sh" "$fixtures_directory/doc-lint/good"
 
+# 弄坏开关：规则清单的项目那一路只认副本时，开会话读一次登记的项目本地规则（样本 projreadoncelocal）被报成悬空。
+run_scripted "doc-lint/DOC_LINT_BREAK=read-once-copy-only 必须判红" 1 "CLAUDE.md 引用了副本里没有的规则：local.md" -- \
+  env DOC_LINT_LANG=zh DOC_LINT_BREAK=read-once-copy-only bash "$SCRIPTS/doc-lint.sh" "$fixtures_directory/doc-lint/projreadoncelocal"
+run_scripted "doc-lint/弄坏开关的值不认要拒绝" 1 "DOC_LINT_BREAK 的值不认" -- \
+  env DOC_LINT_LANG=zh DOC_LINT_BREAK=no-such-switch bash "$SCRIPTS/doc-lint.sh" "$fixtures_directory/doc-lint/good"
+
 # 编号引用没带简称的命中很多时，只列前 3 条的那一段不许让整个脚本中途退出（输出超过管道缓冲，截断的一端会让前段吃 SIGPIPE）
 doc_lint_project="$temporary_directory/doc-lint-many-bare"; mkdir -p "$doc_lint_project/kb"
 { printf '# 决策\n\n## D1 数据可移动性 —— 已定\n\n'
@@ -240,6 +246,14 @@ for fixture_directory in "$fixtures_directory"/gate-lint/*/; do
     env GATE_LINT_DIR="$fixture_directory" bash "$SCRIPTS/gate-lint.sh"
 done
 collect_fixtures
+# 弄坏开关 anywhere-mark：✗ / ✓ 改回「行里哪都认」（旧判法）。出路正文里提到 ✗、错误说明里提到 ✓ 的两个绿样本必须因此判红，
+# 否则「只认打印出来那一行的开头」这条判据没人盯着。
+run_scripted "gate-lint/弄坏开关 anywhere-mark：出路里提到 ✗ 的样本判红" 1 "fine.sh:5  拒绝但没有出路（直接打印的 ✗" -- \
+  env GATE_LINT_BREAK=anywhere-mark GATE_LINT_DIR="$fixtures_directory/gate-lint/printrejarrowtext" bash "$SCRIPTS/gate-lint.sh"
+run_scripted "gate-lint/弄坏开关 anywhere-mark：错误说明里提到 ✓ 的样本判红" 1 "fine.sh:7  成功摘要没报出检查了多少项" -- \
+  env GATE_LINT_BREAK=anywhere-mark GATE_LINT_DIR="$fixtures_directory/gate-lint/okmarkinnotice" bash "$SCRIPTS/gate-lint.sh"
+run_scripted "gate-lint/弄坏开关的值不认要拒绝" 1 "GATE_LINT_BREAK 的值不认" -- \
+  env GATE_LINT_BREAK=no-such-switch GATE_LINT_DIR="$fixtures_directory/gate-lint/good" bash "$SCRIPTS/gate-lint.sh"
 
 # 默认扫描范围（不设 GATE_LINT_DIR / SHELL_LINT_DIR 时扫哪里）样本目录法测不到：环境变量一设就把默认值盖掉了。
 # 所以现搭一个包，在包根放一份该被拦的脚本，不带环境变量地跑，钉住「install.sh 在包根，也要扫」。
@@ -329,6 +343,34 @@ for fixture_directory in "$fixtures_directory"/pattern-process-guard/*/; do
     bash -c 'bash "$0" < "$1/input.json"' "$SCRIPTS/claude-hooks/pattern-process-guard.sh" "$fixture_directory"
 done
 collect_fixtures
+# 弄坏开关：命令位置不认 coproc 时，样本 coprocpgrep 漏判，自证必须红。
+run_scripted "pattern-process-guard/PATTERN_PROCESS_GUARD_BREAK=no-coproc 必须判红" 1 "coprocpgrep: 期望退出码 2，实际 0" -- \
+  env PATTERN_PROCESS_GUARD_BREAK=no-coproc bash "$SCRIPTS/claude-hooks/pattern-process-guard.sh" --selftest
+run_scripted "pattern-process-guard/弄坏开关的值不认要拒绝" 1 "PATTERN_PROCESS_GUARD_BREAK 的值不认" -- \
+  env PATTERN_PROCESS_GUARD_BREAK=no-such-switch bash "$SCRIPTS/claude-hooks/pattern-process-guard.sh" --selftest
+# 判不了照放，但要留一行「这条命令没判」：拷两份钩子与它 source 的库，一份把判据的 grep 弄坏（括号不配对），一份让抽命令行的 python 起不来。
+# 用例先核弄坏的那一处真改到了，没改到就退 3，不让它空测。
+pattern_guard_unjudged_copy="$temporary_directory/pattern-guard-unjudged"
+for pattern_guard_unjudged_kind in grep python; do
+  mkdir -p "$pattern_guard_unjudged_copy/$pattern_guard_unjudged_kind/claude-hooks"
+  cp "$SCRIPTS/lib.sh" "$SCRIPTS/preflight.py" "$SCRIPTS/preflight.sh" "$SCRIPTS/proc.py" "$pattern_guard_unjudged_copy/$pattern_guard_unjudged_kind/"
+  cp "$SCRIPTS/claude-hooks/pattern-process-guard.sh" "$pattern_guard_unjudged_copy/$pattern_guard_unjudged_kind/claude-hooks/"
+done
+sed -i "s/'pgrep(/'pgrep((/" "$pattern_guard_unjudged_copy/grep/lib.sh"
+sed -i 's/^import json, os, re, shlex, sys$/&, selftest_missing_module/' "$pattern_guard_unjudged_copy/python/claude-hooks/pattern-process-guard.sh"
+pattern_guard_unjudged_case='grep -qF -- "$1" "$2" || { echo "没改坏到「$1」那一处，这条用例什么也没测"; exit 3; }; bash "$3" < "$4"'
+run_scripted "pattern-process-guard/判据的 grep 出错时放行并留一行" 1 "判据的 grep 出错（退出码 2），这条命令没判" -- \
+  bash -c "$pattern_guard_unjudged_case" unjudged_case "'pgrep((" "$pattern_guard_unjudged_copy/grep/lib.sh" \
+    "$pattern_guard_unjudged_copy/grep/claude-hooks/pattern-process-guard.sh" "$fixtures_directory/pattern-process-guard/coprocpgrep/input.json"
+run_scripted "pattern-process-guard/PATTERN_PROCESS_GUARD_BREAK=quiet-unjudged 时判据出错一声不响放行" 0 -- \
+  env PATTERN_PROCESS_GUARD_BREAK=quiet-unjudged bash -c "$pattern_guard_unjudged_case" unjudged_case "'pgrep((" "$pattern_guard_unjudged_copy/grep/lib.sh" \
+    "$pattern_guard_unjudged_copy/grep/claude-hooks/pattern-process-guard.sh" "$fixtures_directory/pattern-process-guard/coprocpgrep/input.json"
+run_scripted "pattern-process-guard/抽命令行的 python 出错时放行并留一行" 1 "从钩子输入里抽要判的命令行时出错（python 退出码 1），这条命令没判" -- \
+  bash -c "$pattern_guard_unjudged_case" unjudged_case "selftest_missing_module" "$pattern_guard_unjudged_copy/python/claude-hooks/pattern-process-guard.sh" \
+    "$pattern_guard_unjudged_copy/python/claude-hooks/pattern-process-guard.sh" "$fixtures_directory/pattern-process-guard/coprocpgrep/input.json"
+run_scripted "pattern-process-guard/PATTERN_PROCESS_GUARD_BREAK=quiet-unjudged 时 python 出错照报成不是 JSON" 1 "钩子输入不是 JSON 对象" -- \
+  env PATTERN_PROCESS_GUARD_BREAK=quiet-unjudged bash -c "$pattern_guard_unjudged_case" unjudged_case "selftest_missing_module" "$pattern_guard_unjudged_copy/python/claude-hooks/pattern-process-guard.sh" \
+    "$pattern_guard_unjudged_copy/python/claude-hooks/pattern-process-guard.sh" "$fixtures_directory/pattern-process-guard/coprocpgrep/input.json"
 
 # ════ proc.py（按进程号找、等、停）═══════════════════════
 # 它是钩子给出的替代写法，自证坏了等于出路是假的。三个破坏开关各关掉一样东西，自证必须判红。
@@ -1909,6 +1951,11 @@ gate_scenario_directory="$temporary_directory/gate-staged-prefix"; make_gate_pac
 printf 'nice -n 5  # 样本：工作区里有、没进暂存区的前缀登记\n' > "$gate_scenario_directory/project/.claude/cargo-command-prefix"
 run_scripted "gate/--staged 时前缀登记没进暂存区要判红" 1 "HEAD + 暂存区里没有它" -- bash "$gate_scenario_directory/package/scripts/gate.sh" --staged "$gate_scenario_directory/project"
 
+# --staged：clippy 特性组合登记同理，源仓有而 HEAD + 暂存区里没有，里层的 clippy 会退回默认的两趟，判红
+gate_scenario_directory="$temporary_directory/gate-staged-clippy-combinations"; make_gate_package "$gate_scenario_directory/package"; make_staged_project "$gate_scenario_directory/project"
+printf -- '--all-features  # 样本：工作区里有、没进暂存区的特性组合登记\n' > "$gate_scenario_directory/project/.claude/clippy-feature-combinations"
+run_scripted "gate/--staged 时 clippy 特性组合登记没进暂存区要判红" 1 "HEAD + 暂存区里没有它" "会退回默认的两趟特性组合" -- bash "$gate_scenario_directory/package/scripts/gate.sh" --staged "$gate_scenario_directory/project"
+
 # ════ changelog-lint ═════════════════════════════════════
 head1 "门禁自证：changelog-lint 的判别力"
 [[ -d "$fixtures_directory/changelog-lint" ]] || { bad "缺样本目录 $fixtures_directory/changelog-lint"
@@ -2218,7 +2265,7 @@ mod tests {
     }
 }
 '
-  run_scripted "check/干净的 crate 放行" 0 单测通过 "共 1 条测试" -- bash "$SCRIPTS/check.sh" "$crate_directory"
+  run_scripted "check/干净的 crate 放行" 0 单测通过 "共 1 条测试" "clippy 通过（2 趟特性组合：default --all-features）" -- bash "$SCRIPTS/check.sh" "$crate_directory"
 
   crate_directory="$temporary_directory/check-test"; make_crate "$crate_directory" 'pub fn f() -> u32 {
     1
@@ -2274,7 +2321,7 @@ mod tests {
     printf '# 样本\n%s\n' "$2" > "$1/.claude/cargo-command-prefix"
   }
   crate_directory="$temporary_directory/check-prefix"; make_prefixed_crate "$crate_directory" 'bash record-prefix.sh  # 样本：记下每一次经前缀起的 cargo'
-  run_scripted "check/每一条 cargo 都经项目登记的前缀" 0 "cargo 经项目的前缀跑：bash record-prefix.sh" "经前缀起的 cargo：fmt clippy build test" "前缀先空跑了 1 次" -- \
+  run_scripted "check/每一条 cargo 都经项目登记的前缀" 0 "cargo 经项目的前缀跑：bash record-prefix.sh" "经前缀起的 cargo：fmt clippy clippy build test" "前缀先空跑了 1 次" -- \
     bash -c 'bash "$1/check.sh" "$2" || exit $?
              printf "经前缀起的 cargo：%s\n" "$(grep "^cargo " "$2/prefix-calls.log" | cut -d" " -f2 | paste -sd" " -)"
              printf "前缀先空跑了 %s 次\n" "$(grep -cx true "$2/prefix-calls.log")"' check_prefix "$SCRIPTS" "$crate_directory"
@@ -2293,6 +2340,48 @@ mod tests {
   # 选项与赋值里带 / 的不是路径：env CARGO_TARGET_DIR=<还没建的目录> 判成「路径不存在」的话，除了改写前缀没有出路
   crate_directory="$temporary_directory/check-prefix-assignment"; make_prefixed_crate "$crate_directory" "env CARGO_TARGET_DIR=$temporary_directory/check-prefix-assignment-target  # 样本：编译产物放到别处"
   run_scripted "check/前缀里的赋值与选项不当路径查" 0 "单测通过" "cargo 经项目的前缀跑：env CARGO_TARGET_DIR=" -- bash "$SCRIPTS/check.sh" "$crate_directory"
+
+  # clippy 按特性组合各跑一趟：默认不带特性、--all-features 两趟；项目在 .claude/clippy-feature-combinations 登记了就照登记跑。
+  # 只剩 --all-features 一趟的话，被 #[cfg(not(feature = …))] 圈起来、带特性时编不到的代码，里面的告警谁也看不见。
+  make_feature_crate() { # make_feature_crate <目录> <受特性圈住的那一段代码的 cfg 条件>：带一个特性 extra 和一条测试；圈住的函数没人调用，哪一趟编得到它，哪一趟红
+    make_crate "$1" "pub fn f() -> u32 {
+    1
+}
+
+#[cfg($2)]
+fn guarded_by_feature() {}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn t() {
+        assert_eq!(super::f(), 1);
+    }
+}
+"
+    printf '\n[features]\nextra = []\n' >> "$1/Cargo.toml"
+  }
+  crate_directory="$temporary_directory/check-clippy-default"; make_feature_crate "$crate_directory" 'not(feature = "extra")'
+  run_scripted "check/不带特性才有的告警要红" 1 "clippy 特性组合：default" "（特性组合：default；退出码" -- bash "$SCRIPTS/check.sh" "$crate_directory"
+  run_scripted "check/弄坏开关 single-clippy-pass：只剩 --all-features 一趟就漏掉不带特性的告警" 0 "clippy 通过（1 趟特性组合：--all-features）" -- \
+    env CHECK_BREAK=single-clippy-pass bash "$SCRIPTS/check.sh" "$crate_directory"
+  run_scripted "check/CHECK_BREAK 的值不认要拒绝" 1 "CHECK_BREAK 的值不认" -- env CHECK_BREAK=no-such-switch bash "$SCRIPTS/check.sh" "$crate_directory"
+  mkdir -p "$crate_directory/.claude"
+  printf '# 样本\n--all-features  # 样本：只登记这一趟，不带特性那一趟不跑\n' > "$crate_directory/.claude/clippy-feature-combinations"
+  run_scripted "check/登记了特性组合就只跑登记的" 0 "clippy 通过（1 趟特性组合：--all-features）" -- bash "$SCRIPTS/check.sh" "$crate_directory"
+  crate_directory="$temporary_directory/check-clippy-registered"; make_feature_crate "$crate_directory" 'feature = "extra"'
+  mkdir -p "$crate_directory/.claude"; printf '# 样本\ndefault  # 样本：不带特性\n--features extra  # 样本：只在 extra 下才编进来的代码\n' > "$crate_directory/.claude/clippy-feature-combinations"
+  run_scripted "check/登记的特性组合逐趟都跑" 1 "clippy 特性组合：default" "clippy 特性组合：--features extra" "（特性组合：--features extra；退出码" -- bash "$SCRIPTS/check.sh" "$crate_directory"
+  # 登记写坏了：判红，不退回默认的两趟
+  crate_directory="$temporary_directory/check-clippy-registration-reason"; make_feature_crate "$crate_directory" 'feature = "extra"'
+  mkdir -p "$crate_directory/.claude"; printf -- '--all-features\n' > "$crate_directory/.claude/clippy-feature-combinations"
+  run_scripted "check/特性组合登记没写理由就判红" 1 "有一行没写理由：--all-features" -- bash "$SCRIPTS/check.sh" "$crate_directory"
+  printf -- 'all-features  # 样本：少写了两个短横线\n' > "$crate_directory/.claude/clippy-feature-combinations"
+  run_scripted "check/特性组合登记的参数认不出就判红" 1 "的特性参数认不出：all-features" -- bash "$SCRIPTS/check.sh" "$crate_directory"
+  printf -- 'default --all-features  # 样本：default 后面带了参数\n' > "$crate_directory/.claude/clippy-feature-combinations"
+  run_scripted "check/特性组合登记里 default 带参数就判红" 1 "里 default 后面还带了参数：default --all-features" -- bash "$SCRIPTS/check.sh" "$crate_directory"
+  printf -- '# 只有注释\n\n' > "$crate_directory/.claude/clippy-feature-combinations"
+  run_scripted "check/特性组合登记里一个组合都没有就判红" 1 "里没有一个能用的组合" -- bash "$SCRIPTS/check.sh" "$crate_directory"
 else
   # 不许静默跳过：环境缺 cargo 就说出来，这几条判别力**本轮没验**。条数按本文件里 check/ 那一段现数，不写死。
   # report_not_run 让门禁把它收进汇总的「本次未跑」，也让这一次不记成「上次成功」（装上 cargo 之后下一次照跑）。

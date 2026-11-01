@@ -127,6 +127,11 @@ if [[ $WANT_STAGED -eq 1 ]]; then
     die "源仓有 $CARGO_COMMAND_PREFIX_FILE，而 HEAD + 暂存区里没有它：--staged 这一轮的 cargo 会不经前缀跑" \
       "把它提交或暂存（git -C $source_repository_root add $CARGO_COMMAND_PREFIX_FILE）再跑；不要这个前缀了，就从源仓删掉它。"
   fi
+  # clippy 的特性组合登记（scripts/check.sh 读它）同理：没进 HEAD + 暂存区时，里层的 clippy 退回默认的两趟，与工作区里登记的跑法不是一回事。
+  if [[ -f "$source_repository_root/$CLIPPY_FEATURE_COMBINATIONS_FILE" && ! -f "$staged_tree/$CLIPPY_FEATURE_COMBINATIONS_FILE" ]]; then
+    die "源仓有 $CLIPPY_FEATURE_COMBINATIONS_FILE，而 HEAD + 暂存区里没有它：--staged 这一轮的 clippy 会退回默认的两趟特性组合" \
+      "把它提交或暂存（git -C $source_repository_root add $CLIPPY_FEATURE_COMBINATIONS_FILE）再跑；不要这份登记了，就从源仓删掉它。"
+  fi
   # diff 基准在源仓上算好再传进去。临时树是 detached HEAD，@{upstream} 解析不到，里层自己算会落到 HEAD~1，
   # 比直接跑窄一档：「分两次提交就绕过去」那条口子会在 --staged 这边开着。
   staged_diff_base="${GATE_BASE:-$(diff_base "$source_repository_root")}"
@@ -408,7 +413,7 @@ if ! is_package_itself "$ROOT" && [[ ! -f "$ROOT/.claude/preflight-dirs" ]]; the
 fi
 # 每条拒绝有没有出路是一回事，检查本身红不红得起来是另一回事，后者靠样本证明。
 run_stage "门禁判别力" bash "$SCRIPTS_DIRECTORY/selftest.sh"
-# rules/command-safety.md 里做成检查的那几条（shell-lint.sh 的 S1–S7）。
+# rules/command-safety.md 里做成检查的那几条（shell-lint.sh 的 S1–S8）。
 run_stage "shell 纪律" bash "$SCRIPTS_DIRECTORY/shell-lint.sh" ${LINT_EXTRA[@]+"${LINT_EXTRA[@]}"}
 # 暂存区里的执行位：手工只暂存「这一轮的」时写死 100644，可执行位就丢在历史里，而工作区那份还是可执行的，
 # 在工作区上跑的门禁看不出。同一道也判射程里的空目录：git 存不下，提交与 --staged 的临时树里没有它。

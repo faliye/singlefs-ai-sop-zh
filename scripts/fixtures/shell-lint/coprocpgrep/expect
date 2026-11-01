@@ -1,0 +1,3 @@
+exit=1
+want=evil.sh:3
+want=pgrep 的全模式匹配

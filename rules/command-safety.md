@@ -1,9 +1,9 @@
 <!-- doc-lint:rule-definition -->
 # 进程与命令规范
 
-有七条是会红的检查，由 `scripts/shell-lint.sh` 判：
+有八条是会红的检查，由 `scripts/shell-lint.sh` 判：
 **按模式匹配杀进程**（`pkill -f`、`killall`）、**`pgrep -f`**、**靠子 shell 里的赋值往外带值**、
-**脚本里用 git 的撤销命令**、**`rm -rf` 作用在没守卫的变量路径上**、**不带参数的 `wait`**、**设了 `pipefail` 的脚本里以 `grep -q` 收尾的管道**。
+**脚本里用 git 的撤销命令**、**`rm -rf` 作用在没守卫的变量路径上**、**不带参数的 `wait`**、**设了 `pipefail` 的脚本里以 `grep -q` 收尾的管道**、**拿文件大小判 `/proc`、`/sys`、cgroupfs 下的文件空不空**。
 测试装置跑完删没删自己建的镜像，由 `gate.sh` 的「跑完没留下临时文件」判。
 其余几条还只是文字，怎么用机器判还没想清楚（`show-me-test.md` 的「门禁能证明什么，不能证明什么」）。
 
@@ -35,7 +35,7 @@
 等自己起的后台任务用 `wait`；不是自己起的（别的脚本拉起来的守护进程之类），让起它的一方把 pid 写进文件再等。
 pid 没记下来的，用 `scripts/proc.py find 可执行文件名 [--argument 参数]` 找进程号：它按可执行文件名逐字比，不拿模式串去比整条命令行，也不列发出这条命令的那一支进程；
 拿到进程号再 `scripts/proc.py wait 进程号 --timeout 秒` 等它退出，到点还没退出就列出还活着的、退出码 3。
-`scripts/shell-lint.sh` 的 S3 那条对脚本里命令位置上的每一处 `pgrep -f` 都红（`if` / `while` / `until` / `!` 后面也算命令位置），
+`scripts/shell-lint.sh` 的 S3 那条对脚本里命令位置上的每一处 `pgrep -f` 都红（`if` / `while` / `until` / `!` / `coproc` 后面也算命令位置），
 不看同一行还有没有 `kill`。
 手敲的命令由 `scripts/claude-hooks/pattern-process-guard.sh` 在执行前拒绝，判据与 shell-lint 的 S2（按模式匹配杀进程）、S3（`pgrep -f`）是同一份（`scripts/lib.sh` 的 `PATTERN_KILL_RE`、`PATTERN_PGREP_RE`），
 拒绝时给出按进程号办事的写法。它是 Claude Code 的 PreToolUse 钩子，项目在 `.claude/settings.json` 的 `hooks.PreToolUse` 里注册一次：
@@ -46,6 +46,17 @@ pid 没记下来的，用 `scripts/proc.py find 可执行文件名 [--argument �
 
 没注册的会话里，手敲的命令仍然只靠这一条文字。
 
+## 装置起的样本进程，放进它自己的进程组
+
+装置、判法与复跑脚本起样本进程（真 shell、被测程序、样本命令）时，判据是：**每条样本跑完，它起的进程一个不剩。**
+
+- 每条样本放进它自己的进程组：shell 里用 `setsid` 起，Python 的 `subprocess` 带 `start_new_session=True`。
+- 超时与结束时对整组发信号，先 TERM，过宽限再 KILL：Python 用 `os.killpg(<进程组号>, <信号>)`，shell 用 `kill -TERM -- -<进程组号>`。不只停直接起的那一个。
+- 跑完按进程组号在 `/proc` 里核一遍，组里没有留下进程；留下的停掉，并写进这条样本的失败信息。
+- 只停直接子进程会留下孙进程：进程替换起的 `cat` 拿着管道的写端，读这根管道的一方永远等不到 EOF。
+
+这一条还没做成检查：起的是不是样本、超时与收尾时停没停整组，脚本里认不准，靠 review。
+
 ## 起了后台任务和子 agent，就要定时复检，调度的一方不响应才终止
 
 长活可以等，但要有人看着：
@@ -55,6 +66,9 @@ pid 没记下来的，用 `scripts/proc.py find 可执行文件名 [--argument �
 - **检出和处置分开。** 检出卡住与空转的工具（hook、看门狗脚本）只记录、只报告，不拦命令；不杀进程、不停子 agent，只有调度的一方不响应时例外。
   结不结束、怎么处置，由调度的一方看了再定；报了之后调度的一方没有响应（同一件事连报几次都没处置、也没确认），报告的一方（人、agent 或检出的工具）可以终止它：进程用 `scripts/proc.py stop 进程号`，子 agent 用停止它的工具；终止了要报出来。
   拒绝某一种危险写法的钩子不在此列（`session-wrapup.md` 第 4 条「同一个仓里有没有别的会话在飞？」：写入前拒绝覆盖未跟踪的文件）。
+- **停掉子 agent 之后，当场定它的改动与它手上的活。** 它改到一半的文件逐份定：留着、退回，还是交给谁接着改；它没做完的活定交给谁接手。
+  定下的写进记录并告诉接手的一方，不留没有主的半截改动。
+- **后台任务与脚本任务的名字照与使用者对话的语言写，写明它是什么、在等哪一件。** 同一时间在跑的几件不许同名；只看名字说不出它在做什么的，改了名再起。
 - **等日志里的一行字之前，先确认那一行真会写进那个文件。**
 - 在 Claude Code 这类会话里，长活放后台，定期回来复检，不在前台干等。
 
@@ -95,7 +109,18 @@ pid 没记下来的，用 `scripts/proc.py find 可执行文件名 [--argument �
 
 不写 `命令 2>/dev/null; echo "已完成"` 这种报成功的方式。
 凡是改状态的命令，都要**回头读一次实际状态**来确认：
-`systemctl stop 服务名` 之后跑一下 `is-active`，不能只看 stop 的退出码。
+`systemctl stop 服务名` 之后回读 `systemctl is-active 服务名` 的**输出**，是 `inactive` 或 `failed` 才算停了；
+再读一遍它的 `cgroup.procs`（目录是 `/sys/fs/cgroup` 接上 `systemctl show -p ControlGroup --value 服务名`），读出来是空的才算进程清干净。
+不能只看 stop 的退出码，也不能只看 `is-active` 的退出码：它只在 `active` 时返回 0，`activating`、`deactivating` 也返回非 0。
+停之前判服务在不在，同样看输出：`active`、`activating`、`reloading`、`deactivating` 都算在，cgroup 里有进程也算在。
+
+## `/proc`、`/sys`、cgroupfs 下的文件，读内容判空不空
+
+这几处的文件大小不反映内容：procfs 与 cgroupfs 报 0，sysfs 报 4096。
+判空不空、有没有进程，读出内容再判：`[[ -n "$(< "$cgroup_directory/cgroup.procs")" ]]`；不用 `[ -s 文件 ]`、`stat` 的 `%s`、`find` 的 `-size` 与 `-empty`。
+
+`scripts/shell-lint.sh` 的 S8 判这一条：这三种写法作用在字面以 `/proc/`、`/sys/` 开头、或文件名是 `cgroup.<名字>` 的路径上判红。
+路径全在变量里、文件名也认不出的不判；shell 以外的语言（python 的 `os.path.getsize`、`st_size` 这类）不判，靠 review。
 
 ## 结果抓取要有完整性闸
 

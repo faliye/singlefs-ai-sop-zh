@@ -1,0 +1,3 @@
+exit=1
+want=evil.sh:5  拒绝但没有出路（直接打印的 ✗
+want=evil.sh:6  拒绝但没有出路（直接打印的 ✗

@@ -3,7 +3,7 @@
 # run-condition: command gawk
 # shell 脚本的已知坑，做成会红的检查（rules/command-safety.md）。
 #
-# 查七条：
+# 查八条：
 #
 #   S1 子 shell 里的赋值传不回父进程
 #      三个条件同时成立才判红，误报面很窄：
@@ -33,6 +33,11 @@
 #
 #   S7 pipefail 下以提前退出的 `grep -q` 收尾的管道
 #      grep 命中就退出，前段吃 SIGPIPE，管道返回 141，`if` 把它读成「没命中」。
+#
+#   S8 拿文件大小判 /proc、/sys、cgroupfs 下的文件空不空
+#      procfs 与 cgroupfs 的文件大小报 0，sysfs 报 4096，都不反映内容：`[ -s ]` 在前两处恒假、在 sysfs 恒真。
+#      只认 `[ -s ]` / `test -s`、`stat` 的 `%s`、`find` 的 `-size` / `-empty` 三种写法，
+#      而且路径要字面以 /proc/、/sys/ 开头，或文件名是 `cgroup.<名字>`；路径全在变量里、文件名也认不出的不判。
 #
 # command-safety.md 另外几条（echo 假装成功、破坏性操作先看清楚）判据还没想清楚，没做；管道退出码只做了 S7 那一种。
 #
@@ -76,6 +81,14 @@ S6_EXIT_COLLECTED_MARKER_WITH_REASON="$S6_EXIT_COLLECTED_MARKER"'[[:space:]]+[^[
 # `grep -q … <<<"$变量"` 这种没有前段的形态；`… || grep -q 模式 文件` 这种「或」链（`||` 不是管道，正则要 `|` 前面不是 `|`）。
 S7_PIPE_INTO_QUIET_GREP_PATTERN='(^|[^|])\|[[:space:]]*grep[[:space:]]+(-[A-Za-z]*q[A-Za-z]*)([[:space:]]|$)'
 S7_PIPEFAIL_SETTING_PATTERN='^[[:space:]]*set[[:space:]].*pipefail'
+
+# S8：分两步判，同 S5：先挑出带大小判据的那一段，再看那一段里的路径是不是伪文件系统上的。
+# 只看判据自己那一段：`[[ -s "$log" ]] && cat /proc/loadavg` 里的 /proc 不是 -s 的参数。
+# `$root/proc/x` 这种前面接着变量或名字的不算 /proc：PSEUDO_FILESYSTEM_PATH_PATTERN 要求 /proc、/sys 前面不是名字字符。
+S8_PSEUDO_FILESYSTEM_PATH_PATTERN='(^|[^A-Za-z0-9_.}-])/(proc|sys)/|(^|/)cgroup\.[a-z]+'
+S8_SIZE_TEST_SEGMENT_PATTERN='(\[\[?|(^|[^A-Za-z0-9_-])test|&&|\|\||-a|-o)[[:space:]]+(![[:space:]]+)?-s[[:space:]]+[^][:space:];&|]+'
+S8_STAT_SIZE_SEGMENT_PATTERN='(^|[^A-Za-z0-9_-])stat[[:space:]][^;&|]*%s[^;&|]*'
+S8_FIND_SIZE_SEGMENT_PATTERN='(^|[^A-Za-z0-9_-])find[[:space:]][^;&|]*-(size|empty)([[:space:]][^;&|]*)?'
 
 # S2 / S3 的判据（PATTERN_KILL_RE、PATTERN_PGREP_RE）与命令位置 CMD_POS 都定义在 lib.sh 一处：
 # S2 / S3 与会话钩子 claude-hooks/pattern-process-guard.sh 共用，CMD_POS 与 gate-lint 共用。
@@ -180,6 +193,19 @@ while IFS= read -r scanned_file; do
         failure_count=$((failure_count+1))
       done <<< "$matched_lines"
     fi
+  fi
+
+  # ── S8 拿文件大小判伪文件系统上的文件空不空 ─────────────
+  if matched_lines="$(grep -nE "$S8_SIZE_TEST_SEGMENT_PATTERN|$S8_STAT_SIZE_SEGMENT_PATTERN|$S8_FIND_SIZE_SEGMENT_PATTERN" "$scanned_file" | grep -vE '^[0-9]+:[[:space:]]*#' || true)"; [[ -n "$matched_lines" ]]; then
+    while IFS= read -r matched_line; do
+      size_segments="$(printf '%s\n' "${matched_line#*:}" | grep -oE "$S8_SIZE_TEST_SEGMENT_PATTERN|$S8_STAT_SIZE_SEGMENT_PATTERN|$S8_FIND_SIZE_SEGMENT_PATTERN" || true)"
+      grep -qE "$S8_PSEUDO_FILESYSTEM_PATH_PATTERN" <<<"$size_segments" || continue
+      bad "$relative_path:${matched_line%%:*}  拿文件大小判 /proc、/sys、cgroupfs 下的文件空不空 —— 那里的文件大小不反映内容"
+      say "        $(printf '%s' "${matched_line#*:}" | cut -c1-80)"
+      howto "procfs 与 cgroupfs 的文件大小报 0，sysfs 报 4096：[ -s ] 在前两处恒假、在 sysfs 恒真，stat 的 %s、find 的 -size / -empty 一样。" \
+            "读出内容再判：[[ -n \"\$(< \"\$cgroup_directory/cgroup.procs\")\" ]]（rules/command-safety.md）。"
+      failure_count=$((failure_count+1))
+    done <<< "$matched_lines"
   fi
 
   # ── S1 子 shell 里的赋值传不回父进程 ────────────────────
