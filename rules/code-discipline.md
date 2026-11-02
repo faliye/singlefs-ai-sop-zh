@@ -34,6 +34,7 @@
 | **名字自己站得住，不靠模块路径补全** | 写 `block::BlockAddress`，不写 `block::Address`。类型名因此连成一套人工命名空间（`BlockAddress`、`JournalAddress`、`LogicalAddress`……），照这样写 |
 | **不拿序号、位置当名字** | 函数、变量、参数、类型、字段、常量、模块、文件，每一种名字都一样：`layer0`、`stream_0`、`step2`、`phase_1`、`first_item` 这类只说「第几个」的名字不许用，写成它做什么、管什么：`stream_0` → `metadata_journal_stream`，`layer0` → `checksum_verification_layer`。几个实例确实只差位置的，放进一个集合，用带类型的下标区分（`stream_index: StreamIndex`），不分别起带号的名字。登记过的项目编号带简称照用，见「缩写登记表」 |
 | **换了含义就换名字** | 同名遮蔽只在含义不变时用；原始数据变成验过的、字节数变成块数，就起新名字 |
+| **同一作用域里一个名字只定义一次** | 同一个文件的同一个作用域（模块、类体、函数体；shell 是整个文件）里，函数、方法、类不许同名定义两次。新加一个定义之前，按名字在那个文件里搜一遍；撞了就改名，或者删掉一个。property 的 setter、`@overload`、singledispatch 的 `register` 不算 |
 
 ### 缩写不许用，判据是有没有一处权威定义
 
@@ -353,6 +354,7 @@ fn walk(node: &VerifiedNode) { /* ... */ }   // 想跳过验证就构造不出�
 | 会丢值的 `as` 转换 | clippy `cast_possible_truncation`、`cast_sign_loss`、`cast_possible_wrap` |
 | `unsafe` 块要有 `// SAFETY:` | clippy `undocumented_unsafe_blocks` |
 | 含义无关的同名遮蔽 | clippy `shadow_unrelated` |
+| `.py` 与 `.sh` 里同一作用域同名定义两次 | `scripts/duplicate-definitions.py`（门禁阶段「同名定义」）：扫全仓，冻结证据不扫，shell 只判顶格写的定义；按顺序重定义是有意的，在后一个定义那一行写 `# duplicate-definitions:allow <理由>`。赋值盖掉函数、import 进来的名字被 def 盖掉、跨文件的同名，它认不出，靠 review |
 | 警告按错误处理 | clippy `-D warnings` |
 | 名字说没说清、一个概念是不是一个名字、函数是不是只做一件事、注释写的是不是为什么、注释里有没有引别的文件的行号、名字与注释里有没有拿序号或位置当代称、注释里有没有缩写、错误成员是不是按调用方的决定分的、循环的状态有没有写清、`..Default::default()` | review |
 | `.rs` 以外的代码（shell、python 这类）与文档里的名字、缩写、代称 | **还没做成检查**，`gate.sh` 把它列在未实现的阶段里（键「命名纪律（shell）」） |

@@ -207,10 +207,8 @@ changed_files() {
   printf '%s\n%s\n%s\n' "$worktree_changes" "$cached_changes" "$untracked_files" | sort -u | grep -v '^$' || true
 }
 
-# 项目给 cargo 挂的前缀登记，相对项目根（rules/command-safety.md）。check.sh 读它；gate.sh --staged 查临时树里有没有它。
-CARGO_COMMAND_PREFIX_FILE=.claude/cargo-command-prefix
 # 项目给 clippy 登记的特性组合，相对项目根。check.sh 读它，一行一个组合、每个组合跑一趟；没有这个文件就跑默认的两趟（不带特性、--all-features）。
-# gate.sh --staged 同样查临时树里有没有它。
+# gate.sh --staged 查临时树里有没有它。
 CLIPPY_FEATURE_COMBINATIONS_FILE=.claude/clippy-feature-combinations
 
 # ── 项目登记的门禁目录与钩子目录（rules/sop-first.md）──────────────

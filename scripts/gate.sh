@@ -121,13 +121,7 @@ if [[ $WANT_STAGED -eq 1 ]]; then
   if [[ -d "$source_repository_root/.claude/$staged_family" && ! -d "$staged_tree/.claude/$staged_family" ]]; then
     mkdir -p "$staged_tree/.claude"; cp -r "$source_repository_root/.claude/$staged_family" "$staged_tree/.claude/"
   fi
-  # 项目给 cargo 挂的前缀登记（scripts/check.sh 读它）没进 HEAD + 暂存区时，临时树里没有它，
-  # 里层的「构建与单测」就退回无包装的 cargo 去跑（rules/command-safety.md）。不替它拷：拷的是工作区那一份，不是这一次要提交的。
-  if [[ -f "$source_repository_root/$CARGO_COMMAND_PREFIX_FILE" && ! -f "$staged_tree/$CARGO_COMMAND_PREFIX_FILE" ]]; then
-    die "源仓有 $CARGO_COMMAND_PREFIX_FILE，而 HEAD + 暂存区里没有它：--staged 这一轮的 cargo 会不经前缀跑" \
-      "把它提交或暂存（git -C $source_repository_root add $CARGO_COMMAND_PREFIX_FILE）再跑；不要这个前缀了，就从源仓删掉它。"
-  fi
-  # clippy 的特性组合登记（scripts/check.sh 读它）同理：没进 HEAD + 暂存区时，里层的 clippy 退回默认的两趟，与工作区里登记的跑法不是一回事。
+  # clippy 的特性组合登记（scripts/check.sh 读它）没进 HEAD + 暂存区时，里层的 clippy 退回默认的两趟，与工作区里登记的跑法不是一回事。
   if [[ -f "$source_repository_root/$CLIPPY_FEATURE_COMBINATIONS_FILE" && ! -f "$staged_tree/$CLIPPY_FEATURE_COMBINATIONS_FILE" ]]; then
     die "源仓有 $CLIPPY_FEATURE_COMBINATIONS_FILE，而 HEAD + 暂存区里没有它：--staged 这一轮的 clippy 会退回默认的两趟特性组合" \
       "把它提交或暂存（git -C $source_repository_root add $CLIPPY_FEATURE_COMBINATIONS_FILE）再跑；不要这份登记了，就从源仓删掉它。"
@@ -434,12 +428,21 @@ run_stage_may_skip "历史条目编号" "本次没有判：kb 目录下没有变
 # 工具层的闸：规则里的提醒拦不住手敲的命令，钩子能；而钩子被删掉或改坏时那道闸静默消失。
 run_stage_may_skip "工具层的闸" "本次无对象可判：项目与装进来的副本里一个钩子都没有" \
   bash "$SCRIPTS_DIRECTORY/hooks-registered.sh" "$ROOT"
+# 项目根下不新建没登记的文件与目录（rules/command-safety.md「项目根下不新建文件与目录」）；钩子 root-entry-guard.sh 在写之前拦，这一道在提交前兜底。
+run_stage_may_skip "项目根的新条目" "本次无对象可判：不在 git 仓里，或仓里还没有提交" \
+  python3 "$SCRIPTS_DIRECTORY/root-entries.py" "$ROOT"
 # 新加的门禁与钩子先对过已有的（rules/sop-first.md「加门禁或钩子之前，先找已有的」）。
 run_stage_may_skip "门禁查重" "本次无对象可判：这一次没有新加或改动门禁与钩子，或不在 git 仓里" \
   python3 "$SCRIPTS_DIRECTORY/gate-overlap.py" "$ROOT"
 # 分段计时不许在转发输出的循环里打时间戳（rules/test-discipline.md「分段计时在被测进程里计，不在转发输出的循环里计」）。
 run_stage_may_skip "转发计时" "本次无对象可判：它扫的那几处目录里没有 .rs / .py（扫哪几处见上方它的输出）" \
   python3 "$SCRIPTS_DIRECTORY/relay-timing-lint.py" --check "$ROOT"
+# 同一作用域里同名定义两次，后一个静默盖掉前一个（rules/code-discipline.md「同一作用域里一个名字只定义一次」）。
+run_stage_may_skip "同名定义" "本次无对象可判：它扫的那几处目录里没有 .py / .sh（扫哪几处见上方它的输出）" \
+  python3 "$SCRIPTS_DIRECTORY/duplicate-definitions.py" --check "$ROOT"
+# 新加的文字里不拿代号指东西（rules/writing-discipline.md「不写缩写，不用代号指东西」）；只判这一次新加的行，存量不回扫。
+run_stage_may_skip "代号" "本次无对象可判：不在 git 仓里，或这一次没有新加的 .md 行" \
+  python3 "$SCRIPTS_DIRECTORY/code-name-lint.py" --check "$ROOT"
 # 编号引用散在源码注释与记录里，doc-lint 只管 markdown，够不着那些地方。
 run_stage_may_skip "编号与简称" "本次无对象可判：$ROOT/.claude/kb 不在，或一个 .rs / .md 都没扫到" \
   bash "$SCRIPTS_DIRECTORY/number-name-sync.sh" "$ROOT"

@@ -32,8 +32,11 @@ bash .claude/scripts/gate.sh --staged # 只拿 HEAD + 暂存区跑：几个会�
 | 链接指向 | 文档里的相对链接指到不存在的路径，或者「第 <数字> 节」超出了目标文档的 `##` 节数、目标读不出来。相对路径按链接所在文件的目录算；「第 <数字> 节」改成指小节标题。原样保存的证据目录登记进 `.claude/doc-lint-exclude` 绕开 |
 | 历史条目编号 | 这一次新增的历史条目在同一个「`##` 节 + 日期 + 点名词」下撞了「（其 <序号>）」的号。查那一块已用到的最大号，把自己这条改成下一个没被占的号，不改别人已提交的那条。见 `rules/session-wrapup.md` 第 4 条「同一个仓里有没有别的会话在飞？」 |
 | 工具层的闸 | `.claude/hooks/` 或副本 `scripts/claude-hooks/` 里有钩子没在 `.claude/settings.json` 注册、带 `--selftest` 的自证没过、`hook-events` 里的事件没挂全，或者写了工具名的没挂在认得它的 matcher 上。照钩子文件头的写法注册；见 `rules/sop-first.md`「加门禁或钩子之前，先找已有的」 |
+| 项目根的新条目 | 相对 diff 基准，项目根下新加的文件或目录没在 `.claude/root-entries` 登记，或者登记行没写理由、名字不止一层、重复，或者登记的条目不在。先挪进已有的目录；确实要放根下，向用户申请，同意了再登记一行 `<名字>  # 理由`。见 `rules/command-safety.md`「项目根下不新建文件与目录」 |
 | 门禁查重 | 这一次新加或改动的门禁与钩子没写 `gate-similar` / `hook-events`、该点名的已有门禁或钩子没点全、理由太短，或者加进来的行与已有的一份整段相同。先跑 `python3 .claude/singlefs-ai-sop/scripts/gate-overlap.py --list` 找管同一件事的，能并就并；见 `rules/sop-first.md`「加门禁或钩子之前，先找已有的」 |
-| 转发计时 | `research/`、`crates/` 下有读子进程输出的循环一边给行打时间戳、一边把行转打出去。改成在被测进程里计时、把数写进结果行，或者先把输出整份读完再转打，见 `rules/test-discipline.md`「分段计时在被测进程里计，不在转发输出的循环里计」；时间戳确实不进计时结论的，在循环头写 `// relay-timing-lint:allow <理由>`（Python 写 `#`） |
+| 转发计时 | 仓里的 `.rs` 与 `.py` 有读子进程输出的循环一边给行打时间戳、一边把行转打出去。改成在被测进程里计时、把数写进结果行，或者先把输出整份读完再转打，见 `rules/test-discipline.md`「分段计时在被测进程里计，不在转发输出的循环里计」；时间戳确实不进计时结论的，在循环头写 `// relay-timing-lint:allow <理由>`（Python 写 `#`） |
+| 同名定义 | `.py` 里同一作用域（模块、类体、函数体）、或 `.sh` 里同一个文件顶格写了两个同名的定义，后一个盖掉前一个。改名或删掉一个；有意覆盖的在后一个定义那一行写 `# duplicate-definitions:allow <理由>`。见 `rules/code-discipline.md`「同一作用域里一个名字只定义一次」 |
+| 代号 | 这一次新加的 `.md` 行里拿代号指东西（`5a`、`10g`、`SC02` 这类）。写出它是什么；命令、文件名放进反引号；项目自己有登记位的编号体系在 `.claude/code-names` 登记。见 `rules/writing-discipline.md`「不写缩写，不用代号指东西」 |
 | 编号与简称 | 源码注释、脚本、记录里引的「编号（简称）」与 kb 登记位的简称对不上。照登记位（各正文首行 `## D<序号> 简称 —— 状态`）抄简称；见 `rules/kb-discipline.md` 第 5 条「编号只能做索引，不能做称呼」 |
 | 文档铁律 | 正文里混了历史陈述，kb 里引用编号没带简称，或者 CLAUDE.md 没把规则一条条 @ 进来。见 `rules/writing-discipline.md` |
 | 文档铁律的未实现清单 | `doc-lint.sh --not-impl` 跑失败了，汇总末尾的未实现清单会少掉它那几条。单跑 `bash .claude/singlefs-ai-sop/scripts/doc-lint.sh --not-impl` 看原因（退 78 是它的准入与运行条件不满足） |

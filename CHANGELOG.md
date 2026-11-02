@@ -3,6 +3,30 @@
 规则与门禁的版本历史。`CLAUDE.md` 与 `rules/*.md` 不留历史节（design-doc-discipline），
 历史一律记在这里；逐条改动细节见 `git log`，提交信息即变更说明。
 
+## 0.0.69 — 2026-11-03
+
+**新加三道检查：同一作用域里同名定义两次、新加的文字里拿代号指东西、派发提示里借用别处做法却不带出处；项目根下不新建文件与目录（钩子加门禁）；singlefs 专用的几处内容挪出共享规则：工作区锁、cargo 前缀登记、systemd 服务的停法、产物行指针、并发交错穷举的前提。**
+
+规则：
+- `command-safety.md`：新加小节「项目根下不新建文件与目录」：确实要建的，先向用户申请，同意了在项目根 `.claude/root-entries` 登记一行 `<名字>  # 理由` 再建。
+- `code-discipline.md`：「名字」表新加一行「同一作用域里一个名字只定义一次」；「门禁管哪一半」新加对应的一行。
+- `writing-discipline.md`「不写缩写，不用代号指东西」：写明门禁阶段「代号」判什么、不判什么，项目自己的编号体系登记在 `.claude/code-names`。
+- `verify-before-claiming.md`：新加小节「转述别处的做法，带出处或原文」；「门禁管哪一半」写明由钩子 `borrowed-convention-guard.sh` 判。
+- 删掉：`session-wrapup.md` 第 4 条里「先认工作区锁」那一条；`command-safety.md` 里 cargo 前缀登记那一段、`systemctl` 与 `cgroup.procs` 怎么回读的那几行（留「改状态的命令回读实际状态」那一句）、「重活另外按内存和设备定上限」半句、举例里的「判定库」；`evidence-discipline.md`「引产物就整行抄」里产物归档后写成一行指针与 `.claude/product-line-prefixes` 那一段；`machine-first.md` 的前提二「并发交错已经可以被穷举判定」与它在收回表里的那一行。这几样只有 singlefs 用，挪进了 singlefs 的本地规则。
+
+脚本与门禁：
+- `duplicate-definitions.py`（新）：门禁阶段「同名定义」。`.py` 用 ast 判模块、类体、函数体里同名的 def / async def / class（setter、getter、deleter、register、overload 放行），`.sh` 判同一文件里顶格写的同名函数；豁免写 `# duplicate-definitions:allow <理由>`；弄坏开关 4 个。
+- `code-name-lint.py`（新）：门禁阶段「代号」。只判相对 diff 基准新加的 `.md` 行，判数字接一个小写字母、两个大写字母接两位数字两种形态；反引号、围栏、HTML 注释、链接、网址、指编号步骤的不判；项目登记 `.claude/code-names`；弄坏开关 7 个。
+- `borrowed-convention.py` 与钩子 `claude-hooks/borrowed-convention-guard.sh`（新）：挂在 PreToolUse 的 Agent、Task、SendMessage 上，借用句同一句里没有 `路径:行号`、原文引用或「路径加函数名」就拒绝派发；弄坏开关 4 个。
+- `root-entries.py` 与钩子 `claude-hooks/root-entry-guard.sh`（新）：门禁阶段「项目根的新条目」判相对基准新加的根下条目都登记了；钩子在 Write、Edit、NotebookEdit 写到没登记的根下新条目前拒绝，改登记表要用户确认，Bash 跑完多出没登记的条目报给 agent。
+- `source-files.py`（新）：扫全仓源码的走法与不给仓库根时判哪个仓，`relay-timing-lint.py` 与 `duplicate-definitions.py` 共用；`relay-timing-lint.py` 改调它，输出不变。
+- `break-switch-selftest.py`（新）：python 门禁与钩子共用的自证收尾，逐个打开弄坏开关、核它红在点名的样本上。
+- `check.sh`：删掉 cargo 前缀登记（`.claude/cargo-command-prefix`），直接起 cargo；`gate.sh --staged` 不再查这份登记，`lib.sh` 删掉对应常量。
+- `show-me-test.sh`：拒绝时的出路不再按「磁盘格式」「崩溃恢复」举例，改成「涉及项目的不变量」「要起环境才验得到」。
+- `stage-selftest.sh`、`i18n-sync.sh`、`selftest.sh`：拷样本改用 `cp -dR --preserve=timestamps,links`，不保留权限（NFS 共享树上保留权限会失败）。
+- `skills/gate/SKILL.md`：表里补上「项目根的新条目」「同名定义」「代号」三个阶段，「转发计时」的射程改成全仓。
+- `selftest.sh`：接上以上几处的样本，删掉 cargo 前缀的 8 个用例。
+
 ## 0.0.68 — 2026-10-31
 
 **新加五条：测试照真实条件造、每一个弄坏开关都必须会红、一处改动改全相关代码与配置、停掉子 agent 之后定它的改动与接手、后台与脚本任务的名字写清；`shell-lint.sh` 新加 S8（拿文件大小判 `/proc`、`/sys`、cgroupfs 的文件空不空）；`check.sh` 的 clippy 按特性组合各跑一趟。**

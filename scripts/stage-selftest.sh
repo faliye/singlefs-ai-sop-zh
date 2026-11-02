@@ -199,7 +199,7 @@ for ((index = 0; index < ${#STAGE_NAMES[@]}; index++)); do
     fi
     mapfile -t want_list < <(sed -n 's/^want=//p' "$sample_directory/expect")
     work_directory="$(mktemp -d)"
-    cp -a "$sample_directory/." "$work_directory/"
+    cp -dR --preserve=timestamps,links "$sample_directory/." "$work_directory/"   # 不保留权限：样本在 NFS 共享树上时，保留权限那一步在挂载它的另一台上退非 0（Operation not supported）
     if [[ -f "$work_directory/setup.sh" ]]; then
       if ! ( cd "$work_directory" && env -u GATE_BASE -u GATE_STAGED_FROM -u GATE_DIFF_BASE bash setup.sh >/dev/null 2>&1 ); then
         say "  ✗ $(printf '%-28s %-16s' "$name" "$kind") setup.sh 没跑成"   # gate-lint:detail

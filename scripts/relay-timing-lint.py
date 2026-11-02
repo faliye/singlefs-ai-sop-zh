@@ -58,15 +58,9 @@ from typing import NamedTuple, Optional
 sys.dont_write_bytecode = True
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 from preflight import load_package_module, preflight  # noqa: E402
-EVIDENCE_EXCLUDE = load_package_module("evidence_exclude", "evidence-exclude.py")
-
-# 空着就扫仓根下所有目录（跳过 SKIP_DIRECTORIES）：项目的源码与装置住在哪由项目定，上游不写死目录名。
-SCANNED_TOP_DIRECTORIES = ()
-SKIP_DIRECTORIES = {".git", "node_modules", "target", "fixtures"}
-
-
-
-SKIPPED_DIRECTORY_NAMES = (".git", "target", "node_modules", "__pycache__")
+# 扫哪些目录、跳过哪些冻结证据，与 duplicate-definitions.py 共用 source-files.py 的走法，不各抄一份。
+SOURCE_FILES = load_package_module("source_files", "source-files.py")
+SKIP_DIRECTORIES = SOURCE_FILES.SKIP_TOP_DIRECTORIES
 SCANNED_SUFFIXES = (".rs", ".py")
 WEAK_MODE_ENVIRONMENT_VARIABLE = "RELAY_TIMING_LINT_IGNORE_OUTPUT"
 ALLOW_MARKER = "relay-timing-lint:allow"
@@ -441,41 +435,23 @@ def analyze_python(relative_path: str, source: str) -> list:
 
 def scan(repository_root: pathlib.Path) -> ScanResult:
     scanned_file_count = 0
-    # 冻结证据的清单按**被扫那个仓**现算：射程与排除表都不写死在这里。
-    frozen_directories = EVIDENCE_EXCLUDE.frozen_evidence_directories(repository_root)
-    frozen_file_counts = {directory: 0 for directory in frozen_directories}
     unparsable_files = []
     child_output_loops = []
-    top_directories = SCANNED_TOP_DIRECTORIES or tuple(
-        name for name in sorted(os.listdir(repository_root))
-        if (repository_root / name).is_dir() and name not in SKIP_DIRECTORIES and not name.startswith(".")
-    ) + tuple(
-        name for name in sorted(os.listdir(repository_root))
-        if (repository_root / name).is_dir() and name.startswith(".claude")
-    )
-    for top_directory in top_directories:
-        for directory, subdirectories, file_names in os.walk(repository_root / top_directory):
-            subdirectories[:] = sorted(name for name in subdirectories if name not in SKIPPED_DIRECTORY_NAMES)
-            for file_name in sorted(file_names):
-                if not file_name.endswith(SCANNED_SUFFIXES):
-                    continue
-                relative_path = (pathlib.Path(directory) / file_name).relative_to(repository_root).as_posix()
-                frozen_directory = next((frozen_directory_candidate for frozen_directory_candidate in frozen_directories if relative_path.startswith(frozen_directory_candidate + "/")), None)
-                if frozen_directory is not None:
-                    frozen_file_counts[frozen_directory] += 1
-                    continue
-                try:
-                    source = (repository_root / relative_path).read_text(encoding="utf-8")
-                    if file_name.endswith(".rs"):
-                        file_child_output_loops = analyze_rust(relative_path, source)
-                    else:
-                        file_child_output_loops = analyze_python(relative_path, source)
-                except (UnicodeDecodeError, OSError, SyntaxError, ValueError):
-                    unparsable_files.append(relative_path)
-                    continue
-                scanned_file_count += 1
-                child_output_loops.extend(file_child_output_loops)
-    return ScanResult(scanned_file_count, frozen_file_counts, unparsable_files, child_output_loops)
+    # 冻结证据的清单按**被扫那个仓**现算：射程与排除表都不写死在这里。
+    source_walk = SOURCE_FILES.walk_source_files(repository_root, SCANNED_SUFFIXES)
+    for relative_path in source_walk.relative_paths:
+        try:
+            source = (repository_root / relative_path).read_text(encoding="utf-8")
+            if relative_path.endswith(".rs"):
+                file_child_output_loops = analyze_rust(relative_path, source)
+            else:
+                file_child_output_loops = analyze_python(relative_path, source)
+        except (UnicodeDecodeError, OSError, SyntaxError, ValueError):
+            unparsable_files.append(relative_path)
+            continue
+        scanned_file_count += 1
+        child_output_loops.extend(file_child_output_loops)
+    return ScanResult(scanned_file_count, source_walk.frozen_file_counts, unparsable_files, child_output_loops)
 
 
 def is_hit(child_output_loop: ChildOutputLoop) -> bool:
@@ -920,15 +896,6 @@ def selftest() -> int:
     return 0
 
 
-def default_root() -> pathlib.Path:
-    """不给仓库根时判当前目录所在的 git 仓（不在 git 仓里就是当前目录）。不按本文件的位置往上数：
-    它装在上游包的 scripts/ 下、也装在项目的 .claude/<包名>/scripts/ 下，往上数几层都数不到被判的那个仓。"""
-    git_toplevel_run = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True, check=False,
-                               stdin=subprocess.DEVNULL)
-    toplevel_directory = git_toplevel_run.stdout.strip()
-    return pathlib.Path(toplevel_directory) if git_toplevel_run.returncode == 0 and toplevel_directory else pathlib.Path.cwd()
-
-
 def main(arguments: list) -> int:
     if arguments == ["--selftest"]:
         return selftest()
@@ -936,7 +903,7 @@ def main(arguments: list) -> int:
         print("  ✗ 用法：relay-timing-lint.py --check [仓库根]，或 relay-timing-lint.py --selftest")
         print("     → 怎么办：门禁里跑 --check，改了这份脚本先跑 --selftest。")
         return 2
-    repository_root = pathlib.Path(arguments[1]) if len(arguments) == 2 else default_root()
+    repository_root = pathlib.Path(arguments[1]) if len(arguments) == 2 else SOURCE_FILES.default_root()
     return run(repository_root.resolve())
 
 

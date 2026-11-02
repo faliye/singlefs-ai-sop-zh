@@ -398,11 +398,11 @@ collect_fixtures
 make_preflight_package() { # make_preflight_package <目录>：只带判条件那几份真脚本的最小包
   mkdir -p "$1/scripts/claude-hooks" "$1/scripts/githooks"
   cp "$SCRIPTS/lib.sh" "$SCRIPTS/preflight.py" "$SCRIPTS/preflight.sh" "$SCRIPTS/proc.py" "$SCRIPTS/preflight-lint.py" \
-    "$SCRIPTS/claude-hook-lib.sh" "$SCRIPTS/session-transcript.py" "$SCRIPTS/package-family.py" "$SCRIPTS/evidence-exclude.py" "$1/scripts/"
+    "$SCRIPTS/claude-hook-lib.sh" "$SCRIPTS/session-transcript.py" "$SCRIPTS/package-family.py" "$SCRIPTS/evidence-exclude.py" "$SCRIPTS/source-files.py" "$SCRIPTS/break-switch-selftest.py" "$1/scripts/"
   cp "$SCRIPTS/../I18N" "$1/I18N"
 }
 preflight_package="$temporary_directory/preflight-scope-clean"; make_preflight_package "$preflight_package"
-run_scripted "preflight-lint/本包的默认范围全写了就绿" 0 "判了 2 个脚本（脚本 2）" "排除 7 个" -- python3 "$preflight_package/scripts/preflight-lint.py" "$preflight_package"
+run_scripted "preflight-lint/本包的默认范围全写了就绿" 0 "判了 2 个脚本（脚本 2）" "排除 9 个" -- python3 "$preflight_package/scripts/preflight-lint.py" "$preflight_package"
 preflight_package="$temporary_directory/preflight-scope"; make_preflight_package "$preflight_package"
 for undeclared_script_path in install.sh scripts/undeclared.sh scripts/claude-hooks/undeclared-hook.sh scripts/githooks/pre-commit; do
   printf '#!/usr/bin/env bash\necho 没写条件\n' > "$preflight_package/$undeclared_script_path"
@@ -764,12 +764,29 @@ run_scripted "relay-timing-lint/自证 16 个样本判得对" 0 "自证：16 个
   python3 "$SCRIPTS/relay-timing-lint.py" --selftest
 # 不给仓库根时判当前目录所在的仓：按本文件的位置往上数两层的话，装在包里时数到的是包根的上一层，被判的仓一个文件都没扫
 relay_timing_scenario_directory="$temporary_directory/relay-timing-root"; mkdir -p "$relay_timing_scenario_directory/outer/nested/package/scripts" "$relay_timing_scenario_directory/project/research"
-cp "$SCRIPTS/relay-timing-lint.py" "$SCRIPTS/preflight.py" "$SCRIPTS/proc.py" "$SCRIPTS/evidence-exclude.py" "$relay_timing_scenario_directory/outer/nested/package/scripts/"
+cp "$SCRIPTS/relay-timing-lint.py" "$SCRIPTS/preflight.py" "$SCRIPTS/proc.py" "$SCRIPTS/evidence-exclude.py" "$SCRIPTS/source-files.py" "$relay_timing_scenario_directory/outer/nested/package/scripts/"
 git -C "$relay_timing_scenario_directory/project" init -q
 printf 'import subprocess\nimport time\n\n\ndef relay():\n    process = subprocess.Popen(["child"], stdout=subprocess.PIPE, text=True)\n    for line in process.stdout:\n        print(time.monotonic(), line)\n' \
   > "$relay_timing_scenario_directory/project/research/relay.py"
 run_scripted "relay-timing-lint/不给仓库根时判当前目录所在的仓" 1 "research/relay.py:7" -- \
   bash -c 'cd "$1/research" && python3 "$2/relay-timing-lint.py" --check' relay_default_root "$relay_timing_scenario_directory/project" "$relay_timing_scenario_directory/outer/nested/package/scripts"
+
+# ── 同名定义：红绿样本与弄坏开关 ──────────────────────
+run_scripted "duplicate-definitions/自证 15 个样本判得对、4 个弄坏开关都红" 0 "自证：15 个红绿样本判得对；4 个弄坏开关逐个打开" -- \
+  python3 "$SCRIPTS/duplicate-definitions.py" --selftest
+duplicate_definitions_project="$temporary_directory/duplicate-definitions"; mkdir -p "$duplicate_definitions_project/scripts" "$duplicate_definitions_project/evidence" "$duplicate_definitions_project/.claude"
+printf 'def closure_names(tree):\n    return []\n\n\ndef closure_names(closure):\n    return closure\n' > "$duplicate_definitions_project/scripts/library.py"
+printf 'report() {\n  echo first\n}\nreport() {\n  echo second\n}\n' > "$duplicate_definitions_project/scripts/stage.sh"
+printf 'def frozen():\n    pass\n\n\ndef frozen():\n    pass\n' > "$duplicate_definitions_project/evidence/old.py"
+printf 'evidence/  # 原样保存的证据\n' > "$duplicate_definitions_project/.claude/doc-lint-exclude"
+run_scripted "duplicate-definitions/python 与 shell 的同名定义都报出来" 1 "scripts/library.py:5  closure_names" "scripts/stage.sh:4  report" "evidence 里 1 个（冻结证据）" -- \
+  python3 "$SCRIPTS/duplicate-definitions.py" --check "$duplicate_definitions_project"
+printf 'def closure_names(tree):\n    return []\n' > "$duplicate_definitions_project/scripts/library.py"
+printf 'report() {\n  echo first\n}\n' > "$duplicate_definitions_project/scripts/stage.sh"
+run_scripted "duplicate-definitions/改名之后判绿、冻结证据不判" 0 "扫了 python 1 个、shell 1 个文件，2 个定义" -- \
+  python3 "$SCRIPTS/duplicate-definitions.py" --check "$duplicate_definitions_project"
+run_scripted "duplicate-definitions/一个文件都没有退 77" 77 "本轮无对象可判" -- \
+  python3 "$SCRIPTS/duplicate-definitions.py" --check "$duplicate_definitions_project/.claude"
 
 # ── 工具层的闸：钩子注册着没有、自证过不过 ──────────────
 hooks_project="$temporary_directory/hooks-registered"; mkdir -p "$hooks_project/.claude/hooks"
@@ -782,7 +799,7 @@ hooks_registered_settings() { # hooks_registered_settings <gate-reuse-check 挂�
   local gate_reuse_on_subagent_stop='' gate_reuse_on_stop='{"type":"command","command":"bash gate-reuse-check.sh"}'
   [[ "$1" == yes ]] && gate_reuse_on_subagent_stop='{"type":"command","command":"bash gate-reuse-check.sh"},'
   [[ "$1" == none ]] && gate_reuse_on_stop=''
-  printf '{"hooks":{"PreToolUse":[{"matcher":"Write","hooks":[{"type":"command","command":"bash guard.sh"},{"type":"command","command":"bash pattern-process-guard.sh"}]},{"matcher":"SubagentHandback","hooks":[{"type":"command","command":"bash handback-scratch-check.sh"}]}],"Stop":[{"hooks":[%s]}],"SubagentStop":[{"hooks":[%s{"type":"command","command":"bash handback-scratch-check.sh"}]}]}}\n' \
+  printf '{"hooks":{"PreToolUse":[{"matcher":"Write","hooks":[{"type":"command","command":"bash guard.sh"},{"type":"command","command":"bash pattern-process-guard.sh"}]},{"matcher":"Write|Edit|MultiEdit|NotebookEdit","hooks":[{"type":"command","command":"bash root-entry-guard.sh"}]},{"matcher":"Bash","hooks":[{"type":"command","command":"bash root-entry-guard.sh"}]},{"matcher":"Agent|Task|SendMessage","hooks":[{"type":"command","command":"bash borrowed-convention-guard.sh"}]},{"matcher":"SubagentHandback","hooks":[{"type":"command","command":"bash handback-scratch-check.sh"}]}],"PostToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"bash root-entry-guard.sh"}]}],"Stop":[{"hooks":[%s]}],"SubagentStop":[{"hooks":[%s{"type":"command","command":"bash handback-scratch-check.sh"}]}]}}\n' \
     "$gate_reuse_on_stop" "$gate_reuse_on_subagent_stop" > "$hooks_project/.claude/settings.json"
 }
 hooks_registered_settings yes
@@ -815,7 +832,7 @@ SETTINGS
 run_scripted "hooks-registered/挂在别的 matcher 上判红" 1 "handback-scratch-check.sh→PreToolUse:SubagentHandback" -- \
   bash "$SCRIPTS/hooks-registered.sh" "$hooks_project"
 # 按文件名的边界认：注册的是 old-guard.sh，不等于 guard.sh 注册着
-printf '{"hooks":{"PreToolUse":[{"matcher":"Write","hooks":[{"type":"command","command":"bash .claude/hooks/old-guard.sh"},{"type":"command","command":"bash pattern-process-guard.sh"}]}],"Stop":[{"hooks":[{"type":"command","command":"bash gate-reuse-check.sh"}]}],"SubagentStop":[{"hooks":[{"type":"command","command":"bash gate-reuse-check.sh"},{"type":"command","command":"bash handback-scratch-check.sh"}]}]}}\n' > "$hooks_project/.claude/settings.json"
+printf '{"hooks":{"PreToolUse":[{"matcher":"Write","hooks":[{"type":"command","command":"bash .claude/hooks/old-guard.sh"},{"type":"command","command":"bash pattern-process-guard.sh"}]},{"matcher":"Write|Edit|MultiEdit|NotebookEdit","hooks":[{"type":"command","command":"bash root-entry-guard.sh"}]},{"matcher":"Bash","hooks":[{"type":"command","command":"bash root-entry-guard.sh"}]},{"matcher":"Agent|Task|SendMessage","hooks":[{"type":"command","command":"bash borrowed-convention-guard.sh"}]}],"PostToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"bash root-entry-guard.sh"}]}],"Stop":[{"hooks":[{"type":"command","command":"bash gate-reuse-check.sh"}]}],"SubagentStop":[{"hooks":[{"type":"command","command":"bash gate-reuse-check.sh"},{"type":"command","command":"bash handback-scratch-check.sh"}]}]}}\n' > "$hooks_project/.claude/settings.json"
 run_scripted "hooks-registered/名字是别的钩子名的一截也不算注册" 1 "没在 settings.json 里注册" "guard.sh  要挂的事件" -- \
   bash "$SCRIPTS/hooks-registered.sh" "$hooks_project"
 printf '{ 坏掉的 JSON\n' > "$hooks_project/.claude/settings.json"
@@ -989,6 +1006,61 @@ run_scripted "gate-overlap/登记了自定义门禁目录就在那里找新加�
 # ── 收工钩子：agent 这一轮新建了门禁或钩子，收工前先自检能不能复用已有的 ──
 run_scripted "gate-reuse-check/自证的每种情形都判得对" 0 "gate-reuse-check 自证：15 种情形判得都对" -- \
   bash "$SCRIPTS/claude-hooks/gate-reuse-check.sh" --selftest
+
+# ── 项目根的新条目：根下新加的文件与目录要登记（rules/command-safety.md「项目根下不新建文件与目录」）──
+run_scripted "root-entry-guard/自证的每种情形都判得对" 0 "root-entry-guard 自证：15 种情形判得都对" -- \
+  bash "$SCRIPTS/claude-hooks/root-entry-guard.sh" --selftest
+root_entries_repository="$temporary_directory/root-entries"; mkdir -p "$root_entries_repository/.claude" "$root_entries_repository/docs"
+git -C "$root_entries_repository" init -q
+printf 'build/\n' > "$root_entries_repository/.gitignore"; printf '说明\n' > "$root_entries_repository/docs/a.md"
+git -C "$root_entries_repository" add -A; git -C "$root_entries_repository" -c user.name=t -c user.email=t@t commit -qm base
+root_entries_base="$(git -C "$root_entries_repository" rev-parse HEAD)"
+printf '新说明\n' > "$root_entries_repository/docs/b.md"
+run_scripted "root-entries/只往已有目录里加文件时通过" 0 "相对基准新加 0 个" -- \
+  env GATE_DIFF_BASE="$root_entries_base" python3 "$SCRIPTS/root-entries.py" "$root_entries_repository"
+mkdir -p "$root_entries_repository/None" "$root_entries_repository/build"; printf 'x\n' > "$root_entries_repository/None/out.txt"; printf 'x\n' > "$root_entries_repository/build/out.o"
+run_scripted "root-entries/根下新加没登记的目录判红" 1 "项目根下新加了 1 个没登记的条目：None" -- \
+  env GATE_DIFF_BASE="$root_entries_base" python3 "$SCRIPTS/root-entries.py" "$root_entries_repository"
+git -C "$root_entries_repository" add None/out.txt
+run_scripted "root-entries/暂存了的新条目照样判红" 1 "项目根下新加了 1 个没登记的条目：None" -- \
+  env GATE_DIFF_BASE="$root_entries_base" python3 "$SCRIPTS/root-entries.py" "$root_entries_repository"
+printf 'None  # 用户同意放在根下的输出目录\nbuild/  # 编译目录，被 .gitignore 忽略\n' > "$root_entries_repository/.claude/root-entries"
+run_scripted "root-entries/登记了就通过，被忽略的登记项不在也不红" 0 "相对基准新加 2 个，都登记了" "登记表 2 条都指得到" -- \
+  env GATE_DIFF_BASE="$root_entries_base" python3 "$SCRIPTS/root-entries.py" "$root_entries_repository"
+printf 'None  # 用户同意放在根下的输出目录\nghost  # 早就删掉的目录\n' > "$root_entries_repository/.claude/root-entries"
+run_scripted "root-entries/登记的条目不在、也不被忽略判红" 1 "不在项目根下、也不被 .gitignore 覆盖：ghost" -- \
+  env GATE_DIFF_BASE="$root_entries_base" python3 "$SCRIPTS/root-entries.py" "$root_entries_repository"
+printf 'None\n' > "$root_entries_repository/.claude/root-entries"
+run_scripted "root-entries/登记行没写理由判红" 1 "行写坏了" ".claude/root-entries:1 没写理由" -- \
+  env GATE_DIFF_BASE="$root_entries_base" python3 "$SCRIPTS/root-entries.py" "$root_entries_repository"
+printf 'None/out.txt  # 用户同意放在根下的输出目录\n' > "$root_entries_repository/.claude/root-entries"
+run_scripted "root-entries/登记的名字不止一层判红" 1 "名字不是项目根下的一层" -- \
+  env GATE_DIFF_BASE="$root_entries_base" python3 "$SCRIPTS/root-entries.py" "$root_entries_repository"
+printf 'None  # 输出目录\nNone  # 又登记一次的输出目录\n' > "$root_entries_repository/.claude/root-entries"
+run_scripted "root-entries/重复登记判红" 1 ".claude/root-entries:2 重复登记：None" -- \
+  env GATE_DIFF_BASE="$root_entries_base" python3 "$SCRIPTS/root-entries.py" "$root_entries_repository"
+mkdir -p "$temporary_directory/root-entries-not-git"
+run_scripted "root-entries/不在 git 仓里退 77" 77 "不在 git 仓里" -- \
+  python3 "$SCRIPTS/root-entries.py" "$temporary_directory/root-entries-not-git"
+
+# ── 代号：新加的行里拿代号指东西 ──────────────────────
+run_scripted "code-name-lint/自证 15 个样本判得对、7 个弄坏开关都红" 0 "自证：15 个红绿样本判得对；7 个弄坏开关逐个打开" -- \
+  python3 "$SCRIPTS/code-name-lint.py" --selftest
+code_name_repository="$temporary_directory/code-name"; mkdir -p "$code_name_repository/records" "$code_name_repository/.claude"
+git -C "$code_name_repository" init -q
+printf '# 记录\n\n旧行里的 5a 不回扫。\n' > "$code_name_repository/records/old.md"
+git -C "$code_name_repository" add -A; git -C "$code_name_repository" -c user.name=t -c user.email=t@t commit -qm init
+run_scripted "code-name-lint/没有新加的行退 77" 77 "本阶段无对象可判" -- \
+  python3 "$SCRIPTS/code-name-lint.py" --check "$code_name_repository"
+printf '\n新加：9g 另报一处，SC02 还红着，MR18 已登记。\n' >> "$code_name_repository/records/old.md"
+run_scripted "code-name-lint/新加的行里的代号判红、旧行不判" 1 "records/old.md:5  9g" "records/old.md:5  SC02" "records/old.md:5  MR18" "有 3 处拿代号" -- \
+  python3 "$SCRIPTS/code-name-lint.py" --check "$code_name_repository"
+printf 'MR[0-9]+  # 变异名，登记在 kb 的变异表\n' > "$code_name_repository/.claude/code-names"
+run_scripted "code-name-lint/登记过的编号体系不判" 1 "有 2 处拿代号" "登记的编号体系 1 条" -- \
+  python3 "$SCRIPTS/code-name-lint.py" --check "$code_name_repository"
+printf 'MR[0-9+  # 变异名，登记在 kb 的变异表\nSC[0-9]+\n' > "$code_name_repository/.claude/code-names"
+run_scripted "code-name-lint/登记表正则写坏、没写理由判红" 1 "code-names:1 正则写坏了" "code-names:2 没写理由" -- \
+  python3 "$SCRIPTS/code-name-lint.py" --check "$code_name_repository"
 
 # ── 历史条目编号：本次新增的条目撞了已有的号 ──────────────
 # 样本是中文的：在英文、日文仓里跑自证也要按中文判，语言由 HISTORY_ORDINAL_LANG 钉住。
@@ -1358,7 +1430,7 @@ make_gate_package() { # make_gate_package <目录> [要让哪个桩失败]
   chmod +x "$package_directory/scripts"/*.sh
   # python 写的共享脚本也要有桩：gate.sh 直接 python3 它，缺了就是退出码 2。
   local python_stub
-  for python_stub in link-targets relay-timing-lint gate-overlap preflight-lint; do
+  for python_stub in link-targets relay-timing-lint duplicate-definitions code-name-lint gate-overlap preflight-lint root-entries; do
     printf '#!/usr/bin/env python3\n%s\nraise SystemExit(0)\n' "$STUB_CONDITIONS" > "$package_directory/scripts/$python_stub.py"
   done
 }
@@ -1366,7 +1438,7 @@ make_gate_package() { # make_gate_package <目录> [要让哪个桩失败]
 # 全绿：退出码 0，且每个阶段名都要出现在汇总里，钉住「阶段没被人悄悄从 gate.sh 里删掉」
 gate_package="$temporary_directory/gate-green"; make_gate_package "$gate_package"
 run_scripted "gate/全绿则退出码 0" 0 \
-  "已实现的门禁阶段全部通过" 门禁自检 准入与运行条件 门禁判别力 "shell 纪律" 门禁查重 文档铁律 规则纪律 命名纪律 "Show me test" \
+  "已实现的门禁阶段全部通过" 门禁自检 准入与运行条件 门禁判别力 "shell 纪律" 门禁查重 项目根的新条目 同名定义 代号 文档铁律 规则纪律 命名纪律 "Show me test" \
   规则清单 各语言同步 版本纪律 "CHANGELOG 连续" 跑完没留下临时文件 \
   -- bash "$gate_package/scripts/gate.sh" "$gate_package"
 
@@ -1946,12 +2018,7 @@ gate_terminated_while_staged=(bash -c '
   exit "$gate_exit_code"' gate_terminated_while_staged)
 run_scripted "gate/--staged 被 TERM 打断也要说出来" 143 "--staged 没跑完就退出了（退出码 143）" "worktree 剩 1 个" \
   -- "${gate_terminated_while_staged[@]}" "$gate_scenario_directory/package" "$gate_scenario_directory/project" "$gate_scenario_directory/out.txt" "$gate_scenario_directory/slow-stage-started"
-# --staged：源仓有 cargo 前缀登记而 HEAD + 暂存区里没有，里层的 cargo 就会不经前缀跑，判红
-gate_scenario_directory="$temporary_directory/gate-staged-prefix"; make_gate_package "$gate_scenario_directory/package"; make_staged_project "$gate_scenario_directory/project"
-printf 'nice -n 5  # 样本：工作区里有、没进暂存区的前缀登记\n' > "$gate_scenario_directory/project/.claude/cargo-command-prefix"
-run_scripted "gate/--staged 时前缀登记没进暂存区要判红" 1 "HEAD + 暂存区里没有它" -- bash "$gate_scenario_directory/package/scripts/gate.sh" --staged "$gate_scenario_directory/project"
-
-# --staged：clippy 特性组合登记同理，源仓有而 HEAD + 暂存区里没有，里层的 clippy 会退回默认的两趟，判红
+# --staged：clippy 特性组合登记源仓有而 HEAD + 暂存区里没有，里层的 clippy 会退回默认的两趟，判红
 gate_scenario_directory="$temporary_directory/gate-staged-clippy-combinations"; make_gate_package "$gate_scenario_directory/package"; make_staged_project "$gate_scenario_directory/project"
 printf -- '--all-features  # 样本：工作区里有、没进暂存区的特性组合登记\n' > "$gate_scenario_directory/project/.claude/clippy-feature-combinations"
 run_scripted "gate/--staged 时 clippy 特性组合登记没进暂存区要判红" 1 "HEAD + 暂存区里没有它" "会退回默认的两趟特性组合" -- bash "$gate_scenario_directory/package/scripts/gate.sh" --staged "$gate_scenario_directory/project"
@@ -2076,7 +2143,7 @@ make_reference_and_translation_pair() { # make_reference_and_translation_pair <�
   cp "$reference_repository/VERSION" "$translation_repository/VERSION"
   local shared_item
   for shared_item in install.sh scripts skills templates GLOSSARY.md .gitignore; do
-    [[ -e "$reference_repository/$shared_item" ]] && cp -a "$reference_repository/$shared_item" "$translation_repository/$shared_item"
+    [[ -e "$reference_repository/$shared_item" ]] && cp -dR --preserve=timestamps,links "$reference_repository/$shared_item" "$translation_repository/$shared_item"
   done
   sed 's/^this=.*/this=en/' "$reference_repository/I18N" > "$translation_repository/I18N"
   # 逐篇盖上溯源标记：走真正的 --stamp，不在这里另写一份放置逻辑。
@@ -2299,48 +2366,6 @@ mod tests {
 '
   run_scripted "check/一条测试都没跑要红" 1 "一条测试都没跑" -- bash "$SCRIPTS/check.sh" "$crate_directory"
 
-  # 项目登记的 cargo 前缀（内存上限这类包装）：每一条 cargo 都经它；前缀自己的退出码原样报出来；前缀起不来、没写理由都判红，不退回无包装
-  make_prefixed_crate() { # make_prefixed_crate <目录> <前缀登记的那一行>：带一条测试的干净 crate，外加三个前缀脚本：
-    # 记账后照跑的；空跑照过、起 cargo 时退 250 的（比如撞了内存上限）；自己就起不来、一律退 251 的（比如没有 user systemd）
-    make_crate "$1" 'pub fn f() -> u32 {
-    1
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn t() {
-        assert_eq!(super::f(), 1);
-    }
-}
-'
-    mkdir -p "$1/.claude"
-    printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >> "$(dirname "$0")/prefix-calls.log"\nexec "$@"\n' > "$1/record-prefix.sh"
-    printf '#!/usr/bin/env bash\n[[ "${1:-}" == cargo ]] || exec "$@"\nexit 250\n' > "$1/refusing-prefix.sh"
-    printf '#!/usr/bin/env bash\nexit 251\n' > "$1/broken-prefix.sh"
-    printf '# 样本\n%s\n' "$2" > "$1/.claude/cargo-command-prefix"
-  }
-  crate_directory="$temporary_directory/check-prefix"; make_prefixed_crate "$crate_directory" 'bash record-prefix.sh  # 样本：记下每一次经前缀起的 cargo'
-  run_scripted "check/每一条 cargo 都经项目登记的前缀" 0 "cargo 经项目的前缀跑：bash record-prefix.sh" "经前缀起的 cargo：fmt clippy clippy build test" "前缀先空跑了 1 次" -- \
-    bash -c 'bash "$1/check.sh" "$2" || exit $?
-             printf "经前缀起的 cargo：%s\n" "$(grep "^cargo " "$2/prefix-calls.log" | cut -d" " -f2 | paste -sd" " -)"
-             printf "前缀先空跑了 %s 次\n" "$(grep -cx true "$2/prefix-calls.log")"' check_prefix "$SCRIPTS" "$crate_directory"
-  crate_directory="$temporary_directory/check-prefix-refused"; make_prefixed_crate "$crate_directory" 'bash refusing-prefix.sh  # 样本：前缀自己退 250（比如撞了内存上限）'
-  run_scripted "check/前缀自己的退出码原样报出来" 1 "格式不合规（退出码 250）" "这一条 cargo 是经项目的前缀跑的" -- bash "$SCRIPTS/check.sh" "$crate_directory"
-  crate_directory="$temporary_directory/check-prefix-missing"; make_prefixed_crate "$crate_directory" 'no-such-wrapper-for-selftest  # 样本：找不到的前缀'
-  run_scripted "check/前缀找不到就判红，不退回无包装" 1 "前缀命令找不到：no-such-wrapper-for-selftest" -- bash "$SCRIPTS/check.sh" "$crate_directory"
-  crate_directory="$temporary_directory/check-prefix-reason"; make_prefixed_crate "$crate_directory" 'bash record-prefix.sh'
-  run_scripted "check/前缀没写理由就判红" 1 "那一行没写理由" -- bash "$SCRIPTS/check.sh" "$crate_directory"
-  # 前缀自己起不来（空跑就失败）：退出码是它的，不许挂在「格式不合规」这句下面
-  crate_directory="$temporary_directory/check-prefix-broken"; make_prefixed_crate "$crate_directory" 'bash broken-prefix.sh  # 样本：前缀自己起不来'
-  run_scripted "check/前缀起不来就判红，不归到 cargo 头上" 1 "的前缀起不来：空跑 bash broken-prefix.sh true 退出码 251" -- bash "$SCRIPTS/check.sh" "$crate_directory"
-  # 前缀是「解释器 + 脚本路径」时，第一个词找得到而脚本缺了：bash 退 127，不许报成「格式不合规」
-  crate_directory="$temporary_directory/check-prefix-path"; make_prefixed_crate "$crate_directory" 'bash scripts/no-such-wrapper.sh 16  # 样本：前缀里的脚本路径写错了'
-  run_scripted "check/前缀里的路径不存在就判红" 1 "个路径不存在：scripts/no-such-wrapper.sh" -- bash "$SCRIPTS/check.sh" "$crate_directory"
-  # 选项与赋值里带 / 的不是路径：env CARGO_TARGET_DIR=<还没建的目录> 判成「路径不存在」的话，除了改写前缀没有出路
-  crate_directory="$temporary_directory/check-prefix-assignment"; make_prefixed_crate "$crate_directory" "env CARGO_TARGET_DIR=$temporary_directory/check-prefix-assignment-target  # 样本：编译产物放到别处"
-  run_scripted "check/前缀里的赋值与选项不当路径查" 0 "单测通过" "cargo 经项目的前缀跑：env CARGO_TARGET_DIR=" -- bash "$SCRIPTS/check.sh" "$crate_directory"
-
   # clippy 按特性组合各跑一趟：默认不带特性、--all-features 两趟；项目在 .claude/clippy-feature-combinations 登记了就照登记跑。
   # 只剩 --all-features 一趟的话，被 #[cfg(not(feature = …))] 圈起来、带特性时编不到的代码，里面的告警谁也看不见。
   make_feature_crate() { # make_feature_crate <目录> <受特性圈住的那一段代码的 cfg 条件>：带一个特性 extra 和一条测试；圈住的函数没人调用，哪一趟编得到它，哪一趟红
@@ -2394,7 +2419,7 @@ fi
 head1 "门禁自证：install.sh 铺出来的东西"
 # 从一个**模板带着溯源标记**的包里装——参照仓自己的模板没有标记（它是源文），
 # 拿它装什么也测不出来。译本仓的模板才带标记，那才是使用者实际装的东西。
-install_source_package="$temporary_directory/install-source-package"; cp -a "$SCRIPTS/.." "$install_source_package"
+install_source_package="$temporary_directory/install-source-package"; cp -dR --preserve=timestamps,links "$SCRIPTS/.." "$install_source_package"
 sed -i '1i <!-- generated-from: templates/kb/decisions.md sha256:0000000000000000000000000000000000000000000000000000000000000000 -->' \
   "$install_source_package/templates/kb/decisions.md"
 install_target_project="$temporary_directory/install-target-project"; mkdir -p "$install_target_project"
@@ -2420,7 +2445,7 @@ fi
 # 升级路径：上游改了内容而项目那份没跟上时，**版本戳不许刷**。
 # 刷了就等于替项目声明「已经是新版了」，而它的 skill / 骨架还是旧的——
 # 版本戳是项目唯一的「规矩变了」信号。
-upgrade_source_package="$temporary_directory/install-upgrade"; cp -a "$SCRIPTS/.." "$upgrade_source_package"
+upgrade_source_package="$temporary_directory/install-upgrade"; cp -dR --preserve=timestamps,links "$SCRIPTS/.." "$upgrade_source_package"
 upgrade_target_project="$temporary_directory/install-upgrade-project"; mkdir -p "$upgrade_target_project"
 bash "$upgrade_source_package/install.sh" "$upgrade_target_project" >/dev/null 2>&1 || true
 run_scripted "install/无变化时重装干净" 0 "跳过" -- bash "$upgrade_source_package/install.sh" "$upgrade_target_project"
@@ -2457,7 +2482,7 @@ rm -f "$upgrade_target_project/.claude/install-owned"
 
 # 清单坏了必须挡住，不只是报一句。「接管清单没写理由」「接管清单写了不铺的路径」这两个样本里同时还有内容落后，就算不挡也照样退 1，是那条路让它红的。
 # 所以要一个没有别的落后的场景：少了这道拦截，install.sh 会带着一份读不准的清单把版本戳照刷不误。
-ownership_source_package="$temporary_directory/install-ownership"; cp -a "$SCRIPTS/.." "$ownership_source_package"
+ownership_source_package="$temporary_directory/install-ownership"; cp -dR --preserve=timestamps,links "$SCRIPTS/.." "$ownership_source_package"
 ownership_target_project="$temporary_directory/install-ownership-project"; mkdir -p "$ownership_target_project"
 bash "$ownership_source_package/install.sh" "$ownership_target_project" >/dev/null 2>&1 || true
 printf '9.9.9\n' > "$ownership_source_package/VERSION"
@@ -2474,7 +2499,7 @@ fi
 
 # 退役的包装：共享脚本不在这一版里了，项目里一字未改的包装要被点名、版本戳不刷；
 # 项目自己改过的同名文件不归 install.sh 管，照常刷戳。退役的那份照现行包装的样子造：把 gate 包装里的脚本名换成 lkmm。
-retirement_source_package="$temporary_directory/install-retired"; cp -a "$SCRIPTS/.." "$retirement_source_package"
+retirement_source_package="$temporary_directory/install-retired"; cp -dR --preserve=timestamps,links "$SCRIPTS/.." "$retirement_source_package"
 retirement_target_project="$temporary_directory/install-retired-project"; mkdir -p "$retirement_target_project"
 bash "$retirement_source_package/install.sh" "$retirement_target_project" >/dev/null 2>&1 || true
 sed 's#/scripts/gate\.sh"#/scripts/lkmm.sh"#' "$retirement_target_project/.claude/scripts/gate.sh" > "$retirement_target_project/.claude/scripts/lkmm.sh"
@@ -2508,7 +2533,7 @@ run_scripted "install/改过的同名文件不归它管" 0 "版本戳  .singlefs
 
 # 接管清单里登记了、项目又删掉了的那份，不许重铺：put 只管不覆盖已有的文件，删掉的那份 kb 骨架
 # 下一次 install.sh 又会被铺回来。
-owned_absent_source_package="$temporary_directory/install-owned-absent"; cp -a "$SCRIPTS/.." "$owned_absent_source_package"
+owned_absent_source_package="$temporary_directory/install-owned-absent"; cp -dR --preserve=timestamps,links "$SCRIPTS/.." "$owned_absent_source_package"
 owned_absent_target_project="$temporary_directory/install-owned-absent-project"; mkdir -p "$owned_absent_target_project"
 bash "$owned_absent_source_package/install.sh" "$owned_absent_target_project" >/dev/null 2>&1 || true
 rm "$owned_absent_target_project/.claude/kb/pitfalls.md"

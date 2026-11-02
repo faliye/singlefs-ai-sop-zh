@@ -241,7 +241,7 @@ for language in $LANGUAGES; do
       rm -rf "${translation_repository:?}/$shared_item"
       if [[ -e "$PACKAGE_ROOT/$shared_item" ]]; then
         mkdir -p "$(dirname "$translation_repository/$shared_item")"
-        cp -a "$PACKAGE_ROOT/$shared_item" "$translation_repository/$shared_item"
+        cp -dR --preserve=timestamps,links "$PACKAGE_ROOT/$shared_item" "$translation_repository/$shared_item"
       fi
     done
     # I18N 只有 this= 一行按语言不同，其余照抄——各仓分头维护它必然漂
