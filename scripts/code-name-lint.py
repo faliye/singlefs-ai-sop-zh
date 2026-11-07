@@ -15,7 +15,8 @@
   ② 两个大写字母接两位数字：`SC02`、`PF13`。
   「独立成词」只看前后是不是 ASCII 字母、数字、`_./-#@%$+`：`第10b批` 里的 `10b` 算，`v1.5a`、`sha256`、`#5a` 不算。
 不判：围栏（```）里的行、反引号里的、HTML 注释里的（`<!-- doc-lint:not-numbers … -->` 这类声明）、Markdown 链接的目标与网址；
-  指编号步骤的（「第 1b 步」「第 2a 条」「step 1b」「手順 1b」），那是有序清单里那一步自己的编号；项目根 `.claude/doc-lint-exclude` 登记的冻结证据；装进项目的本包副本。
+  指编号步骤的（「第 1b 步」「第 2a 条」「step 1b」「手順 1b」），那是有序清单里那一步自己的编号；
+  这一份 .md 自己用 `<!-- doc-lint:not-numbers … -->` 声明过的标号，在这一份里不判（别的文件照判）；项目根 `.claude/doc-lint-exclude` 登记的冻结证据；装进项目的本包副本。
 登记：项目根 `.claude/code-names` 一行一条 `<正则>  # 理由`，代号整个匹配上某条正则就不判（项目自己的变异名、实验号这类编号体系）；
   正则写坏、理由不到 4 个字判红。
 
@@ -54,8 +55,9 @@ BREAK_SWITCHES = {
     "registry-ignored": "登记过的编号体系放行",
     "scientific-notation-flagged": "科学计数放行",
     "uppercase-shape-dropped": "两个大写字母接两位数字",
-    "html-comments-read": "HTML 注释里的声明放行",
+    "html-comments-read": "HTML 注释里的放行",
     "step-numbers-flagged": "指编号步骤的放行",
+    "file-declarations-ignored": "本页声明过的标号在本页放行",
 }
 
 TOKEN_BOUNDARY_CHARACTERS = r"A-Za-z0-9_./\-#@%$+"
@@ -68,6 +70,7 @@ BACKTICK_SPAN = re.compile(r"`[^`]*`")
 MARKDOWN_LINK_TARGET = re.compile(r"\]\([^)]*\)")
 WEB_ADDRESS = re.compile(r"[a-z]+://\S+")
 HTML_COMMENT = re.compile(r"<!--.*?-->")
+FILE_DECLARED_TERMS = re.compile(r"<!--\s*doc-lint:not-numbers([^>]*?)-->")
 STEP_NUMBER_REFERENCE = re.compile(
     r"第\s*[0-9]+[a-z]\s*(?:步|条|节|项)|\b[Ss]teps?\s+[0-9]+[a-z]\b|(?:手順|ステップ)\s*[0-9]+[a-z]")
 FENCE_LINE = re.compile(r"^\s*(```|~~~)")
@@ -155,8 +158,20 @@ def code_names_in_line(line_text: str, registered_patterns: list) -> list:
     return code_names
 
 
+def terms_declared_in_file(all_lines: list) -> set:
+    """这一份文件自己用 doc-lint:not-numbers 声明过的标号：只在这一份里放行。"""
+    if break_switch() == "file-declarations-ignored":
+        return set()
+    declared_terms = set()
+    for line_text in all_lines:
+        for declaration in FILE_DECLARED_TERMS.finditer(line_text):
+            declared_terms.update(declaration.group(1).split())
+    return declared_terms
+
+
 def judge_lines(relative_path: str, all_lines: list, added_line_numbers: set, registered_patterns: list) -> list:
     hits = []
+    declared_terms = terms_declared_in_file(all_lines)
     inside_fence = False
     for line_number, line_text in enumerate(all_lines, start=1):
         if FENCE_LINE.match(line_text):
@@ -167,6 +182,8 @@ def judge_lines(relative_path: str, all_lines: list, added_line_numbers: set, re
         if line_number not in added_line_numbers:
             continue
         for code_name in dict.fromkeys(code_names_in_line(line_text, registered_patterns)):
+            if code_name in declared_terms:
+                continue
             hits.append(CodeNameHit(relative_path, line_number, code_name, line_text.strip()))
     return hits
 
@@ -242,9 +259,10 @@ SELFTEST_CASES = (
     ("科学计数放行", "误差上界 1e-9，样本 3e5 个。\n", None, 0),
     ("版本号与哈希不算", "装到 v1.5a 上，sha256 对得上，#5a 是议题号。\n", None, 0),
     ("链接目标与网址不判", "见 [记录](records/5a-notes.md) 与 https://example.org/5a。\n", None, 0),
-    ("HTML 注释里的声明放行", "<!-- doc-lint:not-numbers MR18 SC02 -->\n", None, 0),
+    ("HTML 注释里的放行", "<!-- 起草时的备注：5a 那一批 -->\n", None, 0),
     ("指编号步骤的放行", "照第 2b 步核它；单测归第 1b 步。See step 1b.\n", None, 0),
     ("同一行同一个代号只报一次", "10z 合入之后 10z 再跑一次。\n", None, 1),
+    ("本页声明过的标号在本页放行", "<!-- doc-lint:not-numbers PQ14 PD19 -->\nPQ14 与 PD19 照旧，SC02 没声明。\n", {2}, 1),
     ("只判新加的行", "旧行写着 5a。\n新行干净。\n", {2}, 0),
     ("新加的行在围栏之后照判", "```\nx\n```\n新加的 7c 交回。\n", {4}, 1),
 )

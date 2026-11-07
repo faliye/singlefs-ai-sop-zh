@@ -33,6 +33,7 @@ bash .claude/scripts/gate.sh --staged # 只拿 HEAD + 暂存区跑：几个会�
 | 历史条目编号 | 这一次新增的历史条目在同一个「`##` 节 + 日期 + 点名词」下撞了「（其 <序号>）」的号。查那一块已用到的最大号，把自己这条改成下一个没被占的号，不改别人已提交的那条。见 `rules/session-wrapup.md` 第 4 条「同一个仓里有没有别的会话在飞？」 |
 | 工具层的闸 | `.claude/hooks/` 或副本 `scripts/claude-hooks/` 里有钩子没在 `.claude/settings.json` 注册、带 `--selftest` 的自证没过、`hook-events` 里的事件没挂全，或者写了工具名的没挂在认得它的 matcher 上。照钩子文件头的写法注册；见 `rules/sop-first.md`「加门禁或钩子之前，先找已有的」 |
 | 项目根的新条目 | 相对 diff 基准，项目根下新加的文件或目录没在 `.claude/root-entries` 登记，或者登记行没写理由、名字不止一层、重复，或者登记的条目不在。先挪进已有的目录；确实要放根下，向用户申请，同意了再登记一行 `<名字>  # 理由`。见 `rules/command-safety.md`「项目根下不新建文件与目录」 |
+| 软链接 | 仓里（`.git` 除外，跟踪的、没跟踪的、被忽略的都算）有软链接没在项目根的 `.claude/soft-link-exempt` 登记，输出逐个列出路径；或者豁免表的行没写理由、理由太短、路径不是相对项目根的、重复，或者登记的路径不是软链接。换成拷贝或写明真实路径再删掉软链接；确实要留就登记一行 `<路径>  # 理由`。见 `rules/command-safety.md`「仓里不放软链接」 |
 | 门禁查重 | 这一次新加或改动的门禁与钩子没写 `gate-similar` / `hook-events`、该点名的已有门禁或钩子没点全、理由太短，或者加进来的行与已有的一份整段相同。先跑 `python3 .claude/singlefs-ai-sop/scripts/gate-overlap.py --list` 找管同一件事的，能并就并；见 `rules/sop-first.md`「加门禁或钩子之前，先找已有的」 |
 | 转发计时 | 仓里的 `.rs` 与 `.py` 有读子进程输出的循环一边给行打时间戳、一边把行转打出去。改成在被测进程里计时、把数写进结果行，或者先把输出整份读完再转打，见 `rules/test-discipline.md`「分段计时在被测进程里计，不在转发输出的循环里计」；时间戳确实不进计时结论的，在循环头写 `// relay-timing-lint:allow <理由>`（Python 写 `#`） |
 | 同名定义 | `.py` 里同一作用域（模块、类体、函数体）、或 `.sh` 里同一个文件顶格写了两个同名的定义，后一个盖掉前一个。改名或删掉一个；有意覆盖的在后一个定义那一行写 `# duplicate-definitions:allow <理由>`。见 `rules/code-discipline.md`「同一作用域里一个名字只定义一次」 |

@@ -118,26 +118,37 @@ DOCUMENT_LANGUAGE="$PACKAGE_LANGUAGE"
 if [[ -n "${DOC_LINT_LANG:-}" ]]; then DOCUMENT_LANGUAGE="$DOC_LINT_LANG"; LANGUAGE_FORCED=1; fi
 [[ -n "$DOCUMENT_LANGUAGE" ]] || DOCUMENT_LANGUAGE=zh
 
-# 警告记录的四个项名也按语言取：认的是固定项名，是结构型判据，三种语言都跑，不进 WORDLIST。
-case "$DOCUMENT_LANGUAGE" in
-  zh) HISTORY_HEADING='## 历史版本'
-      WARNING_RECORD_ITEMS=('**提议**' '**异议**' '**已知风险**' '**结果**') ;;
-  en) HISTORY_HEADING='## Revision history'
-      WARNING_RECORD_ITEMS=('**Proposal**' '**Objection**' '**Known risk**' '**Outcome**') ;;
-  ja) HISTORY_HEADING='## 改訂履歴'
-      WARNING_RECORD_ITEMS=('**提案**' '**異議**' '**既知のリスク**' '**結末**') ;;
-  *)  HISTORY_HEADING='## 历史版本'
-      WARNING_RECORD_ITEMS=('**提议**' '**异议**' '**已知风险**' '**结果**') ;;
-esac
-
-# 词表型检查（A、D、I）只有中文词表，不给别的语言硬造：这类判据拿字形黑名单判语义，中文这套是按撞到的假红逐个补出来的，
-# 再造两套等于假红面乘三。结构型检查（围栏、历史节的有无与位置、编号治理）所有语言照跑。
-WORDLIST=0
-[[ "$DOCUMENT_LANGUAGE" == zh ]] && WORDLIST=1
-# 位置指代与自称（D-1、D-2）另算一档：日文指文档位置的是「上記」「前述」「本節」这类专用词，平常说话不这么用，
-# 照中文的收法（左边只认句首、标点与助词）换几个词就判得了；英文的 above / below / this section 满篇都是正常用法，照翻就是假红，没有这一档。
-REFERENCE_WORDLIST=0
-case "$DOCUMENT_LANGUAGE" in zh|ja) REFERENCE_WORDLIST=1 ;; esac
+# 混合语言项目按文件后缀选判据；没有语言后缀的文件仍按规范包语言。
+set_document_language() {
+  DOCUMENT_LANGUAGE="$1"
+  case "$DOCUMENT_LANGUAGE" in
+    zh) HISTORY_HEADING='## 历史版本'
+        WARNING_RECORD_ITEMS=('**提议**' '**异议**' '**已知风险**' '**结果**') ;;
+    en) HISTORY_HEADING='## Revision history'
+        WARNING_RECORD_ITEMS=('**Proposal**' '**Objection**' '**Known risk**' '**Outcome**') ;;
+    ja) HISTORY_HEADING='## 改訂履歴'
+        WARNING_RECORD_ITEMS=('**提案**' '**異議**' '**既知のリスク**' '**結末**') ;;
+    *)  HISTORY_HEADING='## 历史版本'
+        WARNING_RECORD_ITEMS=('**提议**' '**异议**' '**已知风险**' '**结果**') ;;
+  esac
+  
+  # 词表型检查（A、D、I）只有中文词表，不给别的语言硬造：这类判据拿字形黑名单判语义，中文这套是按撞到的假红逐个补出来的，
+  # 再造两套等于假红面乘三。结构型检查（围栏、历史节的有无与位置、编号治理）所有语言照跑。
+  WORDLIST=0
+  [[ "$DOCUMENT_LANGUAGE" == zh ]] && WORDLIST=1
+  # 位置指代与自称（D-1、D-2）另算一档：日文指文档位置的是「上記」「前述」「本節」这类专用词，平常说话不这么用，
+  # 照中文的收法（左边只认句首、标点与助词）换几个词就判得了；英文的 above / below / this section 满篇都是正常用法，照翻就是假红，没有这一档。
+  REFERENCE_WORDLIST=0
+  case "$DOCUMENT_LANGUAGE" in zh|ja) REFERENCE_WORDLIST=1 ;; esac
+  
+  case "$DOCUMENT_LANGUAGE" in
+    en) HISTORY_HEADING_PATTERN='## (Revision history|Historical Versions)' ;;
+    ja) HISTORY_HEADING_PATTERN='## (改訂履歴|履歴バージョン)' ;;
+    *) HISTORY_HEADING_PATTERN="$HISTORY_HEADING" ;;
+  esac
+}
+DEFAULT_DOCUMENT_LANGUAGE="$DOCUMENT_LANGUAGE"
+set_document_language "$DEFAULT_DOCUMENT_LANGUAGE"
 
 # --not-impl：哪几条依赖词表只在这一处判，gate.sh 不再自己判语言。
 if [[ $NOT_IMPLEMENTED_LIST_ONLY -eq 1 ]]; then
@@ -189,8 +200,8 @@ STYLE_PATTERNS=(
   '对[^，。；：]\{1,10\}而言'       '翻译腔：「对……而言」→「对……来说」'
   '就[^，。；：]\{1,10\}来说'       '翻译腔：「就……来说」→「对……来说」，或者删掉'
   '使得[^到以]'                    '翻译腔：「使得」→「让」'
-  '\(^\|[^不未别]\)\(进行\|予以\|加以\)..'  '翻译腔：「进行/予以/加以 + 动词」→ 直接用那个动词'
-  '\(此乃\|实乃\|是故[^意]\|然则\|殊为\|不失为\)'  '古风腔：直接说这是什么、所以怎样'
+  '\(^\|[^不未别]\)\(进行[^中]\|予以.\|加以.\).'  '翻译腔：「进行/予以/加以 + 动词」→ 直接用那个动词'
+  '\(此乃\|实乃\|是故[^意障]\|然则\|殊为\|不失为\)'  '古风腔：直接说这是什么、所以怎样'
   '\(众所周知\|毋庸置疑\|不言而喻\|无可厚非\)'  '过度解释：这几个词说了等于没说，删掉'
   '诚然[^，。]\{0,12\}[，。]'      '不必要的转折：「诚然……但是」多半两边不冲突，只留你真想说的那半'
 )
@@ -199,7 +210,7 @@ failed_file_count=0; skipped_file_count=0; checked_file_count=0
 
 # 输出正文：截到「## 历史版本」之前（$2 = 1 时截到第一个「## 」之前，history-registry 那张牌），剔除围栏代码块。
 body_of() {
-  awk -v history_heading="$HISTORY_HEADING" -v registry_mode="${2:-0}" '
+  awk -v history_heading="$HISTORY_HEADING_PATTERN" -v registry_mode="${2:-0}" '
     # 标题按「去掉行尾空白之后相等」认：行尾多一个空格时正文扫描不在历史节停，kb 还被报缺历史节。
     $0 ~ ("^" history_heading "[ \t]*$") { exit }
     registry_mode == 1 && /^## / { exit }
@@ -326,8 +337,15 @@ while IFS= read -r document_file; do
     skipped_file_count=$((skipped_file_count+1)); continue
   fi
   file_name="$(basename "$document_file")"
+  document_language="$DEFAULT_DOCUMENT_LANGUAGE"
+  case "$file_name" in
+    *.en.md) document_language=en ;;
+    *.ja.md) document_language=ja ;;
+    *.zh.md) document_language=zh ;;
+  esac
+  set_document_language "$document_language"
   # 认围栏：design-doc-discipline 的示例块里就有一行「## 历史版本」，围栏里的不算数
-  has_history_section="$(awk -v history_heading="$HISTORY_HEADING" '/^[ \t]*```/{fence=!fence;next} fence{next}
+  has_history_section="$(awk -v history_heading="$HISTORY_HEADING_PATTERN" '/^[ \t]*```/{fence=!fence;next} fence{next}
                    $0 ~ ("^" history_heading "[ \t]*$") {print 1; exit}' "$document_file")"
   [[ -n "$has_history_section" ]] || has_history_section=0
 
@@ -409,7 +427,7 @@ while IFS= read -r document_file; do
   # 历史节必须是文末最后一节：正文扫描在历史节停机，之后再开的节躲开全部检查；任何级别的标题都认。
   #   `#` / `##` 判红；`###` 必须以日期开头（历史条目，`### YYYY-MM-DD（其八）：…` 算）；`####` 起是条目内部的小标题，放行。
   # 要求整行只有日期会报出几百行假红，连 `####` 一起拦会拦下条目里的分节；`### 当前口径（现行）` 这种不以日期开头的照拦。
-  headings_after_history="$(awk -v history_heading="$HISTORY_HEADING" '/^[ \t]*```/{fence=!fence;next} fence{next}
+  headings_after_history="$(awk -v history_heading="$HISTORY_HEADING_PATTERN" '/^[ \t]*```/{fence=!fence;next} fence{next}
                     $0 ~ ("^" history_heading "[ \t]*$") {after_history=1;next}
                     after_history && /^#{1,3}[ \t]/ && $0 !~ /^###[ \t]+<?[0-9YyMmDd]{4}-[0-9MmDd]{2}-[0-9Dd]{2}>?/ {print FNR}' "$document_file")"
   if [[ -n "$headings_after_history" ]]; then
@@ -484,7 +502,7 @@ while IFS= read -r document_file; do
     # 日文：只认指文档位置的专用词。「この節」「この表」「この文書」不认：它们常指正在讲的那一类东西（「この文書が誰のためか」），
     # 不是自指；「上表」「下表」排掉「上表面」这类构词。
     if [[ "$DOCUMENT_LANGUAGE" == ja ]]; then
-      position_reference_pattern='上記|下記|前述|後述|上述|前節|次節|前項|次項|同上|[上下]表([^面]|$)|[上下]の表|(以下|次)の(とおり|通り)'
+      position_reference_pattern='(^|[^以])上記|下記|前述|後述|上述|前節|次節|前項|次項|同上|[上下]表([^面]|$)|[上下]の表|(以下|次)の(とおり|通り)'
     fi
     # 判据先单独编一次：下面那条 grep 带 `|| true`，编不过（退 2）与没命中长得一样，整条检查静默判绿（grep 不认非 ASCII 字符的区间）。
     position_reference_grep_exit_code=0; printf '\n' | grep -E "$position_reference_pattern" > /dev/null || position_reference_grep_exit_code=$?
@@ -1068,6 +1086,7 @@ if [[ -d "$warnings_directory" ]]; then
 fi
 
 say ""
+set_document_language "$DEFAULT_DOCUMENT_LANGUAGE"
 if [[ $WORDLIST -ne 1 ]]; then
   warn "本语言（$DOCUMENT_LANGUAGE）没有词表，以下检查**未实现**，不是通过："
   warn "  A 正文历史陈述（原为 / 曾经 / 已废弃 …）"

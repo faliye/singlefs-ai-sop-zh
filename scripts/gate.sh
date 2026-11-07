@@ -431,6 +431,8 @@ run_stage_may_skip "工具层的闸" "本次无对象可判：项目与装进来
 # 项目根下不新建没登记的文件与目录（rules/command-safety.md「项目根下不新建文件与目录」）；钩子 root-entry-guard.sh 在写之前拦，这一道在提交前兜底。
 run_stage_may_skip "项目根的新条目" "本次无对象可判：不在 git 仓里，或仓里还没有提交" \
   python3 "$SCRIPTS_DIRECTORY/root-entries.py" "$ROOT"
+# 仓里不放软链接，确实要留的登记进 .claude/soft-link-exempt（rules/command-safety.md「仓里不放软链接」）；--staged 时没跟踪的只在源仓工作区里，一起扫。
+run_stage "软链接" python3 "$SCRIPTS_DIRECTORY/soft-links.py" "$ROOT" ${STAGED_FROM:+--staged-from "$STAGED_FROM"}
 # 新加的门禁与钩子先对过已有的（rules/sop-first.md「加门禁或钩子之前，先找已有的」）。
 run_stage_may_skip "门禁查重" "本次无对象可判：这一次没有新加或改动门禁与钩子，或不在 git 仓里" \
   python3 "$SCRIPTS_DIRECTORY/gate-overlap.py" "$ROOT"

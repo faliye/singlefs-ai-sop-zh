@@ -1043,8 +1043,47 @@ mkdir -p "$temporary_directory/root-entries-not-git"
 run_scripted "root-entries/不在 git 仓里退 77" 77 "不在 git 仓里" -- \
   python3 "$SCRIPTS/root-entries.py" "$temporary_directory/root-entries-not-git"
 
+# ── 软链接：仓里不放软链接，确实要留的登记进项目根的 .claude/soft-link-exempt（rules/command-safety.md「仓里不放软链接」）──
+soft_links_repository="$temporary_directory/soft-links"; mkdir -p "$soft_links_repository/.claude" "$soft_links_repository/docs"
+git -C "$soft_links_repository" init -q
+printf 'build/\n' > "$soft_links_repository/.gitignore"; printf '说明\n' > "$soft_links_repository/docs/a.md"
+git -C "$soft_links_repository" add -A; git -C "$soft_links_repository" -c user.name=t -c user.email=t@t commit -qm base
+run_scripted "soft-links/没有软链接时通过并报扫了多少" 0 "软链接 0 个，都登记了" "豁免表 0 条都指得到" -- \
+  python3 "$SCRIPTS/soft-links.py" "$soft_links_repository"
+ln -s a.md "$soft_links_repository/docs/untracked-link.md"
+mkdir -p "$soft_links_repository/build"; ln -s ../docs "$soft_links_repository/build/ignored-directory-link"
+ln -s docs/a.md "$soft_links_repository/tracked-link.md"; git -C "$soft_links_repository" add tracked-link.md
+run_scripted "soft-links/跟踪的、没跟踪的、被忽略的软链接逐个列出路径" 1 "仓里有 3 个软链接没在 .claude/soft-link-exempt 登记" \
+  "docs/untracked-link.md  （没跟踪的，指向 a.md）" "build/ignored-directory-link  （没跟踪的，指向 ../docs）" "tracked-link.md  （跟踪的，指向 docs/a.md）" -- \
+  python3 "$SCRIPTS/soft-links.py" "$soft_links_repository"
+printf 'docs/untracked-link.md  # 文档里引的旧文件名\n./build/ignored-directory-link/  # 编译目录里工具建的\ntracked-link.md  # 对外约定的入口名\n' > "$soft_links_repository/.claude/soft-link-exempt"
+run_scripted "soft-links/都登记了就通过" 0 "软链接 3 个，都登记了" "豁免表 3 条都指得到" -- \
+  python3 "$SCRIPTS/soft-links.py" "$soft_links_repository"
+printf 'docs/untracked-link.md\n/tracked-link.md  # 绝对路径写法\nbuild/ignored-directory-link  # 短\nbuild/ignored-directory-link  # 又登记一次的编译目录链接\n' > "$soft_links_repository/.claude/soft-link-exempt"
+run_scripted "soft-links/豁免表的行写坏了判红" 1 "有 3 行写坏了" "soft-link-exempt:1 没写理由" "soft-link-exempt:2 路径不是相对项目根的" "soft-link-exempt:3 理由不到 4 个字" -- \
+  python3 "$SCRIPTS/soft-links.py" "$soft_links_repository"
+printf 'docs/untracked-link.md  # 文档里引的旧文件名\nbuild/ignored-directory-link  # 编译目录里工具建的\nbuild/ignored-directory-link  # 又登记一次的编译目录链接\ntracked-link.md  # 对外约定的入口名\n' > "$soft_links_repository/.claude/soft-link-exempt"
+run_scripted "soft-links/同一条路径登记两次判红" 1 "soft-link-exempt:3 重复登记：build/ignored-directory-link" -- \
+  python3 "$SCRIPTS/soft-links.py" "$soft_links_repository"
+printf 'docs/untracked-link.md  # 文档里引的旧文件名\nbuild/ignored-directory-link  # 编译目录里工具建的\ntracked-link.md  # 对外约定的入口名\ndocs/a.md  # 登记成软链接的普通文件\nghost  # 早就删掉的软链接\n' > "$soft_links_repository/.claude/soft-link-exempt"
+run_scripted "soft-links/登记的路径不是软链接判红" 1 "豁免表里有 2 条登记的路径不是软链接：docs/a.md、ghost" -- \
+  python3 "$SCRIPTS/soft-links.py" "$soft_links_repository"
+printf 'docs/untracked-link.md  # 文档里引的旧文件名\nbuild/ignored-directory-link  # 编译目录里工具建的\n' > "$soft_links_repository/.claude/soft-link-exempt"
+rm "$soft_links_repository/tracked-link.md"
+run_scripted "soft-links/暂存区里是软链接、工作区里删了照样判红" 1 "tracked-link.md  （跟踪的，暂存区里是软链接，工作区里不是）" -- \
+  python3 "$SCRIPTS/soft-links.py" "$soft_links_repository"
+# --staged 的里层：临时树里只有跟踪的，没跟踪的软链接只在源仓工作区里
+soft_links_staged_tree="$temporary_directory/soft-links-staged-tree"; mkdir -p "$soft_links_staged_tree/docs"
+git -C "$soft_links_staged_tree" init -q; printf '说明\n' > "$soft_links_staged_tree/docs/a.md"
+soft_links_source="$temporary_directory/soft-links-source"; mkdir -p "$soft_links_source/docs"; ln -s a.md "$soft_links_source/docs/only-in-source.md"
+run_scripted "soft-links/--staged-from 把源仓工作区里没跟踪的一起判" 1 "docs/only-in-source.md  （没跟踪的，指向 a.md（在源仓工作区里））" "源仓工作区也扫了" -- \
+  python3 "$SCRIPTS/soft-links.py" "$soft_links_staged_tree" --staged-from "$soft_links_source"
+soft_links_not_git="$temporary_directory/soft-links-not-git"; mkdir -p "$soft_links_not_git"; ln -s /etc/hostname "$soft_links_not_git/hostname-link"
+run_scripted "soft-links/不在 git 仓里照样扫文件系统" 1 "不在 git 仓里：只扫了文件系统" "hostname-link  （没跟踪的，指向 /etc/hostname）" -- \
+  python3 "$SCRIPTS/soft-links.py" "$soft_links_not_git"
+
 # ── 代号：新加的行里拿代号指东西 ──────────────────────
-run_scripted "code-name-lint/自证 15 个样本判得对、7 个弄坏开关都红" 0 "自证：15 个红绿样本判得对；7 个弄坏开关逐个打开" -- \
+run_scripted "code-name-lint/自证 16 个样本判得对、8 个弄坏开关都红" 0 "自证：16 个红绿样本判得对；8 个弄坏开关逐个打开" -- \
   python3 "$SCRIPTS/code-name-lint.py" --selftest
 code_name_repository="$temporary_directory/code-name"; mkdir -p "$code_name_repository/records" "$code_name_repository/.claude"
 git -C "$code_name_repository" init -q
@@ -1061,6 +1100,16 @@ run_scripted "code-name-lint/登记过的编号体系不判" 1 "有 2 处拿代�
 printf 'MR[0-9+  # 变异名，登记在 kb 的变异表\nSC[0-9]+\n' > "$code_name_repository/.claude/code-names"
 run_scripted "code-name-lint/登记表正则写坏、没写理由判红" 1 "code-names:1 正则写坏了" "code-names:2 没写理由" -- \
   python3 "$SCRIPTS/code-name-lint.py" --check "$code_name_repository"
+# 一份 .md 自己用 doc-lint:not-numbers 声明过的标号，只在这一份里放行
+code_name_declared_repository="$temporary_directory/code-name-declared"; mkdir -p "$code_name_declared_repository/records"
+git -C "$code_name_declared_repository" init -q
+printf '<!-- doc-lint:not-numbers PQ14 -->\n# 实验页\n' > "$code_name_declared_repository/records/experiment.md"
+printf '# 记录\n' > "$code_name_declared_repository/records/schedule.md"
+git -C "$code_name_declared_repository" add -A; git -C "$code_name_declared_repository" -c user.name=t -c user.email=t@t commit -qm init
+printf '\nPQ14 那一格照旧。\n' >> "$code_name_declared_repository/records/experiment.md"
+printf '\nPQ14 那一格照旧。\n' >> "$code_name_declared_repository/records/schedule.md"
+run_scripted "code-name-lint/本页声明过的标号只在本页放行" 1 "records/schedule.md:3  PQ14" "有 1 处拿代号" -- \
+  python3 "$SCRIPTS/code-name-lint.py" --check "$code_name_declared_repository"
 
 # ── 历史条目编号：本次新增的条目撞了已有的号 ──────────────
 # 样本是中文的：在英文、日文仓里跑自证也要按中文判，语言由 HISTORY_ORDINAL_LANG 钉住。
@@ -1430,7 +1479,7 @@ make_gate_package() { # make_gate_package <目录> [要让哪个桩失败]
   chmod +x "$package_directory/scripts"/*.sh
   # python 写的共享脚本也要有桩：gate.sh 直接 python3 它，缺了就是退出码 2。
   local python_stub
-  for python_stub in link-targets relay-timing-lint duplicate-definitions code-name-lint gate-overlap preflight-lint root-entries; do
+  for python_stub in link-targets relay-timing-lint duplicate-definitions code-name-lint gate-overlap preflight-lint root-entries soft-links; do
     printf '#!/usr/bin/env python3\n%s\nraise SystemExit(0)\n' "$STUB_CONDITIONS" > "$package_directory/scripts/$python_stub.py"
   done
 }
@@ -1438,7 +1487,7 @@ make_gate_package() { # make_gate_package <目录> [要让哪个桩失败]
 # 全绿：退出码 0，且每个阶段名都要出现在汇总里，钉住「阶段没被人悄悄从 gate.sh 里删掉」
 gate_package="$temporary_directory/gate-green"; make_gate_package "$gate_package"
 run_scripted "gate/全绿则退出码 0" 0 \
-  "已实现的门禁阶段全部通过" 门禁自检 准入与运行条件 门禁判别力 "shell 纪律" 门禁查重 项目根的新条目 同名定义 代号 文档铁律 规则纪律 命名纪律 "Show me test" \
+  "已实现的门禁阶段全部通过" 门禁自检 准入与运行条件 门禁判别力 "shell 纪律" 门禁查重 项目根的新条目 软链接 同名定义 代号 文档铁律 规则纪律 命名纪律 "Show me test" \
   规则清单 各语言同步 版本纪律 "CHANGELOG 连续" 跑完没留下临时文件 \
   -- bash "$gate_package/scripts/gate.sh" "$gate_package"
 
