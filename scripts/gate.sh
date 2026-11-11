@@ -57,7 +57,7 @@ if [[ $WANT_STAGED -eq 1 ]]; then
     "直接调共享脚本时才把项目根作为参数： bash <规范副本>/scripts/gate.sh --staged <项目根>"
   git -C "$source_repository_root" rev-parse --git-dir >/dev/null 2>&1 || die "--staged 要在 git 仓里跑，而 $source_repository_root 不是" \
     "去掉 --staged 直接跑，或者到仓里再跑。"
-  staged_scratch_directory="${TMPDIR:-/tmp}/gate-staged-$(printf '%s' "$source_repository_root" | git -C "$source_repository_root" hash-object --stdin | cut -c1-12)"
+  staged_scratch_directory="${TMPDIR:-/tmp}/gate-staged-$(printf '%s' "$source_repository_root" | git -C "$source_repository_root" hash-object --stdin | cut -c1-12)"   # shell-lint:bytes-ok 十六进制摘要只有 ASCII
   staged_tree="$staged_scratch_directory/tree"
   if [[ -d "$staged_scratch_directory" ]]; then
     staged_other_pid="$(cat "$staged_scratch_directory/pid" 2>/dev/null || true)"

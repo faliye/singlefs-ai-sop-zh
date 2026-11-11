@@ -252,6 +252,9 @@ run_scripted "gate-lint/弄坏开关 anywhere-mark：出路里提到 ✗ 的样�
   env GATE_LINT_BREAK=anywhere-mark GATE_LINT_DIR="$fixtures_directory/gate-lint/printrejarrowtext" bash "$SCRIPTS/gate-lint.sh"
 run_scripted "gate-lint/弄坏开关 anywhere-mark：错误说明里提到 ✓ 的样本判红" 1 "fine.sh:7  成功摘要没报出检查了多少项" -- \
   env GATE_LINT_BREAK=anywhere-mark GATE_LINT_DIR="$fixtures_directory/gate-lint/okmarkinnotice" bash "$SCRIPTS/gate-lint.sh"
+# 弄坏开关 item-blind：认不出逐条打出跳过条目的行。逐条打了的绿样本必须因此判红，否则「跳过数带逐条」认逐条的那一半没人盯着。
+run_scripted "gate-lint/弄坏开关 item-blind：逐条打了跳过条目的样本判红" 1 "fine.sh:13  报了跳过、没记、作废这类数" -- \
+  env GATE_LINT_BREAK=item-blind GATE_LINT_DIR="$fixtures_directory/gate-lint/skiplisted" bash "$SCRIPTS/gate-lint.sh"
 run_scripted "gate-lint/弄坏开关的值不认要拒绝" 1 "GATE_LINT_BREAK 的值不认" -- \
   env GATE_LINT_BREAK=no-such-switch GATE_LINT_DIR="$fixtures_directory/gate-lint/good" bash "$SCRIPTS/gate-lint.sh"
 
@@ -371,6 +374,17 @@ run_scripted "pattern-process-guard/抽命令行的 python 出错时放行并留
 run_scripted "pattern-process-guard/PATTERN_PROCESS_GUARD_BREAK=quiet-unjudged 时 python 出错照报成不是 JSON" 1 "钩子输入不是 JSON 对象" -- \
   env PATTERN_PROCESS_GUARD_BREAK=quiet-unjudged bash -c "$pattern_guard_unjudged_case" unjudged_case "selftest_missing_module" "$pattern_guard_unjudged_copy/python/claude-hooks/pattern-process-guard.sh" \
     "$pattern_guard_unjudged_copy/python/claude-hooks/pattern-process-guard.sh" "$fixtures_directory/pattern-process-guard/coprocpgrep/input.json"
+
+# ════ discarded-output-count-check（会话钩子，只记不拒）═══════
+# 样本在钩子自己的 JUDGE_CASES 里；它的 --selftest 另逐个打开弄坏开关，核每个都红在点名的样本上。
+# 它是可选钩子，项目不注册时 hooks-registered 不跑它的自证，这里照跑。
+head1 "门禁自证：discarded-output-count-check 的判别力"
+run_scripted "discarded-output-count-check/自证通过" 0 "discarded-output-count-check 自证：" -- \
+  bash "$SCRIPTS/claude-hooks/discarded-output-count-check.sh" --selftest
+run_scripted "discarded-output-count-check/DISCARDED_OUTPUT_COUNT_CHECK_BREAK=no-bare-stderr 必须判红" 1 "判错的样本：grep-count-stderr-dropped（" -- \
+  env DISCARDED_OUTPUT_COUNT_CHECK_BREAK=no-bare-stderr bash "$SCRIPTS/claude-hooks/discarded-output-count-check.sh" --selftest
+run_scripted "discarded-output-count-check/弄坏开关的值不认要拒绝" 1 "DISCARDED_OUTPUT_COUNT_CHECK_BREAK 的值不认" -- \
+  env DISCARDED_OUTPUT_COUNT_CHECK_BREAK=no-such-switch bash "$SCRIPTS/claude-hooks/discarded-output-count-check.sh" --selftest
 
 # ════ proc.py（按进程号找、等、停）═══════════════════════
 # 它是钩子给出的替代写法，自证坏了等于出路是假的。三个破坏开关各关掉一样东西，自证必须判红。
@@ -556,7 +570,7 @@ run_scripted "show-me-test/真测试放行" 0 伴随测试 -- bash "$SCRIPTS/sho
 
 # TEST_MARKER_PATTERN 里的每一种标注都要有用例盯着：缩到只认 #[test] 时别的用例都不红，而 show-me-test 自己的 howto 首推的就是 #[cfg(test)]。
 for test_annotation in '#[cfg(test)] mod tests { }' 'proptest! { }' '#[tokio::test] async fn t() {}' '#[kani::proof] fn p() {}'; do
-  annotation_label="$(printf '%s' "$test_annotation" | cut -c1-16)"
+  annotation_label="$(printf '%s' "$test_annotation" | cut -c1-16)"   # shell-lint:bytes-ok 标注都是 ASCII
   show_me_test_repository="$temporary_directory/show-me-test-annotation-$(printf '%s' "$test_annotation" | tr -cd 'a-z')"; make_crates_repository "$show_me_test_repository"
   printf 'pub fn g() -> u32 { 2 }\n' >> "$show_me_test_repository/crates/foo/src/lib.rs"
   mkdir -p "$show_me_test_repository/tests"; printf '%s\n' "$test_annotation" > "$show_me_test_repository/tests/t.rs"
@@ -799,7 +813,7 @@ hooks_registered_settings() { # hooks_registered_settings <gate-reuse-check 挂�
   local gate_reuse_on_subagent_stop='' gate_reuse_on_stop='{"type":"command","command":"bash gate-reuse-check.sh"}'
   [[ "$1" == yes ]] && gate_reuse_on_subagent_stop='{"type":"command","command":"bash gate-reuse-check.sh"},'
   [[ "$1" == none ]] && gate_reuse_on_stop=''
-  printf '{"hooks":{"PreToolUse":[{"matcher":"Write","hooks":[{"type":"command","command":"bash guard.sh"},{"type":"command","command":"bash pattern-process-guard.sh"}]},{"matcher":"Write|Edit|MultiEdit|NotebookEdit","hooks":[{"type":"command","command":"bash root-entry-guard.sh"}]},{"matcher":"Bash","hooks":[{"type":"command","command":"bash root-entry-guard.sh"}]},{"matcher":"Agent|Task|SendMessage","hooks":[{"type":"command","command":"bash borrowed-convention-guard.sh"}]},{"matcher":"SubagentHandback","hooks":[{"type":"command","command":"bash handback-scratch-check.sh"}]}],"PostToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"bash root-entry-guard.sh"}]}],"Stop":[{"hooks":[%s]}],"SubagentStop":[{"hooks":[%s{"type":"command","command":"bash handback-scratch-check.sh"}]}]}}\n' \
+  printf '{"hooks":{"PreToolUse":[{"matcher":"Write","hooks":[{"type":"command","command":"bash guard.sh"},{"type":"command","command":"bash pattern-process-guard.sh"}]},{"matcher":"Write|Edit|MultiEdit|NotebookEdit","hooks":[{"type":"command","command":"bash root-entry-guard.sh"}]},{"matcher":"Bash","hooks":[{"type":"command","command":"bash root-entry-guard.sh"}]},{"matcher":"Agent|Task|SendMessage","hooks":[{"type":"command","command":"bash borrowed-convention-guard.sh"}]},{"matcher":"SubagentHandback","hooks":[{"type":"command","command":"bash handback-scratch-check.sh"}]}],"PostToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"bash root-entry-guard.sh"},{"type":"command","command":"bash discarded-output-count-check.sh"}]}],"Stop":[{"hooks":[%s]}],"SubagentStop":[{"hooks":[%s{"type":"command","command":"bash handback-scratch-check.sh"}]}]}}\n' \
     "$gate_reuse_on_stop" "$gate_reuse_on_subagent_stop" > "$hooks_project/.claude/settings.json"
 }
 hooks_registered_settings yes
@@ -1583,7 +1597,7 @@ run_scripted "gate/--staged 给的树里有红就判红，暂存区干净也一�
 run_scripted "gate/--staged 给的 GATE_STAGED_TREE 不是树要拒绝" 1 "不是这个仓里的一棵树" -- \
   env GATE_STAGED_TREE=0000000000000000000000000000000000000000 bash "$gate_given_tree_directory/package/scripts/gate.sh" --staged "$gate_given_tree_directory/project"
 # 同一个仓同一时刻只许一趟 --staged：临时树目录按仓根固定，里面记的 pid 还活着就拒绝；pid 不在了的算残留，清掉接着跑、判法照旧。
-gate_busy_scratch="${TMPDIR:-/tmp}/gate-staged-$(printf '%s' "$(cd "$gate_given_tree_directory/project" && pwd)" | git hash-object --stdin | cut -c1-12)"
+gate_busy_scratch="${TMPDIR:-/tmp}/gate-staged-$(printf '%s' "$(cd "$gate_given_tree_directory/project" && pwd)" | git hash-object --stdin | cut -c1-12)"   # shell-lint:bytes-ok 十六进制摘要只有 ASCII
 # 占着的那一趟用一个命令行里带 gate.sh 的进程扮；pid 活着而命令行里没有 gate.sh 的（被别的进程复用了）算残留。
 python3 -c 'import time; time.sleep(600)' fake-gate.sh & gate_busy_fake_pid=$!
 mkdir -p "$gate_busy_scratch"; printf '%s\n' "$gate_busy_fake_pid" > "$gate_busy_scratch/pid"

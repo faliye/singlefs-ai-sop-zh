@@ -8,6 +8,7 @@
 @.claude/singlefs-ai-sop/rules/show-me-test.md
 @.claude/singlefs-ai-sop/rules/code-discipline.md
 @.claude/singlefs-ai-sop/rules/writing-discipline.md
+@.claude/singlefs-ai-sop/rules/communication-discipline.md
 @.claude/singlefs-ai-sop/rules/kb-discipline.md
 @.claude/singlefs-ai-sop/rules/rules-discipline.md
 @.claude/singlefs-ai-sop/rules/test-discipline.md

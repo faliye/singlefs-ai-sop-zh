@@ -9,14 +9,20 @@
 #
 #   GATE_LINT_BREAK  自证拿它弄坏判据，其余时候不设：anywhere-mark 把 ✗ / ✓ 改回在行里哪都认（旧判法），
 #      selftest 的「gate-lint/弄坏开关 anywhere-mark」要在 printrejarrowtext 和 okmarkinnotice 两个样本上判红。
+#    item-blind 认不出逐条打出跳过条目的行，selftest 的「gate-lint/弄坏开关 item-blind」要在 skiplisted 样本上判红。
 #
-# 查四条：「bad 带出路」「die 带出路」「直接打印的拒绝带出路」是拒绝的形态，「成功句报数」是「通过」的形态。
-# 前两条与「成功句报数」只对 .sh 判，.py 只判「直接打印的拒绝带出路」。
+# 查五条：「bad 带出路」「die 带出路」「直接打印的拒绝带出路」是拒绝的形态，「成功句报数」「跳过数带逐条」是「通过」的形态。
+# 前两条与「成功句报数」「跳过数带逐条」只对 .sh 判，.py 只判「直接打印的拒绝带出路」。
 #   bad 带出路：从 bad 那一行起 HOWTO_WINDOW 个非注释行内要有命令位置上的 howto（命令位置见 lib.sh 的 CMD_POS）；
 #      注释里的 howto 字样不算。行尾写 `# gate-lint:summary` 的汇总行豁免，不按消息文本猜。
 #   die 带出路：出路写在第二个参数起（lib.sh 的 die 交给 howto）；只带一句话、或第二个参数是空串的判红。
 #   成功句报数：扫一批对象的脚本，最后一句成功句要带一个在文件里数出来的计数（认哪些写法见 summary_reports_count）；
 #      确实不扫对象的单独写一行注释 `# gate-lint:nocount <理由>`，理由至少 8 个字。
+#   跳过数带逐条：输出里报了「跳过 N」「没记 N」「作废 N」「没跑 N」「未跑 N」这类数（跳过词紧挨着一个计数）的脚本，
+#      同一份脚本里要有一行逐条打出那些条目的输出（跳过词紧挨着一个不是计数的变量，或这一行展开整个数组）；
+#      那一行写进文件（> / >>，>&2 与 /dev/stderr 除外）的不算：收尾会删的临时文件里的清单没人看得到。
+#      条目由别处逐条打出、这里认不出的，在报数那一行行尾写 `# gate-lint:skip-listed <理由>`，理由至少 8 个字。
+#      认不出的不判：printf 的 %s 占位里的数、先拼进变量再打的消息；逐条打的是不是报数的那几样、是不是全打了（或前 N 条加余下条数），它不判。
 #   直接打印的拒绝带出路：直接打印的拒绝（`echo "  ✗ …"` / python 的 `print('  ✗ …')`）到下一处拒绝之前要出现「→」；
 #      循环里的明细行标 `# gate-lint:detail`，汇总行标 `# gate-lint:summary`，两种都要显式写。
 #   ✗ / ✓ 只认打印出来那一行的开头：引号之后、缩进与颜色占位（`%s`、`${变量}`、`\033[…m`）之后紧跟的才算；
@@ -53,7 +59,8 @@ SUCCESS_MARK_PATTERN="(^|[^A-Za-z0-9_])(echo|printf|say)[[:space:]][^\"']*${MARK
 case "${GATE_LINT_BREAK:-}" in
   '') ;;
   anywhere-mark) REJECTION_MARK_PATTERN='✗'; SUCCESS_MARK_PATTERN='✓' ;;
-  *) die "GATE_LINT_BREAK 的值不认：${GATE_LINT_BREAK}" "只认 anywhere-mark；不是在自证里弄坏判据的话，不要设这个变量。" ;;
+  item-blind) ;;
+  *) die "GATE_LINT_BREAK 的值不认：${GATE_LINT_BREAK}" "只认 anywhere-mark、item-blind；不是在自证里弄坏判据的话，不要设这个变量。" ;;
 esac
 
 # 这处 die 只带了一句话（没有第二个参数）吗？
@@ -82,6 +89,12 @@ NOCOUNT_REASON_MINIMUM_CHARACTERS=8
 # python 里 NAME += …（+= 前面有空白：shell 的 NAME+=… 是拼字符串、追加数组，不是计数）、NAME = len( / sum( …。
 # 认不出的写法多半让它判红。已知会放过没报数的：失败计数（failure_count 也是累加过的变量，而通过时它恒为 0）、
 # 同一行两个赋值时取错名字、heredoc 正文里的 ok 句被当成最后一句——这几样靠 review。
+# 「成功句报数」与「跳过数带逐条」认计数变量用同一份：counter_names_in_file。
+counter_names_in_file() { # counter_names_in_file → 一行一个在 FILE_LINES 里累加过的变量名（去重）
+  printf '%s\n' "${FILE_LINES[@]}" | grep -oE \
+      '([A-Za-z_][A-Za-z0-9_]*)=\$\(\(|\(\([[:space:]]*(\+\+|--)?[A-Za-z_][A-Za-z0-9_]*[[:space:]]*(\+\+|--|[-+]=|=[^=])|(^|[^A-Za-z0-9_])let[[:space:]]+"?[A-Za-z_][A-Za-z0-9_]*|([A-Za-z_][A-Za-z0-9_]*)=("?\$\{#[A-Za-z_][A-Za-z0-9_]*\[[@*]\]|[^=].*(wc[[:space:]]+-[lw]|grep[[:space:]]+-[A-Za-z]*c|\$\{#[A-Za-z_][A-Za-z0-9_]*\[[@*]\]))|[A-Za-z_][A-Za-z0-9_]*[[:space:]]+\+=|[A-Za-z_][A-Za-z0-9_]*[[:space:]]*=[[:space:]]*(len|sum)\(' \
+    | sed -E 's/^\(\([[:space:]]*(\+\+|--)?//; s/^[^A-Za-z0-9_]?let[[:space:]]+"?//; s/[^A-Za-z0-9_].*$//' | sort -u || true
+}
 summary_reports_count() { # summary_reports_count <成功句> ；读全局的 FILE_LINES（正在判的那个文件的全部行）
   local summary="$1" counter_name
   [[ "$summary" =~ \$\{#[A-Za-z_][A-Za-z0-9_]*\[[@*]\]\} ]] && return 0
@@ -90,10 +103,29 @@ summary_reports_count() { # summary_reports_count <成功句> ；读全局的 FI
   while IFS= read -r counter_name; do
     [[ -n "$counter_name" ]] || continue
     if [[ "$summary" =~ \$\{?$counter_name([^A-Za-z0-9_]|$) || "$summary" =~ \{$counter_name[}:!] ]]; then return 0; fi
-  done < <(printf '%s\n' "${FILE_LINES[@]}" | grep -oE \
-      '([A-Za-z_][A-Za-z0-9_]*)=\$\(\(|\(\([[:space:]]*(\+\+|--)?[A-Za-z_][A-Za-z0-9_]*[[:space:]]*(\+\+|--|[-+]=|=[^=])|(^|[^A-Za-z0-9_])let[[:space:]]+"?[A-Za-z_][A-Za-z0-9_]*|([A-Za-z_][A-Za-z0-9_]*)=("?\$\{#[A-Za-z_][A-Za-z0-9_]*\[[@*]\]|[^=].*(wc[[:space:]]+-[lw]|grep[[:space:]]+-[A-Za-z]*c|\$\{#[A-Za-z_][A-Za-z0-9_]*\[[@*]\]))|[A-Za-z_][A-Za-z0-9_]*[[:space:]]+\+=|[A-Za-z_][A-Za-z0-9_]*[[:space:]]*=[[:space:]]*(len|sum)\(' \
-    | sed -E 's/^\(\([[:space:]]*(\+\+|--)?//; s/^[^A-Za-z0-9_]?let[[:space:]]+"?//; s/[^A-Za-z0-9_].*$//' | sort -u || true)
+  done < <(counter_names_in_file)
   return 1
+}
+
+# 跳过数带逐条：跳过词与紧挨着它的一处展开（中间隔不到 16 个字、不隔引号与 $）。
+# 正着写（「跳过 $n」「作废：${#rows[@]}」「没跑 $((total - ran))」）与倒着写（「$n 条跳过」「${n} 个没记」，中间只许量词与「的」）都认。
+SKIP_WORD_PATTERN='(没记|跳过|作废|没跑|未跑)'
+SKIP_EXPANSION_PATTERN='\$(\(\(|\{#?[A-Za-z_][A-Za-z0-9_]*(\[[@*]\])?|[A-Za-z_][A-Za-z0-9_]*)'
+SKIP_ADJACENT_EXPANSION_PATTERN="${SKIP_WORD_PATTERN}[^\$\"']{0,16}${SKIP_EXPANSION_PATTERN}|${SKIP_EXPANSION_PATTERN}\}?[[:space:]]*(条|个|项|份|张|行|处|件)?的?[[:space:]]*${SKIP_WORD_PATTERN}"
+# 报数与逐条都只认命令位置上的输出（命令位置见 lib.sh 的 CMD_POS）。
+SKIP_OUTPUT_CALL_PATTERN="$CMD_POS"'(ok|say|warn|bad|howto|echo|printf|report_not_run)[[:space:]]'
+# 往文件里写：> 或 >> 后面接的不是 &（>&2 是写到 stderr）；2> 这类带 fd 号的不算。/dev/stderr、/dev/stdout 另行放过。
+# 只拿输出命令之后、引号里的正文换成占位词的那一段来判。
+FILE_WRITE_REDIRECT_PATTERN='(^|[^0-9&<>])>>?[[:space:]]*[^&[:space:]>]'
+SKIP_LISTED_MARKER_PATTERN='#[[:space:]]*gate-lint:skip-listed([[:space:]]+(.*))?$'
+skip_expansion_kind() { # skip_expansion_kind <跳过词与展开的片段> <计数变量名，一行一个> → 打 count 或 item
+  local fragment="$1" counter_names="$2" expansion name
+  expansion="\$${fragment#*\$}"
+  if [[ "$expansion" == '$(('* || "$expansion" =~ ^\$\{# ]]; then echo count; return 0; fi
+  if [[ "$expansion" =~ ^\$\{[A-Za-z_][A-Za-z0-9_]*\[[@*]\] ]]; then echo item; return 0; fi
+  [[ "$expansion" =~ ^\$\{?([A-Za-z_][A-Za-z0-9_]*) ]] || { echo item; return 0; }
+  name="${BASH_REMATCH[1]}"
+  if grep -qxF -- "$name" <<<"$counter_names"; then echo count; else echo item; fi
 }
 
 failure_count=0; checked_rejection_count=0; scanned_file_count=0
@@ -256,7 +288,58 @@ if [[ $is_shell -eq 1 ]]; then
       failure_count=$((failure_count+1))
     fi
   fi
-fi   # ← 「成功句报数」到此为止，只对 shell 脚本判
+
+  # ── 跳过数带逐条：报了跳过、没记、作废这类数的脚本，同一份里要逐条打出那些条目 ───────────────────────
+  # heredoc 体一律不算（解释器 heredoc 里的输出也不算：.py 本来就不判这一条）；注释行不算。
+  file_counter_names="$(counter_names_in_file)"
+  skip_count_line_number=0; skip_count_line=""; has_skip_item_output=0; skip_pass_heredoc_terminator=""
+  for ((line_index=0; line_index<${#FILE_LINES[@]}; line_index++)); do
+    line="${FILE_LINES[$line_index]}"
+    if [[ -n "$skip_pass_heredoc_terminator" ]]; then
+      if [[ "$line" =~ ^[[:space:]]*"$skip_pass_heredoc_terminator"[[:space:]]*$ ]]; then skip_pass_heredoc_terminator=""; fi
+      continue
+    fi
+    if [[ "$line" =~ ^[[:space:]]*# ]]; then continue; fi
+    if [[ "$line" =~ $HEREDOC_RE ]]; then skip_pass_heredoc_terminator="${BASH_REMATCH[2]}"; fi
+    if [[ ! "$line" =~ $SKIP_WORD_PATTERN ]]; then continue; fi
+    if [[ ! "$line" =~ $SKIP_OUTPUT_CALL_PATTERN ]]; then continue; fi
+    # 往文件里写只看输出命令之后、引号外的那一段：前面 (( n > 0 )) 里的 > 与消息正文里的 > 都不是重定向。
+    # 引号里的整段换成一个占位词 Q，重定向的目标写在引号里（>> "$log"）照样认得出。
+    output_call_text="${line#*"${BASH_REMATCH[0]}"}"
+    output_call_text_outside_quotes="$(sed -E "s/\"[^\"]*\"/Q/g; s/'[^']*'/Q/g" <<<"$output_call_text")"
+    line_reports_skip_count=0; line_lists_skip_items=0
+    while IFS= read -r skip_fragment; do
+      [[ -n "$skip_fragment" ]] || continue
+      if [[ "$(skip_expansion_kind "$skip_fragment" "$file_counter_names")" == count ]]; then line_reports_skip_count=1; else line_lists_skip_items=1; fi
+    done < <(grep -oE "$SKIP_ADJACENT_EXPANSION_PATTERN" <<<"$line" || true)
+    if [[ "$line" =~ \$\{[A-Za-z_][A-Za-z0-9_]*\[[@*]\] ]]; then line_lists_skip_items=1; fi
+    if [[ "$output_call_text_outside_quotes" =~ $FILE_WRITE_REDIRECT_PATTERN && "$output_call_text" != *'>'*/dev/stderr* && "$output_call_text" != *'>'*/dev/stdout* ]]; then line_lists_skip_items=0; fi
+    if [[ "${GATE_LINT_BREAK:-}" == item-blind ]]; then line_lists_skip_items=0; fi
+    if [[ $line_lists_skip_items -eq 1 ]]; then has_skip_item_output=1; fi
+    [[ $line_reports_skip_count -eq 1 ]] || continue
+    if [[ "$line" =~ $SKIP_LISTED_MARKER_PATTERN ]]; then
+      skip_listed_reason="${BASH_REMATCH[2]}"
+      skip_listed_reason="${skip_listed_reason%"${skip_listed_reason##*[![:space:]]}"}"
+      if (( ${#skip_listed_reason} >= NOCOUNT_REASON_MINIMUM_CHARACTERS )); then continue; fi
+      checked_rejection_count=$((checked_rejection_count+1))
+      bad "$relative_path:$((line_index+1))  gate-lint:skip-listed 的理由不到 $NOCOUNT_REASON_MINIMUM_CHARACTERS 个字（「$skip_listed_reason」），不算豁免"
+      howto "写清那些条目在哪逐条打出来、为什么这里认不出，至少 $NOCOUNT_REASON_MINIMUM_CHARACTERS 个字：# gate-lint:skip-listed <理由>；" \
+            "说不出在哪，就在这份脚本里逐条打出那些条目。"
+      failure_count=$((failure_count+1))
+      continue
+    fi
+    if [[ $skip_count_line_number -eq 0 ]]; then skip_count_line_number=$((line_index+1)); skip_count_line="$line"; fi
+  done
+  if [[ $skip_count_line_number -gt 0 && $has_skip_item_output -eq 0 ]]; then
+    checked_rejection_count=$((checked_rejection_count+1))
+    bad "$relative_path:$skip_count_line_number  报了跳过、没记、作废这类数，同一份脚本里没有逐条打出那些条目的输出"
+    say "        $skip_count_line"
+    howto "在输出里逐条打出这些条目（条目多的打前 N 条，余下报条数），例： say \"  跳过 \$file：\$reason\"，或 printf '  跳过 %s\\n' \"\${skipped_files[@]:0:20}\"；" \
+          "只写进收尾会删的临时文件不算打出（rules/show-me-test.md「门禁不许假装通过」）。" \
+          "条目已在别处逐条打出、这里认不出的，在报数那一行行尾写 # gate-lint:skip-listed <在哪打出、为什么认不出>（至少 $NOCOUNT_REASON_MINIMUM_CHARACTERS 个字）。"
+    failure_count=$((failure_count+1))
+  fi
+fi   # ← 「成功句报数」「跳过数带逐条」到此为止，只对 shell 脚本判
 done < <(find "$scan_root" \( -name '*.sh' -o -name '*.py' \) -not -name 'lib.sh' "${EXCLUDED_PATH_ARGUMENTS[@]}" | sort)
 done
 

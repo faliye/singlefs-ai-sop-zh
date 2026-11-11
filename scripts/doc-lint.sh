@@ -446,7 +446,7 @@ while IFS= read -r document_file; do
         line_number="$(printf '%s' "$matched_line" | sed 's/^[0-9]*://; s/\t.*//')"
         line_text="$(printf '%s' "$matched_line" | sed 's/^[0-9]*://; s/^[0-9]*\t//')"
         bad "$relative_path:$line_number  $history_reason"
-        say "        > $(printf '%s' "$line_text" | cut -c1-80)"
+        say "        > $(printf '%s' "$line_text" | clip_text 80)"
         howto "删掉正文里这句，改写成现行值；确实要留档的，挪到文末「## 历史版本」，" \
               "写成「曾经 <旧做法> / 现在 <新做法> / 改动依据：<为什么改>」，放在「$HISTORY_HEADING」之下。"
         file_failed=1
@@ -465,7 +465,7 @@ while IFS= read -r document_file; do
           line_number="$(printf '%s' "$matched_line" | sed 's/^[0-9]*://; s/\t.*//')"
           line_text="$(printf '%s' "$matched_line" | sed 's/^[0-9]*://; s/^[0-9]*\t//')"
           bad "$relative_path:$line_number  $style_reason"
-          say "        > $(printf '%s' "$line_text" | cut -c1-80)"
+          say "        > $(printf '%s' "$line_text" | clip_text 80)"
           howto "换成平时说话会用的说法。判据是「这句你会对同事说出口吗」——" \
                 "不会就改（rules/writing-discipline.md「文风要简单自然」）。"
           file_failed=1
@@ -513,7 +513,7 @@ while IFS= read -r document_file; do
         reference_line_number="$(printf '%s' "$reference_line" | sed 's/^[0-9]*://; s/\t.*//')"
         reference_line_text="$(printf '%s' "$reference_line" | sed 's/^[0-9]*://; s/^[0-9]*\t//')"
         bad "$relative_path:$reference_line_number  $document_kind不许用位置指代"
-        say "        > $(printf '%s' "$reference_line_text" | cut -c1-80)"
+        say "        > $(printf '%s' "$reference_line_text" | clip_text 80)"
         howto "把被指代的内容直接写出来：小节写成它的标题，表写成它判的那件事，" \
               "别处的事实链到它所在的文件。" \
               "检索会把这一条单独端出来，指代当场断掉——而模型不会说看不懂，它会补一个。"
@@ -553,8 +553,8 @@ while IFS= read -r document_file; do
         reference_line_number="$(printf '%s' "$reference_line" | sed 's/^[0-9]*://; s/\t.*//')"
         reference_line_text="$(printf '%s' "$reference_line" | sed 's/^[0-9]*://; s/^[0-9]*\t//')"
         bad "$relative_path:$reference_line_number  $document_kind不许用自指称呼"
-        say "        > $(printf '%s' "$reference_line_text" | cut -c1-80)"
-        howto "把当前位置写成名字：条目写成「D22（单元原子性怎么合成）」，" \
+        say "        > $(printf '%s' "$reference_line_text" | clip_text 80)"
+        howto "把当前位置写成名字：条目写成「D1（数据可移动性）」，" \
               "章节写成它的标题，文档写成它的文件名。" \
               "检索端出来的那一条没有「此处」——它已经被从文件里摘下来了。"
         file_failed=1
@@ -583,7 +583,7 @@ while IFS= read -r document_file; do
         while IFS= read -r reference_line; do
           reference_line_number="${reference_line%%$'\t'*}"; reference_line_text="${reference_line#*$'\t'}"
           bad "$relative_path:$reference_line_number  kb 正文里的「本轮」锚不到具体哪一轮"
-          say "        > $(printf '%s' "$reference_line_text" | cut -c1-80)"
+          say "        > $(printf '%s' "$reference_line_text" | clip_text 80)"
           howto "把指代换成锚：写明是哪一天的那一轮，或者点名那次实验的编号。" \
                 "确实泛指任何一轮的规则句，改写成不带指代的说法（「跑它的那一轮」→「产出这份输出的那次运行」）。" \
                 "判据是检索：这一条被单独端出来时，读的人能不能知道是哪一轮。"

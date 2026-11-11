@@ -1,0 +1,2 @@
+exit=1
+want=evil.sh:9  gate-lint:skip-listed 的理由不到 8 个字（「见上」），不算豁免

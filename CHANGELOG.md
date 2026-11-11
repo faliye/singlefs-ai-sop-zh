@@ -3,6 +3,26 @@
 规则与门禁的版本历史。`CLAUDE.md` 与 `rules/*.md` 不留历史节（design-doc-discipline），
 历史一律记在这里；逐条改动细节见 `git log`，提交信息即变更说明。
 
+## 0.0.71 — 2026-11-11
+
+**新加规则「沟通纪律」（对话简洁、不写客套、不为照顾情绪软化判断）与 skill `halt`；shell-lint 新加 S9（`$*`、`$@` 去前缀的模式里带空格）、S10（往人看的输出里按字节截）并判拼接变量上的 `rm -rf`；gate-lint 新加「跳过数带逐条」；新加可选钩子 `discarded-output-count-check.sh`；测试纪律与现查规则各补几条。**
+
+规则：
+- `communication-discipline.md`（新）：agent 对用户、agent 之间的对话先说结论、不写客套、不软化判断、不复述；问用户拍板之前，问句里说范围的词先现查。三语 `CLAUDE.md` 与项目模板接上。
+- `command-safety.md`：新加小节「`$*` 与 `$@` 的去前缀、去后缀逐个参数各做一次」「往人看的输出里按字符截，不按字节截」；`rm -rf` 的路径由几段变量拼成时写字面的绝对路径；检出工具的提醒里每一种处置都给能照跑的命令。
+- `show-me-test.md`：没记、跳过、作废的条目逐条进日志；写明 `gate-lint.sh` 判其中一半。
+- `test-discipline.md`：比较前后两个值时任一侧为空判失败；新加小节「自证的每一格单跑与整份跑判定相同，失败句不冒充别的格」「判资源够不够，先扣回本进程已经占着的」；探针的每个计数同时报分母。
+- `verify-before-claiming.md`：新加小节「拿来下结论的命令不丢输出」；被取消、被打断的那一次运行，日志里的 ✓ 不算结局。
+
+脚本与门禁：
+- `shell-lint.sh`：新加 S9、S10；S5 另判由几段变量拼成的变量；S4 不再把 here-doc 里当数据写的 git 撤销命令判红（喂给 shell 的照判）。
+- `gate-lint.sh`：新加「跳过数带逐条」与豁免标记 `# gate-lint:skip-listed <理由>`；新加弄坏开关 `item-blind`。
+- `claude-hooks/discarded-output-count-check.sh`（新，可选注册）：Bash 命令丢了输出又判计数或空，记进检出记录并提醒，不拒绝。
+- `lib.sh`：新加 `clip_text`；`doc-lint.sh`、`shell-lint.sh` 的失败行改用它截。
+- `doc-lint.sh`：自称那一条的出路里，示例编号换成不指名的 `D1（数据可移动性）`。
+- `selftest.sh`：接上上面几项的样本与弄坏开关。
+- `skills/halt/SKILL.md`（新）：用户要求终止时停下一切，等用户直接输入再醒。
+
 ## 0.0.70 — 2026-11-07
 
 **新加一道门禁：仓里不放软链接（阶段「软链接」，豁免登记在 `.claude/soft-link-exempt`）；新加规则：遇到问题先找有没有别的 agent 在管、检查还没出结局不写成过了、门禁给的出路本身要过得了别的闸；doc-lint 混合语言项目按文件后缀选判据；代号检查认本页声明过的标号。**

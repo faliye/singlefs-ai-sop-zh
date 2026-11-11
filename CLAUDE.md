@@ -47,6 +47,7 @@
 @rules/evidence-discipline.md
 @rules/verify-before-claiming.md
 @rules/pushback-discipline.md
+@rules/communication-discipline.md
 @rules/command-safety.md
 @rules/preflight-discipline.md
 @rules/session-wrapup.md

@@ -238,7 +238,8 @@ for language in $LANGUAGES; do
             "确认路径，或用 bash scripts/i18n-sync.sh --update <各语言仓所在目录> 指定。"
       failed_language_count=$((failed_language_count+1)); continue; }
     for shared_item in "${SHARED[@]}"; do
-      rm -rf "${translation_repository:?}/$shared_item"
+      # 在验过带 .git 的那个仓里按相对路径删：仓路径是几段变量拼的，不直接拿它拼删除目标（shell-lint 的 S5）。
+      ( cd "$translation_repository" && rm -rf -- "./${shared_item:?}" )
       if [[ -e "$PACKAGE_ROOT/$shared_item" ]]; then
         mkdir -p "$(dirname "$translation_repository/$shared_item")"
         cp -dR --preserve=timestamps,links "$PACKAGE_ROOT/$shared_item" "$translation_repository/$shared_item"

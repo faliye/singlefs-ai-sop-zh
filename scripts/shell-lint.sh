@@ -25,6 +25,7 @@
 #
 #   S5 `rm -rf "$VAR/..."` 没有空值守卫
 #      变量为空时它从根目录往下删。写成 `"${VAR:?}/..."` 就拦住了。
+#      由几段变量拼成的变量（`dir="$root/$name/x"` 之后 `rm -rf "${dir:?}"`）另判：`:?` 只挡整串为空，挡不住其中一段为空。
 #
 #   S6 不带参数的 `wait`
 #      它的退出码恒为 0，并行跑的检测项红了几个父进程都不知道；后台体里写 `|| bad=1` 也一样（那是 S1）。
@@ -38,6 +39,11 @@
 #      procfs 与 cgroupfs 的文件大小报 0，sysfs 报 4096，都不反映内容：`[ -s ]` 在前两处恒假、在 sysfs 恒真。
 #      只认 `[ -s ]` / `test -s`、`stat` 的 `%s`、`find` 的 `-size` / `-empty` 三种写法，
 #      而且路径要字面以 /proc/、/sys/ 开头，或文件名是 `cgroup.<名字>`；路径全在变量里、文件名也认不出的不判。
+#
+#   S9 ${*#…}、${@#…}（与 ##、%、%%）的模式里带空格
+#      bash 对 $* 与 $@ 做这几种去除时逐个参数各去一次再拼，空格只出现在拼好的串里，所以一处都去不掉。
+#   S10 往人看的输出里按字节截：同一行里有 cut 带 -c 或 -b、head 或 tail 带 -c，又往外打（say、bad、howto、echo、printf 或 ✗）
+#      GNU 的这几种都按字节数，多字节字截在中间就留下半个字。只截 ASCII 的（十六进制摘要这类）在那一行写 # shell-lint:bytes-ok <理由>。
 #
 # command-safety.md 另外几条（echo 假装成功、破坏性操作先看清楚）判据还没想清楚，没做；管道退出码只做了 S7 那一种。
 #
@@ -68,6 +74,8 @@ S4_HARD_RESET_PATTERN="$CMD_POS"'git[[:space:]]+((-C[[:space:]]+[^[:space:]]+[[:
 # 守卫形态 `${名字:?}` 的 `}` 前面有 `:?`，S5_UNGUARDED_PATH_ARGUMENT_PATTERN 两个分支都匹配不上。
 S5_RECURSIVE_RM_PATTERN="$CMD_POS"'rm([[:space:]]+-[[:alnum:]-]+)*[[:space:]]+-[[:alnum:]-]*[rR]'
 S5_UNGUARDED_PATH_ARGUMENT_PATTERN='\$(\{[A-Za-z_][A-Za-z0-9_]*\}|[A-Za-z_][A-Za-z0-9_]*)"?/'
+# 值只取到这一个赋值为止：带双引号的到收尾的引号，不带的到空白或 `;`；同一行后面别的赋值另算。
+S5_JOINED_ASSIGNMENT_PATTERN='(^|[;&|[:space:]])(local[[:space:]]+|export[[:space:]]+|declare[[:space:]]+(-[[:alpha:]]+[[:space:]]+)?)?NAME=("[^"]*\$(\{[A-Za-z_][A-Za-z0-9_]*\}|[A-Za-z_][A-Za-z0-9_]*)/[^"]*\$(\{|[A-Za-z_])[^"]*"|[^[:space:];"'"'"']*\$(\{[A-Za-z_][A-Za-z0-9_]*\}|[A-Za-z_][A-Za-z0-9_]*)/[^[:space:];"'"'"']*\$(\{|[A-Za-z_])[^[:space:];"'"'"']*)'
 
 # S6：只判后面什么都不跟的：`wait "$pid"`、`wait -n`、`wait $job` 都收得到退出码，不判。
 # 结尾的 `;` 与行尾注释算不跟参数：`wait;` 与 `wait  # 等虚机` 一样吃掉失败。
@@ -89,6 +97,11 @@ S8_PSEUDO_FILESYSTEM_PATH_PATTERN='(^|[^A-Za-z0-9_.}-])/(proc|sys)/|(^|/)cgroup\
 S8_SIZE_TEST_SEGMENT_PATTERN='(\[\[?|(^|[^A-Za-z0-9_-])test|&&|\|\||-a|-o)[[:space:]]+(![[:space:]]+)?-s[[:space:]]+[^][:space:];&|]+'
 S8_STAT_SIZE_SEGMENT_PATTERN='(^|[^A-Za-z0-9_-])stat[[:space:]][^;&|]*%s[^;&|]*'
 S8_FIND_SIZE_SEGMENT_PATTERN='(^|[^A-Za-z0-9_-])find[[:space:]][^;&|]*-(size|empty)([[:space:]][^;&|]*)?'
+# S9：$* 与 $@ 的去除逐个参数各做一次，模式里带空格就是想对拼好的整串去。
+S9_PER_PARAMETER_TRIM_PATTERN='\$\{[*@](#|##|%|%%)[^}]*[[:space:]][^}]*\}'
+# S10：先挑出按字节截的那一段，再看同一行是不是往人看的输出里打。
+S10_BYTE_CUT_PATTERN='(^|[^A-Za-z0-9_-])(cut[[:space:]]+-[cb]|head[[:space:]]+-c|tail[[:space:]]+-c)'
+S10_HUMAN_OUTPUT_PATTERN='(^|[^A-Za-z0-9_-])(say|bad|howto|echo|printf)([[:space:]]|$)|✗'
 
 # S2 / S3 的判据（PATTERN_KILL_RE、PATTERN_PGREP_RE）与命令位置 CMD_POS 都定义在 lib.sh 一处：
 # S2 / S3 与会话钩子 claude-hooks/pattern-process-guard.sh 共用，CMD_POS 与 gate-lint 共用。
@@ -108,7 +121,7 @@ while IFS= read -r scanned_file; do
   if matched_lines="$(grep -nE "$PATTERN_KILL_RE" "$scanned_file" | grep -vE '^[0-9]+:[[:space:]]*#' || true)"; [[ -n "$matched_lines" ]]; then
     while IFS= read -r matched_line; do
       bad "$relative_path:${matched_line%%:*}  按模式匹配杀进程（pkill 的 -f，或 killall）"
-      say "        $(printf '%s' "${matched_line#*:}" | cut -c1-80)"
+      say "        $(printf '%s' "${matched_line#*:}" | clip_text 80)"
       howto "模式串会出现在 wrapper 自己的命令行里，把自己的 shell 一起杀掉。" \
             "改成：先 ps 列出来看清楚，再用**字面量 pid** 分第二条命令杀；" \
             "统计类改用 /proc 结构化判据并排除自身进程树（rules/command-safety.md）。"
@@ -119,7 +132,7 @@ while IFS= read -r scanned_file; do
   if matched_lines="$(grep -nE "$PATTERN_PGREP_RE" "$scanned_file" | grep -vE '^[0-9]+:[[:space:]]*#' || true)"; [[ -n "$matched_lines" ]]; then
     while IFS= read -r matched_line; do
       bad "$relative_path:${matched_line%%:*}  pgrep 的全模式匹配 —— 与 pkill -f 同一个自杀风险，放进等待循环还会命中自己、永远不退出"
-      say "        $(printf '%s' "${matched_line#*:}" | cut -c1-80)"
+      say "        $(printf '%s' "${matched_line#*:}" | clip_text 80)"
       howto "模式串会命中 wrapper 自己的命令行：接 kill 是把自己的 shell 一起杀掉，放进 if / while / until 是永远为真；" \
             "先赋给变量再 kill、只是数一数，都一样。要杀先 ps 看清楚再用**字面量 pid** 分第二条命令杀；" \
             "等进程结束用写死的 pid（kill -0）或 wait；统计类改用 /proc 并排掉自己这一支进程树（rules/command-safety.md）。"
@@ -128,10 +141,22 @@ while IFS= read -r scanned_file; do
   fi
 
   # ── S4 会静默丢掉未提交改动的 git 命令 ──────────────────
-  if matched_lines="$(grep -nE "$S4_DISCARDING_GIT_COMMAND_PATTERN|$S4_HARD_RESET_PATTERN" "$scanned_file" | grep -vE '^[0-9]+:[[:space:]]*#' || true)"; [[ -n "$matched_lines" ]]; then
+  # here-doc 体是数据，换成空行再判（行号不变）；由 bash、sh、zsh 起头的那一行开的 here-doc 是喂给 shell 的代码，照判。
+  if matched_lines="$(awk -v HEREDOC_PATTERN="$HEREDOC_RE" '
+      {
+        if (heredoc_terminator != "") {
+          if ($0 == heredoc_terminator || $0 ~ ("^[ \t]*" heredoc_terminator "[ \t]*$")) { heredoc_terminator = ""; print ""; next }
+          print (heredoc_is_code ? $0 : ""); next
+        }
+        if ($0 !~ /^[ \t]*#/ && match($0, HEREDOC_PATTERN, heredoc_match)) {
+          heredoc_terminator = heredoc_match[2]
+          heredoc_is_code = ($0 ~ /^[ \t]*(bash|sh|zsh)([ \t]|$)/)
+        }
+        print
+      }' "$scanned_file" | grep -nE "$S4_DISCARDING_GIT_COMMAND_PATTERN|$S4_HARD_RESET_PATTERN" | grep -vE '^[0-9]+:[[:space:]]*#' || true)"; [[ -n "$matched_lines" ]]; then
     while IFS= read -r matched_line; do
       bad "$relative_path:${matched_line%%:*}  脚本里用了会丢掉未提交改动的 git 命令"
-      say "        $(printf '%s' "${matched_line#*:}" | cut -c1-80)"
+      say "        $(printf '%s' "${matched_line#*:}" | clip_text 80)"
       howto "checkout / restore / clean / reset --hard 会直接丢掉未提交的改动，而且没有 undo。" \
             "脚本跑的时候没人在旁边看 git status，所以别写进脚本。" \
             "真要在脚本里回到干净状态：先 git stash，或者整个仓拷一份出来在副本上做" \
@@ -147,9 +172,24 @@ while IFS= read -r scanned_file; do
       rm_segments="$(printf '%s\n' "${matched_line#*:}" | grep -oE "${S5_RECURSIVE_RM_PATTERN}[^;&|]*" || true)"
       unguarded="$(printf '%s\n' "$rm_segments" | grep -oE "$S5_UNGUARDED_PATH_ARGUMENT_PATTERN" || true)"
       unguarded="${unguarded%%$'\n'*}"
+      if [[ -z "$unguarded" ]]; then
+        # rm 的参数里没有没守卫的变量路径时，再看参数里的变量是不是在这份文件里由几段变量拼成：`:?` 挡不住其中一段为空。
+        joined_name=""
+        while IFS= read -r referenced_name; do
+          [[ -n "$referenced_name" ]] || continue
+          if grep -qE "${S5_JOINED_ASSIGNMENT_PATTERN//NAME/$referenced_name}" "$scanned_file"; then joined_name="$referenced_name"; break; fi
+        done <<< "$(printf '%s\n' "$rm_segments" | grep -oE '\$\{?[A-Za-z_][A-Za-z0-9_]*' | sed -E 's/^\$\{?//' || true)"
+        [[ -n "$joined_name" ]] || continue
+        bad "$relative_path:${matched_line%%:*}  rm -rf 作用在由几段变量拼成的变量上（$joined_name），其中一段为空就删到别处，「:?」只挡整串为空"
+        say "        $(printf '%s' "${matched_line#*:}" | clip_text 80)"
+        howto '删这种路径写字面的绝对路径，不用拼接变量；' \
+              '非用变量不可就逐段判非空再删（rules/command-safety.md）。'
+        failure_count=$((failure_count+1))
+        continue
+      fi
       [[ -n "$unguarded" ]] || continue
       bad "$relative_path:${matched_line%%:*}  rm -rf 作用在变量路径上（$unguarded），变量为空时会从根目录往下删"
-      say "        $(printf '%s' "${matched_line#*:}" | cut -c1-80)"
+      say "        $(printf '%s' "${matched_line#*:}" | clip_text 80)"
       howto '加空值守卫：把 "$directory/x" 写成 "${directory:?}/x" —— 变量为空时 shell 直接报错退出，' \
             '而不是把 rm -rf 指到 /x（rules/command-safety.md）。'
       failure_count=$((failure_count+1))
@@ -170,7 +210,7 @@ while IFS= read -r scanned_file; do
         continue
       fi
       bad "$relative_path:${matched_line%%:*}  不带参数的 wait —— 后台作业里红了几个，它的退出码还是 0"
-      say "        $(printf '%s' "$s6_wait_line" | cut -c1-80)"
+      say "        $(printf '%s' "$s6_wait_line" | clip_text 80)"
       howto "光秃的 wait 恒返回 0，并行跑的检测项全红了父进程也看不见。" \
             "一道并行化之后再也红不了的门禁，比串行的慢门禁危险得多。" \
             "两种收法：起的时候记 pids+=(\$!)，收的时候逐个 wait \"\$pid\" 取退出码；" \
@@ -185,7 +225,7 @@ while IFS= read -r scanned_file; do
     if matched_lines="$(grep -nE "$S7_PIPE_INTO_QUIET_GREP_PATTERN" "$scanned_file" | grep -vE '^[0-9]+:[[:space:]]*#' || true)"; [[ -n "$matched_lines" ]]; then
       while IFS= read -r matched_line; do
         bad "$relative_path:${matched_line%%:*}  pipefail 下的管道以 grep -q 收尾 —— 命中会被读成没命中"
-        say "        $(printf '%s' "${matched_line#*:}" | cut -c1-80)"
+        say "        $(printf '%s' "${matched_line#*:}" | clip_text 80)"
         howto "grep -q 一命中就退出，前段吃 SIGPIPE，管道整体返回 141，而 if 把它读成「没命中」。" \
               "把前段的输出先落到变量，再对变量判：" \
               "out=\$(前段 || true); if grep -q '模式' <<<\"\$out\"; then …" \
@@ -201,9 +241,31 @@ while IFS= read -r scanned_file; do
       size_segments="$(printf '%s\n' "${matched_line#*:}" | grep -oE "$S8_SIZE_TEST_SEGMENT_PATTERN|$S8_STAT_SIZE_SEGMENT_PATTERN|$S8_FIND_SIZE_SEGMENT_PATTERN" || true)"
       grep -qE "$S8_PSEUDO_FILESYSTEM_PATH_PATTERN" <<<"$size_segments" || continue
       bad "$relative_path:${matched_line%%:*}  拿文件大小判 /proc、/sys、cgroupfs 下的文件空不空 —— 那里的文件大小不反映内容"
-      say "        $(printf '%s' "${matched_line#*:}" | cut -c1-80)"
+      say "        $(printf '%s' "${matched_line#*:}" | clip_text 80)"
       howto "procfs 与 cgroupfs 的文件大小报 0，sysfs 报 4096：[ -s ] 在前两处恒假、在 sysfs 恒真，stat 的 %s、find 的 -size / -empty 一样。" \
             "读出内容再判：[[ -n \"\$(< \"\$cgroup_directory/cgroup.procs\")\" ]]（rules/command-safety.md）。"
+      failure_count=$((failure_count+1))
+    done <<< "$matched_lines"
+  fi
+
+  # ── S9 对每个参数分别去前缀、去后缀 ─────────────────────
+  if matched_lines="$(grep -nE "$S9_PER_PARAMETER_TRIM_PATTERN" "$scanned_file" | grep -vE '^[0-9]+:[[:space:]]*#' || true)"; [[ -n "$matched_lines" ]]; then
+    while IFS= read -r matched_line; do
+      bad "$relative_path:${matched_line%%:*}  \${*#…} 或 \${@#…} 的模式里带空格——逐个参数各去一次，拼起来那一段去不掉"
+      say "        $(printf '%s' "${matched_line#*:}" | clip_text 80)"
+      howto "bash 对 \$* 与 \$@ 做 #、##、%、%% 时逐个参数各去一次再拼，模式里的空格只在拼好的串里出现，一处都去不掉。" \
+            "改法：先拼成一串再去：joined=\"\$*\"，再写 \"\${joined#* -- }\"（rules/command-safety.md）。"
+      failure_count=$((failure_count+1))
+    done <<< "$matched_lines"
+  fi
+
+  # ── S10 往人看的输出里按字节截 ──────────────────────────
+  if matched_lines="$(grep -nE "$S10_BYTE_CUT_PATTERN" "$scanned_file" | grep -vE '^[0-9]+:[[:space:]]*#' | grep -E "$S10_HUMAN_OUTPUT_PATTERN" | grep -v 'shell-lint:bytes-ok' || true)"; [[ -n "$matched_lines" ]]; then
+    while IFS= read -r matched_line; do
+      bad "$relative_path:${matched_line%%:*}  往人看的输出里按字节截（cut、head、tail 带 -c 这类）——多字节字会被截成半个"
+      say "        $(printf '%s' "${matched_line#*:}" | clip_text 80)"
+      howto "GNU 的 cut 带 -c、head 与 tail 带 -c 都按字节数；UTF-8 的汉字一个占三个字节，截在中间就留下半个字，读输出的一方按 UTF-8 解时报坏字节。" \
+            "改法：照 lib.sh 的 clip_text <字节数> 截（截完丢掉不成字的尾巴）；确实只截 ASCII 的（十六进制摘要这类），在那一行写 # shell-lint:bytes-ok <理由>（rules/command-safety.md）。"
       failure_count=$((failure_count+1))
     done <<< "$matched_lines"
   fi
