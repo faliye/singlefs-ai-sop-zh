@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # admission: always 交回与收工时各调一次，判的是此刻临时目录里还剩什么
 # run-condition: check test -d /proc :: 它按进程与 statx 认归属，只在 Linux 上用；别的系统上不装这个钩子
-"""子 agent 交回之前，它自己建的编译目录与仓副本还在不在（rules/session-wrapup.md「子 agent 交回之前，删掉自己建的编译目录与仓副本」）。
+"""子 agent 交回之前，它自己建的编译目录与仓副本还在不在（rules/command-safety.md「子 agent 交回之前，删掉自己建的编译目录与仓副本」）。
 
 钩子 claude-hooks/handback-scratch-check.sh 在交回工具（SubagentHandback）的 PreToolUse 与 SubagentStop 上调它。
 

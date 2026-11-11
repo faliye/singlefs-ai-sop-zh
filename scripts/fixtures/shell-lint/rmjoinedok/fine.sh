@@ -7,3 +7,6 @@ rm -rf "${cache:?}"
 rm -rf -- /home/someone/work/copy
 scratch="$(mktemp -d)"; fake="$scratch/bin"; mkdir -p "$scratch/a" "$scratch/b"
 rm -rf "${scratch:?}"
+root="$1"; name="$2"
+guarded_copy="${root:?}/${name:?}/copy"
+rm -rf -- "${guarded_copy:?}"

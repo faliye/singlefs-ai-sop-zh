@@ -12,7 +12,7 @@
 #   decisions/*.md（D 编号）各文件的首行 `## <编号> <简称> —— <状态>`，与 doc-lint 的「登记标题」同形态。别处登记的编号这一道不认。
 # 射程：默认扫仓根下的 .rs / .md（SCANNED_SUFFIXES；kb 目录、装进项目的 SOP 副本、fixtures 与冻结证据除外），
 #   也可以把目录作为参数给，后缀照样只认这两种。
-# 冻结证据按项目根的 .claude/doc-lint-exclude 绕开：原样保存的输入，要改只能连同重跑一起改（rules/evidence-discipline.md）。
+# 冻结证据按项目根的 .claude/doc-lint-exclude 绕开：原样保存的输入，要改只能连同重跑一起改。
 #
 # 用法：
 #   number-name-sync.sh [仓根] [要扫的目录…]

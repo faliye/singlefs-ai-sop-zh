@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # hook-events: PostToolUse:Bash
-# hook-registration: optional 只记不拒，命令已经跑完才提醒；不注册时这一条只靠 rules/verify-before-claiming.md 的文字，提交前的门禁不依赖它
+# hook-registration: optional 只记不拒，命令已经跑完才提醒；不注册时这一条只靠 rules/command-safety.md 的文字，提交前的门禁不依赖它
 # gate-similar: root-entry-guard.sh 同挂在 PostToolUse 的 Bash 上，但它判项目根下多出来的没登记条目、命中就报给 agent 要它处理；这里判命令文本里丢输出又判计数或空的写法、只记不拒，对象与处置都不同
 # gate-similar: pattern-process-guard.sh 同样逐条读 Bash 命令的文本找写法，但它挂在 PreToolUse、命中就拒绝执行；这里挂在执行之后、只记不拒，并进去就让一道闸里混着拒与不拒两种处置
 # gate-similar: shell-lint.sh 它判脚本文件里的 shell 写法、在门禁里判红；会话里手敲的命令不经过它，判据（丢输出的重定向与计数判空同在一条命令里）它也没有
@@ -8,7 +8,7 @@
 # admission: always Claude Code 在每一次 Bash 调用之后调它，每条命令都要现判
 # run-condition: command python3 gawk
 # Claude Code 的 PostToolUse 钩子（Bash 工具）：命令把输出丢进 /dev/null，同一条命令里又在判计数或空，记进检出记录、在结果里提醒一句，不拒绝
-# （rules/verify-before-claiming.md「拿来下结论的命令不丢输出」）。
+# （rules/command-safety.md「拿来下结论的命令不丢输出」）。
 #
 # 判据（判定在内嵌的 python 的 judge_command）：
 #   丢输出：2>/dev/null、&>/dev/null、>/dev/null 2>&1（DISCARD_FORMS）；
@@ -55,7 +55,7 @@ IFS= read -r -d '' JUDGE_PROGRAM <<'PY' || true
 import datetime, json, os, re, subprocess, sys, tempfile
 
 BREAK_SWITCH = os.environ.get("DISCARDED_OUTPUT_COUNT_CHECK_BREAK", "")
-RULE_REFERENCE = "rules/verify-before-claiming.md「拿来下结论的命令不丢输出」"
+RULE_REFERENCE = "rules/command-safety.md「拿来下结论的命令不丢输出」"
 ACKNOWLEDGEMENT_REASON_MINIMUM_CHARACTERS = 8
 RECORDED_COMMAND_MAXIMUM_CHARACTERS = 400
 DISCARD_FORMS = [
@@ -271,7 +271,7 @@ if [[ "${1:-}" == "--selftest" ]]; then
   done
   if ((${#silent_switches[@]})); then
     bad "有 ${#silent_switches[@]} 个弄坏开关打开后自证没红在点名的样本上（共 $switch_count 个）：${silent_switches[*]}"
-    howto "改样本让它红在 BREAK_SWITCH_CASES 点名的那一个，或改开关让它真的弄坏点名的那一处；两样都修不了就删掉这个开关（rules/test-discipline.md「每一个弄坏开关都必须会红」）。" \
+    howto "改样本让它红在 BREAK_SWITCH_CASES 点名的那一个，或改开关让它真的弄坏点名的那一处；两样都修不了就删掉这个开关（rules/show-me-test.md「每一个弄坏开关都必须会红」）。" \
       "单跑：DISCARDED_OUTPUT_COUNT_CHECK_BREAK=<开关名> bash ${BASH_SOURCE[0]} --selftest"
     exit 1
   fi

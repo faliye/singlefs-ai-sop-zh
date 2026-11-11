@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """项目根 .claude/doc-lint-exclude 登记的冻结证据目录：只在这一处读。
 
-原样保存的证据不扫（rules/evidence-discipline.md「门禁也得绕开这批目录」）。doc-lint.sh 自己判这份清单写得对不对
+原样保存的证据不扫。doc-lint.sh 自己判这份清单写得对不对
 （理由、目录在不在、排没排到东西）；这里只读出目录，给按前缀跳过的几道门禁共用。
 
 不单独跑，由别的脚本按路径载入（preflight.py 的 load_package_module），函数照原名调。

@@ -5,7 +5,7 @@
 # admission: always Claude Code 在子 agent 交回与收工时调它，判的是此刻临时目录里还剩什么
 # run-condition: command python3
 # Claude Code 钩子（交回的尾门禁）：子 agent 交回之前，它自己建的编译目录与仓副本要删掉
-# （rules/session-wrapup.md「子 agent 交回之前，删掉自己建的编译目录与仓副本」）。
+# （rules/command-safety.md「子 agent 交回之前，删掉自己建的编译目录与仓副本」）。
 #
 # 判定全在 scripts/handback-scratch.py：临时目录里、在这个子 agent 自己的工具调用还没结束时建的、它的调用里提到过的
 # 编译目录、工作树与仓副本，还在、而且没说明为什么不删，就拦下，把清单交给它。它要做的：删掉，或者在交回报告里逐个写全路径、写明为什么不删。
@@ -97,7 +97,7 @@ judge_handback() { # judge_handback（钩子 JSON 在 stdin）→ 退出码 0 �
       '    交回报告里写一行删了哪些、各多大。' \
       '    报告、要入库的产物、主 agent 还要核的复跑材料不删；点到的不是你建的（前任、主 agent 或别的 agent 在用）也别动。' \
       "    $remedy" \
-      "    规矩见 $PACKAGE_ROOT/rules/session-wrapup.md「子 agent 交回之前，删掉自己建的编译目录与仓副本」。" \
+      "    规矩见 $PACKAGE_ROOT/rules/command-safety.md「子 agent 交回之前，删掉自己建的编译目录与仓副本」。" \
       ''
     printf '%s\n' "$judgement" | awk -F'\t' '{ if (NF >= 2) printf "  %s  %s\n", $1, $2; else print }'
   } >&2

@@ -4,7 +4,7 @@
 # run-condition: command python3
 # 工具层的闸注册着、而且会拒绝。
 #
-# 钩子被删掉或改坏时那道闸静默消失，只有门禁会在它消失时说话（rules/session-wrapup.md 第 4 条：能在工具层拦就在工具层拦）。
+# 钩子被删掉或改坏时那道闸静默消失，只有门禁会在它消失时说话。
 #
 # 判据，对项目登记的钩子目录（默认 `.claude/hooks/`）与装进来的 SOP 副本 `scripts/claude-hooks/` 下每个 `*.sh`：
 #   注册：`.claude/settings.json` 的 hooks.* 里有一条 command 指向它（按文件名的边界认，见 hook-registrations.py）；

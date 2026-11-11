@@ -35,7 +35,7 @@
 扫哪些：仓根下的每个顶层目录，SKIP_DIRECTORIES（.git、node_modules、target、fixtures）与点开头的不扫，点开头里 `.claude` 起头的照扫；
 往下走时 SKIPPED_DIRECTORY_NAMES（.git、target、node_modules、__pycache__）不进。
 不扫：项目根 `.claude/doc-lint-exclude` 登记的目录，那是原样保存的证据，门禁不许逼人回去改原件
-（rules/evidence-discipline.md「原样保存的证据不许事后改」），清单与 doc-lint 读的是同一份；没扫的文件数与解析不了的文件在统计里现算报出。
+，清单与 doc-lint 读的是同一份；没扫的文件数与解析不了的文件在统计里现算报出。
 
 RELAY_TIMING_LINT_IGNORE_OUTPUT=1 强制走「只看取时间、不看输出调用」的弱判据，--selftest 在它下面必须判红。
 

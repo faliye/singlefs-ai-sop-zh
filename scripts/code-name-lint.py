@@ -20,7 +20,12 @@
 登记：项目根 `.claude/code-names` 一行一条 `<正则>  # 理由`，代号整个匹配上某条正则就不判（项目自己的变异名、实验号这类编号体系）；
   正则写坏、理由不到 4 个字判红。
 
-够不着的（不判，不等于通过）：代码注释与 .md 以外的文本；基准里已经有的行（只判新加的，存量不回扫）；
+同一批新加的行另判两种写法：
+  ③ 拿 `⇒` 当连词（rules/writing-discipline.md「连词写成连词，名词串拆回句子」）：表格行（`|` 起头）与反引号里的不判；
+  ④ kb 文件里带日期的现状句（rules/kb-discipline.md「带日期的现状快照也是历史，会停在那一天」）：日期后面 4 个字以内接「现状」「目前状态」「当前状态」再接冒号。
+     kb 文件指 `.claude/kb-directories` 登记的目录（没登记就是 `.claude/kb/`）与仓根 `kb/` 下的 .md。
+
+够不着的（不判，不等于通过）：不带「现状」这类词的带日期现状句；名词串；代码注释与 .md 以外的文本；基准里已经有的行（只判新加的，存量不回扫）；
   别的形态的代号（三个以上字母接数字、带连字符的会话名这类）；写成全称但读的人照样不知道指什么的称呼。
 
 CODE_NAME_LINT_BREAK=<开关名> 打开一个弄坏开关（自证专用，门禁里不许设），开关表见 BREAK_SWITCHES。
@@ -58,6 +63,8 @@ BREAK_SWITCHES = {
     "html-comments-read": "HTML 注释里的放行",
     "step-numbers-flagged": "指编号步骤的放行",
     "file-declarations-ignored": "本页声明过的标号在本页放行",
+    "arrow-ignored": "拿箭头当连词",
+    "dated-status-ignored": "kb 里带日期的现状句",
 }
 
 TOKEN_BOUNDARY_CHARACTERS = r"A-Za-z0-9_./\-#@%$+"
@@ -74,6 +81,21 @@ FILE_DECLARED_TERMS = re.compile(r"<!--\s*doc-lint:not-numbers([^>]*?)-->")
 STEP_NUMBER_REFERENCE = re.compile(
     r"第\s*[0-9]+[a-z]\s*(?:步|条|节|项)|\b[Ss]teps?\s+[0-9]+[a-z]\b|(?:手順|ステップ)\s*[0-9]+[a-z]")
 FENCE_LINE = re.compile(r"^\s*(```|~~~)")
+ARROW_CONNECTIVE = "⇒"
+DATED_STATUS_SENTENCE = re.compile(r"20[0-9]{2}-[0-9]{2}-[0-9]{2}[^。；\n]{0,4}(?:现状|目前状态|当前状态)\s*[：:]")
+KB_DIRECTORIES_RELATIVE_PATH = os.path.join(".claude", "kb-directories")
+DEFAULT_KB_PREFIXES = (".claude/kb/", "kb/")
+KIND_CODE_NAME = "code-name"
+KIND_ARROW = "arrow"
+KIND_DATED_STATUS = "dated-status"
+ARROW_REMEDY = (
+    "该说「所以」「因为」「于是」「但是」的地方写连词，不用 ⇒；表格单元格里可以留符号"
+    "（rules/writing-discipline.md「连词写成连词，名词串拆回句子」）。"
+)
+DATED_STATUS_REMEDY = (
+    "现状句不带日期：删掉日期、保留事实，事实先现查一次，过时了就改成现值；那一天的样子要留的，写进文末「## 历史版本」"
+    "（rules/kb-discipline.md「带日期的现状快照也是历史，会停在那一天」）。"
+)
 
 CODE_NAME_REMEDY = (
     "代号只有起它的人知道指什么，读的人（别的会话、以后检索到这一行的模型）要么猜、要么去翻来源。"
@@ -97,6 +119,7 @@ class CodeNameHit:
     line_number: int
     code_name: str
     line_text: str
+    kind: str = KIND_CODE_NAME
 
 
 def break_switch() -> str:
@@ -169,7 +192,34 @@ def terms_declared_in_file(all_lines: list) -> set:
     return declared_terms
 
 
-def judge_lines(relative_path: str, all_lines: list, added_line_numbers: set, registered_patterns: list) -> list:
+def kb_prefixes(project_root: str) -> tuple:
+    """kb 文件在哪：项目登记的 kb 目录，没登记就是默认的那两处。"""
+    registered = []
+    try:
+        for line_text in pathlib.Path(project_root, KB_DIRECTORIES_RELATIVE_PATH).read_text(encoding="utf-8").splitlines():
+            directory = line_text.split("#", 1)[0].strip().strip("/")
+            if directory:
+                registered.append(directory + "/")
+    except (OSError, UnicodeDecodeError):
+        pass
+    return tuple(registered) if registered else DEFAULT_KB_PREFIXES
+
+
+def prose_hits_in_line(relative_path: str, line_number: int, line_text: str, kb_path_prefixes: tuple) -> list:
+    """③ 拿 ⇒ 当连词，④ kb 里带日期的现状句。"""
+    hits = []
+    text = judged_text(line_text)
+    if ARROW_CONNECTIVE in text and not line_text.lstrip().startswith("|") and break_switch() != "arrow-ignored":
+        hits.append(CodeNameHit(relative_path, line_number, ARROW_CONNECTIVE, line_text.strip(), KIND_ARROW))
+    if relative_path.startswith(kb_path_prefixes) and break_switch() != "dated-status-ignored":
+        dated_status = DATED_STATUS_SENTENCE.search(text)
+        if dated_status:
+            hits.append(CodeNameHit(relative_path, line_number, dated_status.group(0), line_text.strip(), KIND_DATED_STATUS))
+    return hits
+
+
+def judge_lines(relative_path: str, all_lines: list, added_line_numbers: set, registered_patterns: list,
+                kb_path_prefixes: tuple = DEFAULT_KB_PREFIXES) -> list:
     hits = []
     declared_terms = terms_declared_in_file(all_lines)
     inside_fence = False
@@ -185,6 +235,7 @@ def judge_lines(relative_path: str, all_lines: list, added_line_numbers: set, re
             if code_name in declared_terms:
                 continue
             hits.append(CodeNameHit(relative_path, line_number, code_name, line_text.strip()))
+        hits.extend(prose_hits_in_line(relative_path, line_number, line_text, kb_path_prefixes))
     return hits
 
 
@@ -204,6 +255,7 @@ def check(project_root: str) -> int:
     added_lines_by_path, _ = GATE_OVERLAP.changed_lines_by_path(project_root, diff_base, ["*.md"])
     frozen_prefixes = EVIDENCE_EXCLUDE.frozen_evidence_prefixes(project_root)
     installed_package_prefix = PACKAGE_FAMILY.installed_package_directory()
+    kb_path_prefixes = kb_prefixes(project_root)
     hits = []
     judged_line_count = 0
     judged_file_count = 0
@@ -222,7 +274,7 @@ def check(project_root: str) -> int:
             continue
         judged_file_count += 1
         judged_line_count += len(added_line_numbers)
-        hits.extend(judge_lines(relative_path, all_lines, added_line_numbers, registered_patterns))
+        hits.extend(judge_lines(relative_path, all_lines, added_line_numbers, registered_patterns, kb_path_prefixes))
     base_text = "空树（仓里还没有提交）" if diff_base == GATE_OVERLAP.EMPTY_TREE else diff_base
     statistics = (f"相对 {base_text}：判了 {judged_file_count} 个 .md 里新加的 {judged_line_count} 行，"
                   f"登记的编号体系 {len(registered_patterns)} 条；没判 {len(skipped_paths)} 个"
@@ -232,21 +284,26 @@ def check(project_root: str) -> int:
             print(f"      {problem}")   # gate-lint:detail
         print(f"  ✗ {REGISTRY_RELATIVE_PATH} 有 {len(registry_problems)} 行写坏了（{statistics}）")
         print("     → 怎么办：一行一条 `<正则>  # 理由`，正则整个匹配要放过的代号，理由写清它是哪一套编号、登记在哪，至少 4 个字。")
-    if hits:
-        for hit in hits:
+    for kind, complaint, remedy in ((KIND_CODE_NAME, "拿代号指东西", CODE_NAME_REMEDY),
+                                    (KIND_ARROW, "拿 ⇒ 当连词", ARROW_REMEDY),
+                                    (KIND_DATED_STATUS, "kb 里带日期的现状句", DATED_STATUS_REMEDY)):
+        kind_hits = [hit for hit in hits if hit.kind == kind]
+        if not kind_hits:
+            continue
+        for hit in kind_hits:
             print(f"      {hit.relative_path}:{hit.line_number}  {hit.code_name}  ← {hit.line_text[:80]}")   # gate-lint:detail
-        print(f"  ✗ 新加的行里有 {len(hits)} 处拿代号指东西（{statistics}）")
-        print(f"     → 怎么办：{CODE_NAME_REMEDY}")
+        print(f"  ✗ 新加的行里有 {len(kind_hits)} 处{complaint}（{statistics}）")
+        print(f"     → 怎么办：{remedy}")
     if registry_problems or hits:
         return 1
     if judged_line_count == 0:
         print(f"  ! 这一次没有新加的 .md 行，本阶段无对象可判（{statistics}）")
         return EXIT_NOTHING_TO_JUDGE
-    print(f"  ✓ 新加的行里没有拿代号指东西（{statistics}）")
+    print(f"  ✓ 新加的行里没有拿代号指东西、拿 ⇒ 当连词、kb 里带日期的现状句（{statistics}）")
     return 0
 
 
-# 样本：(样本名, 内容, 新加的行号；None 表示全部是新加的, 期望的红处数)
+# 样本：(样本名, 内容, 新加的行号；None 表示全部是新加的, 期望的红处数[, 文件路径；不写就是 sample.md])
 SELFTEST_REGISTRY = (re.compile(r"E[0-9]+"), re.compile(r"[0-9]+[a-z]-mutant"))
 SELFTEST_CASES = (
     ("数字接小写字母", "第 5a 批交回，9g 另报一处。\n", None, 2),
@@ -265,15 +322,20 @@ SELFTEST_CASES = (
     ("本页声明过的标号在本页放行", "<!-- doc-lint:not-numbers PQ14 PD19 -->\nPQ14 与 PD19 照旧，SC02 没声明。\n", {2}, 1),
     ("只判新加的行", "旧行写着 5a。\n新行干净。\n", {2}, 0),
     ("新加的行在围栏之后照判", "```\nx\n```\n新加的 7c 交回。\n", {4}, 1),
+    ("拿箭头当连词", "两边对不上 ⇒ 这一轮作废。\n", None, 1),
+    ("表格行与反引号里的箭头放行", "| 打中 ⇒ 回落 | 记一次输 |\n写法是 `a ⇒ b`。\n", None, 0),
+    ("kb 里带日期的现状句", "2026-01-05 现状：门禁有 21 个阶段。\n", None, 1, ".claude/kb/gates.md"),
+    ("kb 里带日期的事件句放行", "2026-01-05 改成按周合批。\n", None, 0, ".claude/kb/gates.md"),
+    ("kb 以外带日期的现状句不判", "2026-01-05 现状：门禁有 21 个阶段。\n", None, 0, "records/notes.md"),
 )
 
 
 def run_selftest_cases() -> list:
     misjudged_cases = []
-    for case_name, content, added_line_numbers, expected_red_count in SELFTEST_CASES:
+    for case_name, content, added_line_numbers, expected_red_count, *case_path in SELFTEST_CASES:
         all_lines = content.splitlines()
         judged_line_numbers = set(range(1, len(all_lines) + 1)) if added_line_numbers is None else added_line_numbers
-        red_count = len(judge_lines("sample.md", all_lines, judged_line_numbers, list(SELFTEST_REGISTRY)))
+        red_count = len(judge_lines(case_path[0] if case_path else "sample.md", all_lines, judged_line_numbers, list(SELFTEST_REGISTRY)))
         if red_count != expected_red_count:
             misjudged_cases.append((case_name, expected_red_count, red_count))
     return misjudged_cases

@@ -3,6 +3,28 @@
 规则与门禁的版本历史。`CLAUDE.md` 与 `rules/*.md` 不留历史节（design-doc-discipline），
 历史一律记在这里；逐条改动细节见 `git log`，提交信息即变更说明。
 
+## 0.0.72 — 2026-11-11
+
+**本包只收有检查判的规则：六篇没有检查的规则与各篇里靠 review 的小节挪出本包，放回项目本地；沟通纪律的「不写客套」改由收工钩子 `courtesy-phrase-check.sh` 判；shell-lint 的 S5 判拼接行里没带守卫的那一段；代号检查新加 `⇒` 与带日期的现状句；rules-lint 新加「正文不写某一个使用者的东西」。**
+
+规则：
+- 删掉 `evidence-discipline.md`、`engineering-philosophy.md`、`machine-first.md`、`test-discipline.md`、`verify-before-claiming.md`、`session-wrapup.md`。其中有检查判的小节搬进留下的规则：「分段计时在被测进程里计」「每一个弄坏开关都必须会红」进 `show-me-test.md`，「拿来下结论的命令不丢输出」「子 agent 交回之前，删掉自己建的编译目录与仓副本」进 `command-safety.md`，「转述别处的做法，带出处或原文」进 `communication-discipline.md`。
+- `sop-first.md`「边界」：变不成检查的规则不进本包，放项目本地的 `.claude/rules/`；本包的规则每一节写明由哪个脚本或钩子判。
+- `communication-discipline.md`：只留「不写客套」（收工钩子判）与「转述别处的做法」（派活前的钩子判）。
+- `pushback-discipline.md`：改题「警告记录」，只留警告文件的格式。
+- `command-safety.md`：`rm -rf` 的路径由几段变量拼成时，拼的那一行每一段都带 `${名:?}` 守卫。
+- `rules-discipline.md` 第 8 条、`kb-discipline.md` 第 8 条、`writing-discipline.md`：写明各由哪个脚本判哪一半。
+- `code-discipline.md`、`design-doc-discipline.md`、`show-me-test.md`、`writing-discipline.md`：靠 review 的小节挪出本包。
+- 三语 `CLAUDE.md` 与项目模板：`@` 常驻九篇，`code-discipline.md` 与 `preflight-discipline.md` 改成写代码或脚本之前读一次；规则与脚本的改动不等发版就同步到使用者项目的副本。
+
+脚本与门禁：
+- `claude-hooks/courtesy-phrase-check.sh` 与 `courtesy-phrase.py`（新）：收工时判这一轮最后一条回复里有没有词表里的客套话，有就拦下重写，同一条回复只拦一次；挂 `Stop` 与 `SubagentStop`。
+- `shell-lint.sh`：S5 对拼出来的变量改判拼的那一行，有一段展开没带 `${名:?}` 就红。
+- `code-name-lint.py`：新加 `⇒` 当连词（表格行与反引号里不判）、kb 里日期后接「现状」「目前状态」「当前状态」加冒号的句子；新加弄坏开关 `arrow-ignored`、`dated-status-ignored`。
+- `rules-lint.sh`：新加判法「使用者的东西」：使用它的项目的名字、门禁目录里带序号的具体文件名；只判本包自己的规则。
+- `selftest.sh`：接上上面几项的样本与弄坏开关。
+- 各脚本与钩子的出路、文件头里指向已挪走规则的地方改指到留下的规则。
+
 ## 0.0.71 — 2026-11-11
 
 **新加规则「沟通纪律」（对话简洁、不写客套、不为照顾情绪软化判断）与 skill `halt`；shell-lint 新加 S9（`$*`、`$@` 去前缀的模式里带空格）、S10（往人看的输出里按字节截）并判拼接变量上的 `rm -rf`；gate-lint 新加「跳过数带逐条」；新加可选钩子 `discarded-output-count-check.sh`；测试纪律与现查规则各补几条。**

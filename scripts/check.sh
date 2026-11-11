@@ -78,7 +78,7 @@ for clippy_combination in "${CLIPPY_FEATURE_COMBINATIONS[@]}"; do
     || die "clippy 有告警（按 -D warnings 视为错误），或者踩了编码纪律的某一条（特性组合：$clippy_combination；退出码 $?）" \
     "上面每条告警都指着文件和行号，逐条改。编码纪律那几条的写法见 rules/code-discipline.md。" \
     "确有必要保留的，在那一处写 #[allow(<lint>, reason = \"为什么\")]，理由写进 reason——" \
-    "不要整仓关掉 -D warnings（rules/command-safety.md「脚本改文件之后要回读确认，警告是免费的信号」）。"
+    "不要整仓关掉 -D warnings。"
 done
 ok "clippy 通过（${#CLIPPY_FEATURE_COMBINATIONS[@]} 趟特性组合：${CLIPPY_FEATURE_COMBINATIONS[*]}）"
 

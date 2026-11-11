@@ -7,7 +7,7 @@
 """派给子 agent 的提示、发给别的会话的消息里，借用别处口径的句子要带出处：同一句里有 `路径:行号`，或者原文引用。
 
 「与 X 同口径」「照 X 那一份」「同 X」这类话，是写的人凭印象把 X 的做法转述给对方；X 实际怎么做的，对方看不到，
-转述错了对方就照着错的做（rules/verify-before-claiming.md「转述别处的做法，带出处或原文」）。
+转述错了对方就照着错的做（rules/communication-discipline.md「转述别处的做法，带出处或原文」）。
 
 用法：
     borrowed-convention.py --hook       # 从标准输入读 Claude Code PreToolUse 钩子的 JSON（Agent / Task 的 prompt、SendMessage 的 message）
@@ -71,7 +71,7 @@ REMEDY = (
     "这一句说「照别处的做法办」，却没给出别处到底怎么做：对方看到的只是你的转述，转述错了它就照错的做。"
     "改法（任选一样，写在同一句里）：写出 `路径:行号` 让它自己去读；或把那一处的原文用「」引进来；"
     "或写出路径加反引号里的函数名、或「」里的标题。拿不准原文是什么，先自己读一遍再派"
-    "（rules/verify-before-claiming.md「转述别处的做法，带出处或原文」）。"
+    "（rules/communication-discipline.md「转述别处的做法，带出处或原文」）。"
 )
 
 

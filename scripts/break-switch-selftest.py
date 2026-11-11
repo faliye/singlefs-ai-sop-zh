@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """python 写的门禁与钩子共用的自证收尾：弄坏开关下怎么报、逐个打开弄坏开关核它红在点名的样本上
-（rules/test-discipline.md「每一个弄坏开关都必须会红」）。
+（rules/show-me-test.md「每一个弄坏开关都必须会红」）。
 
 约定：被测脚本带 `--selftest` 时先判自己的红绿样本，得到判错的样本列表 `[(样本名, 期望, 实际), …]`，交给 finish_selftest：
   环境变量里开着弄坏开关时按开关报；没开时判错就点名，再逐个开关另起子进程跑 `<脚本> --selftest`，
@@ -54,7 +54,7 @@ def verify_break_switches(script_path, environment_variable, break_switches):
         print(f"      {switch_name}：退出码 {returncode}，或者没有红在「{expected_case_name}」上")   # gate-lint:detail
     print(f"  ✗ 有 {len(silent_switches)} 个弄坏开关打开后自证没红在点名的样本上（共 {len(break_switches)} 个开关）")
     print("     → 怎么办：改样本让它红在开关表点名的那一格，或改开关让它真的弄坏点名的那一处；两样都修不了就删掉这个开关"
-          f"（rules/test-discipline.md「每一个弄坏开关都必须会红」）。单跑：{environment_variable}=<开关名> python3 {os.path.realpath(script_path)} --selftest")
+          f"（rules/show-me-test.md「每一个弄坏开关都必须会红」）。单跑：{environment_variable}=<开关名> python3 {os.path.realpath(script_path)} --selftest")
     return 1
 
 

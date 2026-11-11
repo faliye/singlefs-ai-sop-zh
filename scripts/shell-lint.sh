@@ -26,6 +26,7 @@
 #   S5 `rm -rf "$VAR/..."` 没有空值守卫
 #      变量为空时它从根目录往下删。写成 `"${VAR:?}/..."` 就拦住了。
 #      由几段变量拼成的变量（`dir="$root/$name/x"` 之后 `rm -rf "${dir:?}"`）另判：`:?` 只挡整串为空，挡不住其中一段为空。
+#      拼的那一行每一段都带守卫（`dir="${root:?}/${name:?}/x"`）的放行：有一段没带就判红。
 #
 #   S6 不带参数的 `wait`
 #      它的退出码恒为 0，并行跑的检测项红了几个父进程都不知道；后台体里写 `|| bad=1` 也一样（那是 S1）。
@@ -45,7 +46,7 @@
 #   S10 往人看的输出里按字节截：同一行里有 cut 带 -c 或 -b、head 或 tail 带 -c，又往外打（say、bad、howto、echo、printf 或 ✗）
 #      GNU 的这几种都按字节数，多字节字截在中间就留下半个字。只截 ASCII 的（十六进制摘要这类）在那一行写 # shell-lint:bytes-ok <理由>。
 #
-# command-safety.md 另外几条（echo 假装成功、破坏性操作先看清楚）判据还没想清楚，没做；管道退出码只做了 S7 那一种。
+# 管道退出码只做了 S7 那一种。
 #
 # 用法：
 #   SHELL_LINT_DIR   要扫的目录（selftest 拿样本喂它用），默认扫整个包
@@ -75,7 +76,21 @@ S4_HARD_RESET_PATTERN="$CMD_POS"'git[[:space:]]+((-C[[:space:]]+[^[:space:]]+[[:
 S5_RECURSIVE_RM_PATTERN="$CMD_POS"'rm([[:space:]]+-[[:alnum:]-]+)*[[:space:]]+-[[:alnum:]-]*[rR]'
 S5_UNGUARDED_PATH_ARGUMENT_PATTERN='\$(\{[A-Za-z_][A-Za-z0-9_]*\}|[A-Za-z_][A-Za-z0-9_]*)"?/'
 # 值只取到这一个赋值为止：带双引号的到收尾的引号，不带的到空白或 `;`；同一行后面别的赋值另算。
-S5_JOINED_ASSIGNMENT_PATTERN='(^|[;&|[:space:]])(local[[:space:]]+|export[[:space:]]+|declare[[:space:]]+(-[[:alpha:]]+[[:space:]]+)?)?NAME=("[^"]*\$(\{[A-Za-z_][A-Za-z0-9_]*\}|[A-Za-z_][A-Za-z0-9_]*)/[^"]*\$(\{|[A-Za-z_])[^"]*"|[^[:space:];"'"'"']*\$(\{[A-Za-z_][A-Za-z0-9_]*\}|[A-Za-z_][A-Za-z0-9_]*)/[^[:space:];"'"'"']*\$(\{|[A-Za-z_])[^[:space:];"'"'"']*)'
+S5_ASSIGNMENT_VALUE_PATTERN='(^|[;&|[:space:]])(local[[:space:]]+|export[[:space:]]+|declare[[:space:]]+(-[[:alpha:]]+[[:space:]]+)?)?NAME=("[^"]*"|[^[:space:];"'"'"']*)'
+S5_EXPANSION_PATTERN='\$\{?[A-Za-z_][A-Za-z0-9_]*(:\?)?'
+# 一个变量算「由几段变量拼成、有一段没守卫」：这份文件里给它赋的某个值带 `/`、里面至少两处变量展开、其中至少一处不是 `${名字:?…}`。
+s5_joined_with_unguarded_segment() { # s5_joined_with_unguarded_segment <变量名> <文件> → 是就退 0
+  local variable_name="$1" file="$2" assignment value expansions
+  while IFS= read -r assignment; do
+    [[ -n "$assignment" ]] || continue
+    value="${assignment#*"$variable_name"=}"
+    [[ "$value" == */* ]] || continue
+    expansions="$(grep -oE "$S5_EXPANSION_PATTERN" <<<"$value" || true)"
+    [[ "$(grep -c . <<<"$expansions" || true)" -ge 2 ]] || continue
+    if grep -qvE ':\?$' <<<"$expansions"; then return 0; fi
+  done <<< "$(grep -vE '^[[:space:]]*#' "$file" | grep -oE "${S5_ASSIGNMENT_VALUE_PATTERN//NAME/$variable_name}" || true)"
+  return 1
+}
 
 # S6：只判后面什么都不跟的：`wait "$pid"`、`wait -n`、`wait $job` 都收得到退出码，不判。
 # 结尾的 `;` 与行尾注释算不跟参数：`wait;` 与 `wait  # 等虚机` 一样吃掉失败。
@@ -177,13 +192,13 @@ while IFS= read -r scanned_file; do
         joined_name=""
         while IFS= read -r referenced_name; do
           [[ -n "$referenced_name" ]] || continue
-          if grep -qE "${S5_JOINED_ASSIGNMENT_PATTERN//NAME/$referenced_name}" "$scanned_file"; then joined_name="$referenced_name"; break; fi
+          if s5_joined_with_unguarded_segment "$referenced_name" "$scanned_file"; then joined_name="$referenced_name"; break; fi
         done <<< "$(printf '%s\n' "$rm_segments" | grep -oE '\$\{?[A-Za-z_][A-Za-z0-9_]*' | sed -E 's/^\$\{?//' || true)"
         [[ -n "$joined_name" ]] || continue
         bad "$relative_path:${matched_line%%:*}  rm -rf 作用在由几段变量拼成的变量上（$joined_name），其中一段为空就删到别处，「:?」只挡整串为空"
         say "        $(printf '%s' "${matched_line#*:}" | clip_text 80)"
-        howto '删这种路径写字面的绝对路径，不用拼接变量；' \
-              '非用变量不可就逐段判非空再删（rules/command-safety.md）。'
+        howto '拼的那一行每一段都带上守卫，例： dir="${root:?}/${name:?}/x"，再 rm -rf "${dir:?}"；' \
+              '路径是固定的就直接写字面的绝对路径（rules/command-safety.md）。'
         failure_count=$((failure_count+1))
         continue
       fi

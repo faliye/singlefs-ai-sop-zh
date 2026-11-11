@@ -228,7 +228,7 @@ if [[ $LANGUAGE_FORCED -eq 1 ]]; then
 fi
 
 # ── 原样保存的证据：扫描要绕开 ──────────────────────────
-# 原样存下的提示与原始输出，事后改一个字就对不上产物（rules/evidence-discipline.md「原样保存的证据不许事后改」），
+# 原样存下的提示与原始输出，事后改一个字就对不上产物，
 # 由项目登记进 $PROJECT_ROOT/.claude/doc-lint-exclude 绕开扫描，一行一条 `<相对目录>  # 为什么`。
 # 理由不许省：排除范围会被照抄，抄的人得看得见为什么。排除项一律报出来：静悄悄少扫一批文件，和没实现长得一样。
 EXCLUDE_FILE="$PROJECT_ROOT/.claude/doc-lint-exclude"
@@ -1042,7 +1042,7 @@ if [[ -d "$warnings_directory" ]]; then
       bad "$warning_relative_path  警告记录的文件名必须是 YYYY-MM-DD.md"
       howto "按日期建文件，一天一个，例： .claude/warnings/2026-09-06.md" \
             "分日期是为了不用回头改旧文件——警告写下就是当时的记录" \
-            "（rules/evidence-discipline.md：原样保存的证据不许事后改）。"
+            "。"
       metadata_failure_count=$((metadata_failure_count+1)); continue
     fi
     warning_problems="$(awk -v proposal_item="${WARNING_RECORD_ITEMS[0]}" -v objection_item="${WARNING_RECORD_ITEMS[1]}" -v risk_item="${WARNING_RECORD_ITEMS[2]}" -v outcome_item="${WARNING_RECORD_ITEMS[3]}" '

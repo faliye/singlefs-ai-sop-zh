@@ -4,7 +4,7 @@
 # run-condition: command git python3
 # 本次新增的历史条目有没有撞号。
 #
-# 「（其 <序号>）」编号先到先得（rules/session-wrapup.md 第 4 条）：同一位置下两条同号，拿它当锚点的引用就指不清。
+# 「（其 <序号>）」编号先到先得：同一位置下两条同号，拿它当锚点的引用就指不清。
 # 位置钥匙是「最近的 `## ` 标题 + 最近的 `### 日期` + 点名词（已定项 <序号> / E<序号> 这类，没有就用去掉编号的整句）」，
 # 同一把钥匙下序号撞了才算撞号；钥匙怎么取在 history-ordinal-keys.py。
 #
@@ -107,7 +107,6 @@ if ((${#new_collisions[@]})); then
   printf '     %s\n' "${new_collisions[@]}"
   howto "取号前先查同一个『## 节 + 日期 + 点名词』下已经用到的最大号（grep 那一节那个日期块下的「（其…）」）。"
   howto "把自己这条改成下一个没被占的号——先到先得，改别人已提交的那条会改坏引用它的锚点。"
-  howto "并发会话的完整对法见 rules/session-wrapup.md 第 4 条。"
   exit 1
 fi
 ok "本次新增的历史条目没有撞号（查了 $checked_file_count 份变更史，窗口从 $DIFF_BASE 起；存量 $legacy_collision_count 处撞号不在本阶段射程，见文件头）"

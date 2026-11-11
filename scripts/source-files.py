@@ -3,7 +3,7 @@
 
 扫哪些：仓根下的每个顶层目录，SKIP_TOP_DIRECTORIES（.git、node_modules、target、fixtures）与点开头的不扫，点开头里 `.claude` 起头的照扫；
 往下走时 SKIPPED_DIRECTORY_NAMES（.git、target、node_modules、__pycache__）不进。
-不扫：项目根 `.claude/doc-lint-exclude` 登记的目录（evidence-exclude.py 读），那是原样保存的证据（rules/evidence-discipline.md「原样保存的证据不许事后改」）；
+不扫：项目根 `.claude/doc-lint-exclude` 登记的目录（evidence-exclude.py 读），那是原样保存的证据；
 每个登记目录里跳过了几个文件现数出来，交给调用方报进统计。
 
 不单独跑，由 relay-timing-lint.py、duplicate-definitions.py 与 code-name-lint.py（只用 default_root）按路径载入（preflight.py 的 load_package_module），函数照原名调；

@@ -8,6 +8,9 @@
 #   带日期的行：「」与反引号里的日期不算（引的小节名自带日期是引用，起算日、路径里的日期是参数）。
 #   解释性段落、解释性半句、词法说明：词表在 PARAGRAPH_LABELS 到 LEXICAL_EXPLANATIONS 那几个常量。
 #   没带劝阻句的历史链接：链到 records/ 或 CHANGELOG.md 而同一行没有劝阻句；读的人默认跟着链接走，跟过去就把分出去的历史又装回上下文。反引号里的路径不判。
+#   使用者的东西（只判本包自己的规则，rules/rules-discipline.md 第 8 条）：使用它的项目的名字（包族名去掉 `-ai-sop` 剩下的那一段，后面不跟 `-ai-sop`）、
+#     门禁目录里带序号的具体文件名（`gate.d/<数字>-`）。项目自己的 `.claude/rules/` 不判这一条；RULES_LINT_SHARED=1 只给门禁自证用，强制照本包的规则判。
+#     认不出的：使用者的决策号、实验号、别的路径，靠 review。
 # 围栏里的行不判；表格行不判解释性段落、解释性半句与词法说明。认不出的（不在标点之后的因果、表格里的解释、不以那几个词起头的论证标题）靠 review。
 #
 # 语言按本包 I18N 的 this= 取，词表在 WORDS_BY_LANGUAGE。英文、日文判记录小节、论证小节、带日期的行与没带劝阻句的历史链接，解释性段落与半句只认「标签词加冒号」；
@@ -63,7 +66,7 @@ case "$RULES_LANGUAGE" in
     exit 77 ;;
 esac
 
-RULES_LINT_SCAN="$RULES_DIRECTORY" RULES_LINT_ROOT="$PROJECT_ROOT" RULES_LINT_FILES="${RULES_LINT_FILES:-}" \
+RULES_LINT_PACKAGE_ROOT="$PACKAGE_ROOT" RULES_LINT_SCAN="$RULES_DIRECTORY" RULES_LINT_ROOT="$PROJECT_ROOT" RULES_LINT_FILES="${RULES_LINT_FILES:-}" \
   RULES_LINT_LANGUAGE="$RULES_LANGUAGE" python3 - <<'PY'
 import glob, os, re, sys
 
@@ -203,6 +206,21 @@ def paragraph_opener(first_line):
 history_sections, argument_sections, dated_lines_found = [], [], []
 explanatory_paragraphs, explanatory_half_sentences = [], []
 lexical_explanations, bare_links = [], []
+consumer_mentions = []
+# 使用者的东西：只在扫本包自己的规则时判（项目根就是包根），或自证用 RULES_LINT_SHARED=1 强制。
+package_root = os.path.realpath(os.environ["RULES_LINT_PACKAGE_ROOT"])
+package_family = os.path.basename(package_root)
+try:
+    for i18n_line in open(os.path.join(package_root, "I18N"), encoding="utf-8"):
+        if i18n_line.startswith("family=") and i18n_line.split("=", 1)[1].strip():
+            package_family = i18n_line.split("=", 1)[1].strip()
+except OSError:
+    pass
+PACKAGE_SUFFIX = "-ai-sop"
+consumer_name = package_family[:-len(PACKAGE_SUFFIX)] if package_family.endswith(PACKAGE_SUFFIX) else ""
+JUDGE_CONSUMER = os.environ.get("RULES_LINT_SHARED") == "1" or project_root == package_root
+CONSUMER_NAME = re.compile(rf"(?<![A-Za-z0-9_-]){re.escape(consumer_name)}(?!{re.escape(PACKAGE_SUFFIX)})(?![A-Za-z0-9_])", re.IGNORECASE) if consumer_name else None
+NUMBERED_STAGE_FILE = re.compile(r"gate\.d/[0-9]+-")
 scanned_lines = dated_only_in_quotes = lexical_lines = 0
 
 for path in scanned_targets:
@@ -261,6 +279,11 @@ for path in scanned_targets:
                     lexical_explanations.append(f"{location}（{kind}「{match.group(0).strip()}」）：…{unquoted_line[excerpt_start:match.end() + 24].strip()}…")
         if HISTORY_LINK.search(line) and not DISCOURAGEMENT.search(line):
             bare_links.append(f"{location}：{line.strip()[:90]}")
+        if JUDGE_CONSUMER:
+            for pattern, kind in ((CONSUMER_NAME, "使用者项目的名字"), (NUMBERED_STAGE_FILE, "门禁目录里带序号的具体文件名")):
+                match = pattern.search(line) if pattern is not None else None
+                if match:
+                    consumer_mentions.append(f"{location}（{kind}「{match.group(0)}」）：{line.strip()[:90]}")
     index = 0
     while PROSE_CHECKS and index < len(lines):
         if not starts_paragraph[index]:
@@ -316,6 +339,10 @@ report(bare_links, "处指向历史的链接没带劝阻句：",
        f"在同一行写上{WORDS['discouragement_example']}，一字不许省；",
        "指的不是历史，就别链到 records/ 或 CHANGELOG.md。")
 
+report(consumer_mentions, "处写了某一个使用者的东西（本包的规则不指名）：",
+       "改成不指名的形态：项目写成「项目」「使用者项目」，具体文件名写成 `.claude/gate.d/` 这类约定路径或 `<阶段名>` 占位；",
+       "只对那一个项目成立的内容挪到它自己的 `.claude/rules/`（rules/rules-discipline.md 第 8 条）。")
+
 if failed:
     sys.exit(1)
 
@@ -327,5 +354,5 @@ prose_text = (f"解释性段落 0、解释性半句 0、没带劝阻句的链接
               f"标签式解释 0、没带劝阻句的链接 0；以连词起头的段落与半句、词法说明在 {LANGUAGE} 上未实现，没判；")
 print(f"  ✓ 规则只写怎么做（语言 {LANGUAGE}；扫了 {len(scanned_targets)} 份文件 {scanned_lines} 行{skipped_text}；"
       f"记录小节 0、论证小节 0、带日期的行 0（另有 {dated_only_in_quotes} 行的日期只在引号或反引号里）、"
-      f"{prose_text.rstrip('；')}）")
+      f"{prose_text.rstrip('；')}；使用者的东西 " + ("0" if JUDGE_CONSUMER else "没判（不是本包自己的规则）") + "）")
 PY

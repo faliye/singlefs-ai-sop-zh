@@ -6,7 +6,7 @@
 # admission: always Claude Code 在每一次派子 agent、给别的会话发消息之前调它，每一次都要现判
 # run-condition: command python3
 # Claude Code 钩子：派给子 agent 的提示、发给别的会话的消息里，借用别处做法的句子（「与 X 同口径」「照 X 那一份」）
-#   同一句里要带 `路径:行号` 或原文引用（rules/verify-before-claiming.md「转述别处的做法，带出处或原文」）。
+#   同一句里要带 `路径:行号` 或原文引用（rules/communication-discipline.md「转述别处的做法，带出处或原文」）。
 #
 # 判定全在 scripts/borrowed-convention.py（它不是门禁阶段，只给这个钩子用），这里只转交钩子的 JSON，自证也由它做。
 # 退出码：拦下 2（这一次不派，stderr 交给 agent）；放行 0；判不了 1（照常执行，stderr 留一行原因）；准入与运行条件不满足 78。

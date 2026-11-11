@@ -6,7 +6,8 @@
 只有一个使用者。在这个仓里干活，同样受这些规则管。
 
 改规范本体**必须同时抬 `VERSION`**。
-发版按周合批：规则与脚本的改动先在工作区攒着，一周合一版；误报、误判的修正累积到那一版一起发；使用者项目随发版同步一次副本。
+发版按周合批：规则与脚本的改动先在工作区攒着，一周合一版；误报、误判的修正累积到那一版一起发。
+工作区的改动不等发版就同步到使用者项目的副本，下游要跟着改的同一轮改掉。改了 `scripts/` 的当天，在本仓与使用者项目的门禁目录上各跑一次 `shell-lint.sh` 与 `gate-lint.sh`，红的当场修或交给管它的会话。
 **哪些路径算「规范本体」，以 `scripts/version-discipline.sh` 里的 `GOVERNED` 为准**，
 清单只有那一处，这里不再抄一份。
 抬了版本就在 `CHANGELOG.md` 顶部给这一版写一节，每一版一节、不许跳号，由 `scripts/changelog-lint.sh` 判。
@@ -32,25 +33,21 @@
 
 ## 规则（始终生效）
 
+**本包只收有检查判的规则**：判不了的放项目本地的 `.claude/rules/`（`rules/sop-first.md`「边界」）。
 **解释和论证在 `rules/` 里是多余的。** 规则只写判据、步骤、射程与例外、默认做法、指向（`rules/rules-discipline.md` 第 1 条「正文只写四样」、第 2 条「判据留下，论证搬走」）。
 
-@rules/engineering-philosophy.md
 @rules/sop-first.md
 @rules/show-me-test.md
-@rules/machine-first.md
-@rules/code-discipline.md
 @rules/writing-discipline.md
 @rules/design-doc-discipline.md
 @rules/kb-discipline.md
 @rules/rules-discipline.md
-@rules/test-discipline.md
-@rules/evidence-discipline.md
-@rules/verify-before-claiming.md
 @rules/pushback-discipline.md
 @rules/communication-discipline.md
 @rules/command-safety.md
-@rules/preflight-discipline.md
-@rules/session-wrapup.md
+
+两篇不 `@` 常驻，写代码或脚本之前先整份读一次、之后按名字回查：`rules/code-discipline.md`、`rules/preflight-discipline.md`。
+<!-- doc-lint:read-once code-discipline.md preflight-discipline.md -->
 
 ## 分工判据
 

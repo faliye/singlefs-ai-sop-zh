@@ -6,7 +6,7 @@
 # 每个门禁脚本都要有样本或脚本化用例，包括 gate.sh 自己（整道门禁唯一的判决点）。
 # 两类盲区都要盯：该红不红（删掉一条检查，违规被放行）；该绿变红（删掉一条豁免，正常写法被误拒——门禁一旦开始误拒，人就会绕过它）。
 # 所以每个脚本既要有红样本，也要有踩在豁免边界上的绿样本（注释里的 bad、历史节里的「曾经 X」、heredoc 里的赋值、local 同名变量…）。
-# 等价变异不算盲区、不补样本（rules/test-discipline.md）：shell-lint 赋值循环里的 local/declare 跳过（`local_names[]` 预扫已经收了那些名字）、
+# 等价变异不算盲区、不补样本：shell-lint 赋值循环里的 local/declare 跳过（`local_names[]` 预扫已经收了那些名字）、
 # show-me-test 的 `test_files` 正则不要求 .rs（内容级检查兜住）、i18n-sync 的「缺 SOURCE-MANIFEST」检查（下游的清单比对兜住）。
 #
 # 两类用例：
@@ -319,7 +319,7 @@ for rules_lint_fixture_language in zh en ja; do
   for fixture_directory in "$fixtures_directory/$rules_lint_fixture_family"/*/; do
     [[ -d "$fixture_directory" ]] || continue
     spawn_fixture "$rules_lint_fixture_family/$(basename "$fixture_directory")" "$fixture_directory" \
-      env RULES_LINT_LANG="$rules_lint_fixture_language" RULES_LINT_DIR="$fixture_directory/rules" RULES_LINT_FILES="CLAUDE.md" bash "$SCRIPTS/rules-lint.sh" "$fixture_directory"
+      env RULES_LINT_SHARED=1 RULES_LINT_LANG="$rules_lint_fixture_language" RULES_LINT_DIR="$fixture_directory/rules" RULES_LINT_FILES="CLAUDE.md" bash "$SCRIPTS/rules-lint.sh" "$fixture_directory"
   done
 done
 collect_fixtures
@@ -385,6 +385,14 @@ run_scripted "discarded-output-count-check/DISCARDED_OUTPUT_COUNT_CHECK_BREAK=no
   env DISCARDED_OUTPUT_COUNT_CHECK_BREAK=no-bare-stderr bash "$SCRIPTS/claude-hooks/discarded-output-count-check.sh" --selftest
 run_scripted "discarded-output-count-check/弄坏开关的值不认要拒绝" 1 "DISCARDED_OUTPUT_COUNT_CHECK_BREAK 的值不认" -- \
   env DISCARDED_OUTPUT_COUNT_CHECK_BREAK=no-such-switch bash "$SCRIPTS/claude-hooks/discarded-output-count-check.sh" --selftest
+
+# ════ courtesy-phrase-check（收工钩子，判最后一条回复里的客套话）═══════
+# 样本在 courtesy-phrase.py 的 SELFTEST_CASES 里；它的 --selftest 另逐个打开弄坏开关，核每个都红在点名的样本上。
+head1 "门禁自证：courtesy-phrase-check 的判别力"
+run_scripted "courtesy-phrase-check/自证通过" 0 "courtesy-phrase 自证：" -- \
+  bash "$SCRIPTS/claude-hooks/courtesy-phrase-check.sh" --selftest
+run_scripted "courtesy-phrase-check/COURTESY_PHRASE_BREAK=quotes-read 必须判红" 1 "判错的样本：引号里举的例子放行（" -- \
+  env COURTESY_PHRASE_BREAK=quotes-read bash "$SCRIPTS/claude-hooks/courtesy-phrase-check.sh" --selftest
 
 # ════ proc.py（按进程号找、等、停）═══════════════════════
 # 它是钩子给出的替代写法，自证坏了等于出路是假的。三个破坏开关各关掉一样东西，自证必须判红。
@@ -808,12 +816,12 @@ printf '#!/usr/bin/env bash\n[[ "${1:-}" == --selftest ]] && { echo "  自证：
 chmod +x "$hooks_project/.claude/hooks/guard.sh"
 # 包自带的钩子也要注册：pattern-process-guard 挂 PreToolUse（rules/command-safety.md），
 # gate-reuse-check 可选，注册了就挂 Stop 与 SubagentStop（rules/sop-first.md「谁来查」），
-# handback-scratch-check 挂交回工具的 PreToolUse 与 SubagentStop（rules/session-wrapup.md「子 agent 交回之前，删掉自己建的编译目录与仓副本」）
+# handback-scratch-check 挂交回工具的 PreToolUse 与 SubagentStop（rules/command-safety.md「子 agent 交回之前，删掉自己建的编译目录与仓副本」）
 hooks_registered_settings() { # hooks_registered_settings <gate-reuse-check 挂在哪：yes 两个都挂 / no 只挂 Stop / none 不注册>
-  local gate_reuse_on_subagent_stop='' gate_reuse_on_stop='{"type":"command","command":"bash gate-reuse-check.sh"}'
+  local gate_reuse_on_subagent_stop='' gate_reuse_on_stop='{"type":"command","command":"bash gate-reuse-check.sh"},'
   [[ "$1" == yes ]] && gate_reuse_on_subagent_stop='{"type":"command","command":"bash gate-reuse-check.sh"},'
   [[ "$1" == none ]] && gate_reuse_on_stop=''
-  printf '{"hooks":{"PreToolUse":[{"matcher":"Write","hooks":[{"type":"command","command":"bash guard.sh"},{"type":"command","command":"bash pattern-process-guard.sh"}]},{"matcher":"Write|Edit|MultiEdit|NotebookEdit","hooks":[{"type":"command","command":"bash root-entry-guard.sh"}]},{"matcher":"Bash","hooks":[{"type":"command","command":"bash root-entry-guard.sh"}]},{"matcher":"Agent|Task|SendMessage","hooks":[{"type":"command","command":"bash borrowed-convention-guard.sh"}]},{"matcher":"SubagentHandback","hooks":[{"type":"command","command":"bash handback-scratch-check.sh"}]}],"PostToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"bash root-entry-guard.sh"},{"type":"command","command":"bash discarded-output-count-check.sh"}]}],"Stop":[{"hooks":[%s]}],"SubagentStop":[{"hooks":[%s{"type":"command","command":"bash handback-scratch-check.sh"}]}]}}\n' \
+  printf '{"hooks":{"PreToolUse":[{"matcher":"Write","hooks":[{"type":"command","command":"bash guard.sh"},{"type":"command","command":"bash pattern-process-guard.sh"}]},{"matcher":"Write|Edit|MultiEdit|NotebookEdit","hooks":[{"type":"command","command":"bash root-entry-guard.sh"}]},{"matcher":"Bash","hooks":[{"type":"command","command":"bash root-entry-guard.sh"}]},{"matcher":"Agent|Task|SendMessage","hooks":[{"type":"command","command":"bash borrowed-convention-guard.sh"}]},{"matcher":"SubagentHandback","hooks":[{"type":"command","command":"bash handback-scratch-check.sh"}]}],"PostToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"bash root-entry-guard.sh"},{"type":"command","command":"bash discarded-output-count-check.sh"}]}],"Stop":[{"hooks":[%s{"type":"command","command":"bash courtesy-phrase-check.sh"}]}],"SubagentStop":[{"hooks":[%s{"type":"command","command":"bash handback-scratch-check.sh"},{"type":"command","command":"bash courtesy-phrase-check.sh"}]}]}}\n' \
     "$gate_reuse_on_stop" "$gate_reuse_on_subagent_stop" > "$hooks_project/.claude/settings.json"
 }
 hooks_registered_settings yes
@@ -1097,7 +1105,7 @@ run_scripted "soft-links/不在 git 仓里照样扫文件系统" 1 "不在 git �
   python3 "$SCRIPTS/soft-links.py" "$soft_links_not_git"
 
 # ── 代号：新加的行里拿代号指东西 ──────────────────────
-run_scripted "code-name-lint/自证 16 个样本判得对、8 个弄坏开关都红" 0 "自证：16 个红绿样本判得对；8 个弄坏开关逐个打开" -- \
+run_scripted "code-name-lint/自证 21 个样本判得对、10 个弄坏开关都红" 0 "自证：21 个红绿样本判得对；10 个弄坏开关逐个打开" -- \
   python3 "$SCRIPTS/code-name-lint.py" --selftest
 code_name_repository="$temporary_directory/code-name"; mkdir -p "$code_name_repository/records" "$code_name_repository/.claude"
 git -C "$code_name_repository" init -q
@@ -1562,7 +1570,7 @@ gate_package="$temporary_directory/gate-red-preflight-lint"; make_gate_package "
 printf '#!/usr/bin/env python3\n%s\nprint("  桩 preflight-lint 判红")\nraise SystemExit(1)\n' "$STUB_CONDITIONS" > "$gate_package/scripts/preflight-lint.py"
 run_scripted "gate/preflight-lint 红则门禁红" 1 门禁未通过 "桩 preflight-lint 判红" -- bash "$gate_package/scripts/gate.sh" "$gate_package"
 
-# --staged：别的会话没暂存的改动不算，暂存了的算（rules/session-wrapup.md 第 4 条）。
+# --staged：别的会话没暂存的改动不算，暂存了的算。
 # 同一处改动不带 --staged 时要算进来——少了这一例，「--staged 的绿」分不清是没算进来还是那个阶段根本不红。
 make_staged_project() { # make_staged_project <目录>：带一个项目本地阶段的最小项目仓，kb/ 里出现 BAD 就红
   local project_directory="$1"

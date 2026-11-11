@@ -46,7 +46,7 @@ set -- ${GATE_ROOT_ARGUMENTS[@]+"${GATE_ROOT_ARGUMENTS[@]}"}
 
 # ── --staged：只拿「HEAD + 暂存区」跑整道门禁 ─────────────
 # 几个会话共写一个仓时，工作区里混着别人没收尾的改动与未跟踪文件，门禁在工作区上判的红分不清是谁的
-# （rules/session-wrapup.md 第 4 条「同一个仓里有没有别的会话在飞？」）。这里在临时 worktree 上把 `git diff --cached` 套到 HEAD 上，再对那棵树跑一遍整道门禁。
+# 。这里在临时 worktree 上把 `git diff --cached` 套到 HEAD 上，再对那棵树跑一遍整道门禁。
 # 规范副本不进 git 时（项目常把 .claude/<包名>/ 放进 .gitignore）原样拷进 worktree，否则项目里的包装脚本转发不到。
 # 临时 worktree 的路径按仓根固定（不用 mktemp）：cargo 给路径依赖算的指纹带着包的路径，worktree 每趟换路径就每趟全重编；
 # 调用方设了 CARGO_TARGET_DIR 的，构建产物跨趟能命中；不设就在 worktree 自己的 target/ 里编、跑完随 worktree 删。
@@ -436,7 +436,7 @@ run_stage "软链接" python3 "$SCRIPTS_DIRECTORY/soft-links.py" "$ROOT" ${STAGE
 # 新加的门禁与钩子先对过已有的（rules/sop-first.md「加门禁或钩子之前，先找已有的」）。
 run_stage_may_skip "门禁查重" "本次无对象可判：这一次没有新加或改动门禁与钩子，或不在 git 仓里" \
   python3 "$SCRIPTS_DIRECTORY/gate-overlap.py" "$ROOT"
-# 分段计时不许在转发输出的循环里打时间戳（rules/test-discipline.md「分段计时在被测进程里计，不在转发输出的循环里计」）。
+# 分段计时不许在转发输出的循环里打时间戳（rules/show-me-test.md「分段计时在被测进程里计，不在转发输出的循环里计」）。
 run_stage_may_skip "转发计时" "本次无对象可判：它扫的那几处目录里没有 .rs / .py（扫哪几处见上方它的输出）" \
   python3 "$SCRIPTS_DIRECTORY/relay-timing-lint.py" --check "$ROOT"
 # 同一作用域里同名定义两次，后一个静默盖掉前一个（rules/code-discipline.md「同一作用域里一个名字只定义一次」）。

@@ -48,6 +48,10 @@
           {
             "type": "command",
             "command": "bash \"$CLAUDE_PROJECT_DIR\"/scripts/claude-hooks/gate-reuse-check.sh"
+          },
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR\"/scripts/claude-hooks/courtesy-phrase-check.sh"
           }
         ]
       }
@@ -62,6 +66,10 @@
           {
             "type": "command",
             "command": "bash \"$CLAUDE_PROJECT_DIR\"/scripts/claude-hooks/handback-scratch-check.sh"
+          },
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR\"/scripts/claude-hooks/courtesy-phrase-check.sh"
           }
         ]
       }
