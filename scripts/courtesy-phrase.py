@@ -25,7 +25,6 @@ COURTESY_PHRASE_BREAK=<开关名> 打开一个弄坏开关（自证专用，钩�
 """
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import re
@@ -109,29 +108,18 @@ def last_reply(hook_input: dict):
 
 def already_shown(hook_input: dict, hits: list) -> bool:
     """被拦回来的续跑里命中的说法与上一次一字不差：放行。其余情形记下指纹、照拦。"""
-    def safe(key, fallback):
-        value = hook_input.get(key)
-        return re.sub(r"[^A-Za-z0-9_-]", "_", value) if isinstance(value, str) and value else fallback
     state_directory = os.environ.get("COURTESY_PHRASE_STATE_DIRECTORY") or os.path.join(os.environ.get("TMPDIR") or "/tmp", "courtesy-phrase-check")
-    state_file = os.path.join(state_directory, f"{safe('session_id', 'no-session')}-{safe('agent_id', 'main')}")
-    fingerprint = hashlib.sha256(json.dumps(hits, ensure_ascii=False).encode("utf-8")).hexdigest()
-    try:
-        if hook_input.get("stop_hook_active") is True and os.path.isfile(state_file) and open(state_file, encoding="utf-8").read().strip() == fingerprint:
-            return True
-        os.makedirs(state_directory, exist_ok=True)
-        with open(state_file, "w", encoding="utf-8") as handle:
-            handle.write(fingerprint + "\n")
-    except OSError:
-        pass
+    state_file = SESSION_TRANSCRIPT.shown_state_file(state_directory, hook_input, (("session_id", "no-session"), ("agent_id", "main")))
+    fingerprint = SESSION_TRANSCRIPT.fingerprint_of(hits)
+    if hook_input.get("stop_hook_active") is True and SESSION_TRANSCRIPT.stored_fingerprint(state_file) == fingerprint:
+        return True
+    SESSION_TRANSCRIPT.store_fingerprint(state_file, fingerprint)
     return False
 
 
 def judge_hook(hook_text: str) -> int:
-    try:
-        hook_input = json.loads(hook_text)
-    except ValueError:
-        hook_input = None
-    if not isinstance(hook_input, dict):
+    hook_input = SESSION_TRANSCRIPT.hook_input_object(hook_text)
+    if hook_input is None:
         print("courtesy-phrase：钩子输入不是 JSON 对象，这一次收工没判", file=sys.stderr)
         return EXIT_NOT_JUDGED
     reply = last_reply(hook_input)

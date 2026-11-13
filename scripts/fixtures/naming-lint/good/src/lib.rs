@@ -100,3 +100,17 @@ pub fn external_format_seed() -> u8 {
     let crc_seed = 7; // naming-lint:external 字段名照外部格式的规范原样写
     crc_seed
 }
+
+/// 字节字符 `b'r'` 的前缀 b 不是名字，match 分支里也不判。
+pub fn byte_class(byte: u8) -> u8 {
+    match byte {
+        b'r' => 1,
+        b'\n' => 2,
+        _ => 0,
+    }
+}
+
+/// 打头的冠词 a 后面还有别的段，是英语冠词，不判。
+pub fn a_mount_that_stays_short_is_not_admitted() -> bool {
+    false
+}

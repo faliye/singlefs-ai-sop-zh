@@ -25,7 +25,16 @@
 #                                                   装进项目时包根是 .claude/<包名>/，不是项目根，所以项目里要把门禁目录作为参数给（gate.sh 就是这么调的）
 #   stage-selftest.sh [门禁目录] --item <阶段名>     只喂点名那几道的用例，给几次取并集；没点名的不起、也不报「本次未跑」
 #   stage-selftest.sh [门禁目录] --list-items        逐行列出配了用例、可以点名的阶段，不喂用例
-# 退出码：0 判得都对；1 有用例判错；2 用法错（--item 缺值、点名的阶段没配用例或不存在，都列出可点名的阶段）；77 无对象可判；78 准入不满足。
+#   stage-selftest.sh [门禁目录] --jobs <并行度>     同时喂几条用例；不给取环境变量 STAGE_SELFTEST_JOBS，再没有按 nproc。写 1 就是一条一条喂
+#
+# 并行：用例各在自己的临时工作目录里跑，互不依赖，默认并行喂。每条用例的退出码与输出各写进这一趟的结果目录里它自己的那一格，
+#   全部跑完再按登记次序回读、逐条判，打出来的次序与并行度无关。派出去多少条就要收回多少条，对不上整道判红（rules/command-safety.md「并行不许把失败吃掉」）。
+#   一道阶段的用例不能同时跑的（共用同一个外部服务、同一个固定端口或固定路径），在阶段文件的前 40 行里单独写一行：
+#     # stage-selftest: serial <理由，至少 4 个字>
+#   它的用例等并行的那一批全部跑完之后一条一条喂，那时没有别的用例在跑。
+#
+# STAGE_SELFTEST_BREAK=<开关名> 打开一个弄坏开关（自证专用）：lose-one-result 把并行那一批里第一条的结果丢掉，派收对不上必须判红。
+# 退出码：0 判得都对；1 有用例判错或派出去的用例没收全；2 用法错（--item 缺值、点名的阶段没配用例或不存在，都列出可点名的阶段；并行度不是正整数）；77 无对象可判；78 准入不满足。
 #
 # 没有门禁目录、或者一个阶段都没找到时退 77，不报绿（rules/show-me-test.md「门禁不许假装通过」）。
 # 没配用例的阶段逐个 report_not_run，进门禁汇总的「本次未跑」。
@@ -33,7 +42,7 @@ set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 preflight "${BASH_SOURCE[0]}" "$@"; set -- ${PREFLIGHT_ARGUMENTS[@]+"${PREFLIGHT_ARGUMENTS[@]}"}
 
-gate_directory=""; requested_stages=(); list_items_only=0
+gate_directory=""; requested_stages=(); list_items_only=0; case_parallelism="${STAGE_SELFTEST_JOBS:-}"
 while (($#)); do
   case "$1" in
     --item)
@@ -43,9 +52,17 @@ while (($#)); do
       for requested_stage_word in "${requested_stage_words[@]}"; do requested_stages+=("${requested_stage_word%.sh}"); done
       shift 2 ;;
     --list-items) list_items_only=1; shift ;;
+    --jobs)
+      if (($# < 2)); then case_parallelism="（缺值）"; shift; else case_parallelism="$2"; shift 2; fi ;;
     *) gate_directory="$1"; shift ;;
   esac
 done
+[[ -n "$case_parallelism" ]] || case_parallelism="$(nproc)"
+if [[ ! "$case_parallelism" =~ ^[1-9][0-9]*$ ]]; then
+  say "  ✗ 并行度「$case_parallelism」不是正整数（--jobs 或环境变量 STAGE_SELFTEST_JOBS 给的）"
+  say "     → 怎么办：写一个正整数，比如 --jobs 8；不给就按 nproc；要一条一条喂写 --jobs 1。"
+  exit 2
+fi
 if [[ -z "$gate_directory" ]]; then
   package_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
   gate_directory="$package_root/$(project_gate_dir "$package_root")"
@@ -116,7 +133,7 @@ done
 
 correct_case_count=0; wrong_case_count=0; stages_without_cases=()
 
-# 判一条用例：外层已经跑完它的「建场景」步骤、拿到了 $actual_exit 与 $stage_output。
+# 判一条用例：它已经跑完，拿到了退出码与输出。
 judge_case() { # judge_case <名字> <用例标签> <期望退出码> <实测退出码> <输出> <want...>
   local name="$1" label="$2" want_exit="$3" actual_exit="$4" stage_output="$5"; shift 5
   local case_judged_correctly=1
@@ -140,6 +157,15 @@ judge_case() { # judge_case <名字> <用例标签> <期望退出码> <实测退
   fi
 }
 
+# ── 第一步：按登记次序列出要喂的用例（一条一格），不跑 ──
+# CASE_KINDS：nested / flat 是要跑的；unjudgeable 是没跑就判不了的（没写期望），CASE_SOURCES 里放要打的那句话。
+CASE_STAGE_NAMES=(); CASE_LABELS=(); CASE_KINDS=(); CASE_STAGES=(); CASE_SOURCES=(); CASE_WANT_EXITS=(); CASE_FORCED=(); CASE_SERIAL=()
+serial_stage_names=()
+register_case() { # register_case <阶段名> <用例标签> <形态> <阶段文件> <用例文件、样本目录或要打的话> <期望退出码> <带不带 --force> <串行不串行>
+  CASE_STAGE_NAMES+=("$1"); CASE_LABELS+=("$2"); CASE_KINDS+=("$3"); CASE_STAGES+=("$4"); CASE_SOURCES+=("$5")
+  CASE_WANT_EXITS+=("$6"); CASE_FORCED+=("$7"); CASE_SERIAL+=("$8")
+}
+
 for ((index = 0; index < ${#STAGE_NAMES[@]}; index++)); do
   name="${STAGE_NAMES[$index]}"
   stage="${STAGE_PATHS[$index]}"
@@ -149,33 +175,30 @@ for ((index = 0; index < ${#STAGE_NAMES[@]}; index++)); do
   if ! stage_has_cases "$index"; then stages_without_cases+=("$name"); continue; fi
   # 写了准入与运行条件的阶段带 --force 喂：输入没变、环境不齐也照判，强制跑不记成「上次成功」。
   # 没写的不带：它不认 --force，多一个参数可能被当成项目根。
-  stage_force_option=()
-  if python3 "$(dirname "${BASH_SOURCE[0]}")/preflight.py" declared "$stage"; then stage_force_option=(--force); fi
+  stage_forced=0
+  if python3 "$(dirname "${BASH_SOURCE[0]}")/preflight.py" declared "$stage"; then stage_forced=1; fi
+  # 串行声明：阶段文件前 40 行里的 `# stage-selftest: serial <理由>`。
+  stage_serial=0
+  serial_declaration="$(head -40 "$stage" | sed -n 's/^#[[:space:]]*stage-selftest:[[:space:]]*serial\([[:space:]].*\)\{0,1\}$/serial\1/p' | head -1)"
+  if [[ -n "$serial_declaration" ]]; then
+    serial_reason="${serial_declaration#serial}"; serial_reason="${serial_reason//[[:space:]]/}"
+    if ((${#serial_reason} < 4)); then
+      register_case "$name" "（串行声明）" unjudgeable "$stage" "# stage-selftest: serial 后面没写理由（至少 4 个字）：写明它的用例为什么不能同时跑" "" 0 0
+    fi
+    stage_serial=1; serial_stage_names+=("$name")
+  fi
 
   if [[ "$form" == nested ]]; then
-    stage_directory="$(dirname "$stage")"
     while IFS= read -r case_file; do
       [[ -n "$case_file" ]] || continue
       case_label="$(basename "$case_file" .case.sh)"
       want_exit="$(sed -n 's/^#[[:space:]]*expect-exit:[[:space:]]*//p' "$case_file" | head -1)"
       if [[ -z "$want_exit" ]]; then
-        say "  ✗ $(printf '%-28s %-16s' "$name" "$case_label") 用例文件没写 # expect-exit:，判不了它该红还是该绿"   # gate-lint:detail
-        wrong_case_count=$((wrong_case_count + 1)); continue
+        register_case "$name" "$case_label" unjudgeable "$stage" "用例文件没写 # expect-exit:，判不了它该红还是该绿" "" 0 0
+        continue
       fi
-      mapfile -t want_list < <(sed -n 's/^#[[:space:]]*expect-want:[[:space:]]*//p' "$case_file")
-      work_directory="$(mktemp -d)"
-      # 清掉 GATE_BASE / GATE_STAGED_FROM / GATE_DIFF_BASE：gate.sh 导出的是真仓的 diff 基准，
-      # 漏进用例就是临时仓里不存在的提交（实测：--staged 下一对红绿用例一起判错）。
-      if ! ( cd "$work_directory" && env -u GATE_BASE -u GATE_STAGED_FROM -u GATE_DIFF_BASE bash "$case_file" >/dev/null 2>&1 ); then
-        say "  ✗ $(printf '%-28s %-16s' "$name" "$case_label") 用例的建场景正文没跑成"   # gate-lint:detail
-        wrong_case_count=$((wrong_case_count + 1)); rm -rf "${work_directory:?}"; continue
-      fi
-      # 退出码在 `|| actual_exit=$?` 里取：lib.sh 带进来的 set -e 会在用例判红那一行退出整个脚本。
-      stage_output=""; actual_exit=0
-      stage_output="$(cd "$work_directory" && env -u GATE_BASE -u GATE_STAGED_FROM -u GATE_DIFF_BASE bash "$stage" "$work_directory" ${stage_force_option[@]+"${stage_force_option[@]}"} 2>&1)" || actual_exit=$?
-      rm -rf "${work_directory:?}"
-      judge_case "$name" "$case_label" "$want_exit" "$actual_exit" "$stage_output" ${want_list[@]+"${want_list[@]}"}
-    done < <(find "$stage_directory" -maxdepth 1 -name '*.case.sh' | sort)
+      register_case "$name" "$case_label" nested "$stage" "$case_file" "$want_exit" "$stage_forced" "$stage_serial"
+    done < <(find "$(dirname "$stage")" -maxdepth 1 -name '*.case.sh' | sort)
     continue
   fi
 
@@ -189,29 +212,120 @@ for ((index = 0; index < ${#STAGE_NAMES[@]}; index++)); do
     sample_directory="$fixtures_directory/$fixture_name/$kind"
     [[ -d "$sample_directory" ]] || continue
     if [[ ! -f "$sample_directory/expect" ]]; then
-      say "  ✗ $(printf '%-28s %-16s' "$name" "$kind") 样本目录里没有 expect，判不了它该红还是该绿"   # gate-lint:detail
-      wrong_case_count=$((wrong_case_count + 1)); continue
+      register_case "$name" "$kind" unjudgeable "$stage" "样本目录里没有 expect，判不了它该红还是该绿" "" 0 0
+      continue
     fi
     want_exit="$(sed -n 's/^exit=//p' "$sample_directory/expect" | head -1)"
     if [[ ! "$want_exit" =~ ^[0-9]+$ ]]; then
-      say "  ✗ $(printf '%-28s %-16s' "$name" "$kind") expect 里没有 exit=<退出码>（或写的不是数），判不了它该红还是该绿"   # gate-lint:detail
-      wrong_case_count=$((wrong_case_count + 1)); continue
+      register_case "$name" "$kind" unjudgeable "$stage" "expect 里没有 exit=<退出码>（或写的不是数），判不了它该红还是该绿" "" 0 0
+      continue
     fi
-    mapfile -t want_list < <(sed -n 's/^want=//p' "$sample_directory/expect")
-    work_directory="$(mktemp -d)"
-    cp -dR --preserve=timestamps,links "$sample_directory/." "$work_directory/"   # 不保留权限：样本在 NFS 共享树上时，保留权限那一步在挂载它的另一台上退非 0（Operation not supported）
-    if [[ -f "$work_directory/setup.sh" ]]; then
-      if ! ( cd "$work_directory" && env -u GATE_BASE -u GATE_STAGED_FROM -u GATE_DIFF_BASE bash setup.sh >/dev/null 2>&1 ); then
-        say "  ✗ $(printf '%-28s %-16s' "$name" "$kind") setup.sh 没跑成"   # gate-lint:detail
-        wrong_case_count=$((wrong_case_count + 1)); rm -rf "${work_directory:?}"; continue
-      fi
-    fi
-    stage_output=""; actual_exit=0
-    stage_output="$(cd "$work_directory" && env -u GATE_BASE -u GATE_STAGED_FROM -u GATE_DIFF_BASE bash "$stage" "$work_directory" ${stage_force_option[@]+"${stage_force_option[@]}"} 2>&1)" || actual_exit=$?
-    rm -rf "${work_directory:?}"
-    judge_case "$name" "$kind" "$want_exit" "$actual_exit" "$stage_output" ${want_list[@]+"${want_list[@]}"}
+    register_case "$name" "$kind" flat "$stage" "$sample_directory" "$want_exit" "$stage_forced" "$stage_serial"
   done
 done
+
+# ── 第二步：跑。每条用例把结果写进结果目录里它自己的那一格：state（done / setup-failed）、exit、output ──
+results_directory="$(mktemp -d)"
+trap 'rm -rf "${results_directory:?}"' EXIT
+
+run_case() { # run_case <格号>：在自己的临时工作目录里建场景、起阶段；不往 stdout 写
+  local case_index="$1"
+  local result_directory="$results_directory/$case_index" stage="${CASE_STAGES[$case_index]}" source_path="${CASE_SOURCES[$case_index]}"
+  local work_directory actual_exit=0 force_option=()
+  [[ "${CASE_FORCED[$case_index]}" == 1 ]] && force_option=(--force)
+  mkdir -p "$result_directory"
+  work_directory="$(mktemp -d)" || return 0
+  # 清掉 GATE_BASE / GATE_STAGED_FROM / GATE_DIFF_BASE：gate.sh 导出的是真仓的 diff 基准，
+  # 漏进用例就是临时仓里不存在的提交（实测：--staged 下一对红绿用例一起判错）。
+  if [[ "${CASE_KINDS[$case_index]}" == nested ]]; then
+    if ! ( cd "$work_directory" && env -u GATE_BASE -u GATE_STAGED_FROM -u GATE_DIFF_BASE bash "$source_path" >/dev/null 2>&1 ); then
+      rm -rf "${work_directory:?}"; echo setup-failed > "$result_directory/state"; return 0
+    fi
+  else
+    cp -dR --preserve=timestamps,links "$source_path/." "$work_directory/"   # 不保留权限：样本在 NFS 共享树上时，保留权限那一步在挂载它的另一台上退非 0（Operation not supported）
+    if [[ -f "$work_directory/setup.sh" ]]; then
+      if ! ( cd "$work_directory" && env -u GATE_BASE -u GATE_STAGED_FROM -u GATE_DIFF_BASE bash setup.sh >/dev/null 2>&1 ); then
+        rm -rf "${work_directory:?}"; echo setup-failed > "$result_directory/state"; return 0
+      fi
+    fi
+  fi
+  # 退出码在 `|| actual_exit=$?` 里取：lib.sh 带进来的 set -e 会在用例判红那一行退出整个子 shell。
+  ( cd "$work_directory" && env -u GATE_BASE -u GATE_STAGED_FROM -u GATE_DIFF_BASE bash "$stage" "$work_directory" ${force_option[@]+"${force_option[@]}"} ) > "$result_directory/output" 2>&1 || actual_exit=$?
+  rm -rf "${work_directory:?}"
+  echo "$actual_exit" > "$result_directory/exit"
+  echo done > "$result_directory/state"
+}
+
+dispatched_case_count=0; parallel_case_indexes=(); serial_case_indexes=()
+for ((case_index = 0; case_index < ${#CASE_KINDS[@]}; case_index++)); do
+  [[ "${CASE_KINDS[$case_index]}" == unjudgeable ]] && continue
+  dispatched_case_count=$((dispatched_case_count + 1))
+  if [[ "${CASE_SERIAL[$case_index]}" == 1 ]]; then serial_case_indexes+=("$case_index"); else parallel_case_indexes+=("$case_index"); fi
+done
+
+# 并行的那一批：同时在跑的不超过并行度；结果不从 wait 取，各在自己那一格里。
+running_process_ids=(); started_process_ids=()
+for case_index in ${parallel_case_indexes[@]+"${parallel_case_indexes[@]}"}; do
+  while ((${#running_process_ids[@]} >= case_parallelism)); do
+    wait -n "${running_process_ids[@]}" || true
+    still_running_process_ids=()
+    for running_process_id in "${running_process_ids[@]}"; do
+      if kill -0 "$running_process_id" 2>/dev/null; then still_running_process_ids+=("$running_process_id"); fi
+    done
+    running_process_ids=(${still_running_process_ids[@]+"${still_running_process_ids[@]}"})
+  done
+  run_case "$case_index" &
+  running_process_ids+=("$!"); started_process_ids+=("$!")
+done
+for started_process_id in ${started_process_ids[@]+"${started_process_ids[@]}"}; do
+  wait "$started_process_id" || true
+done
+# 声明串行的：并行那一批都退出了才喂，一条一条来。
+for case_index in ${serial_case_indexes[@]+"${serial_case_indexes[@]}"}; do
+  run_case "$case_index"
+done
+if [[ "${STAGE_SELFTEST_BREAK:-}" == lose-one-result && ${#parallel_case_indexes[@]} -gt 0 ]]; then
+  rm -rf "${results_directory:?}/${parallel_case_indexes[0]}"
+fi
+
+# ── 第三步：按登记次序回读、逐条判 ──
+collected_case_count=0; uncollected_case_labels=()
+for ((case_index = 0; case_index < ${#CASE_KINDS[@]}; case_index++)); do
+  name="${CASE_STAGE_NAMES[$case_index]}"; case_label="${CASE_LABELS[$case_index]}"
+  if [[ "${CASE_KINDS[$case_index]}" == unjudgeable ]]; then
+    say "  ✗ $(printf '%-28s %-16s' "$name" "$case_label") ${CASE_SOURCES[$case_index]}"   # gate-lint:detail
+    wrong_case_count=$((wrong_case_count + 1)); continue
+  fi
+  result_directory="$results_directory/$case_index"
+  case_state=""; [[ -f "$result_directory/state" ]] && case_state="$(< "$result_directory/state")"
+  if [[ "$case_state" == setup-failed ]]; then
+    collected_case_count=$((collected_case_count + 1))
+    if [[ "${CASE_KINDS[$case_index]}" == nested ]]; then
+      say "  ✗ $(printf '%-28s %-16s' "$name" "$case_label") 用例的建场景正文没跑成"   # gate-lint:detail
+    else
+      say "  ✗ $(printf '%-28s %-16s' "$name" "$case_label") setup.sh 没跑成"   # gate-lint:detail
+    fi
+    wrong_case_count=$((wrong_case_count + 1)); continue
+  fi
+  if [[ "$case_state" != done || ! -f "$result_directory/exit" || ! -f "$result_directory/output" ]]; then
+    uncollected_case_labels+=("$name/$case_label"); continue
+  fi
+  collected_case_count=$((collected_case_count + 1))
+  if [[ "${CASE_KINDS[$case_index]}" == nested ]]; then
+    mapfile -t want_list < <(sed -n 's/^#[[:space:]]*expect-want:[[:space:]]*//p' "${CASE_SOURCES[$case_index]}")
+  else
+    mapfile -t want_list < <(sed -n 's/^want=//p' "${CASE_SOURCES[$case_index]}/expect")
+  fi
+  judge_case "$name" "$case_label" "${CASE_WANT_EXITS[$case_index]}" "$(< "$result_directory/exit")" "$(< "$result_directory/output")" ${want_list[@]+"${want_list[@]}"}
+done
+if ((collected_case_count != dispatched_case_count)); then
+  bad "派出去 $dispatched_case_count 条用例，只收回 $collected_case_count 条；没收回的：${uncollected_case_labels[*]-}"
+  howto "没收回的用例没写下结果（喂它的进程被杀、临时目录写满、结果目录被别的进程删了）。先单喂它看现场：" \
+        "bash scripts/stage-selftest.sh $gate_directory --item <阶段名> --jobs 1；这一趟整道不算数。"
+  exit 1
+fi
+parallelism_note="并行度 $case_parallelism"
+if ((${#serial_stage_names[@]})); then parallelism_note+="，声明串行的阶段 ${#serial_stage_names[@]} 道（${serial_stage_names[*]}）一条一条喂"; fi
 
 if ((${#stages_without_cases[@]})); then
   for stage_without_samples in "${stages_without_cases[@]}"; do
@@ -230,7 +344,7 @@ if ((correct_case_count == 0)); then
   exit 77
 fi
 if ((${#requested_stages[@]})); then
-  ok "点名的 ${#requested_stages[@]} 道阶段判得都对（$correct_case_count 个用例）：${requested_stages[*]}；没点名的这一趟不喂"
+  ok "点名的 ${#requested_stages[@]} 道阶段判得都对（$correct_case_count 个用例）：${requested_stages[*]}；没点名的这一趟不喂；$parallelism_note"
   exit 0
 fi
-ok "有用例的阶段判得都对（$correct_case_count 个用例），$((${#stages_without_cases[@]})) 个阶段仍未自证"
+ok "有用例的阶段判得都对（$correct_case_count 个用例），$((${#stages_without_cases[@]})) 个阶段仍未自证；$parallelism_note"

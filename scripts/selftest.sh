@@ -386,6 +386,22 @@ run_scripted "discarded-output-count-check/DISCARDED_OUTPUT_COUNT_CHECK_BREAK=no
 run_scripted "discarded-output-count-check/弄坏开关的值不认要拒绝" 1 "DISCARDED_OUTPUT_COUNT_CHECK_BREAK 的值不认" -- \
   env DISCARDED_OUTPUT_COUNT_CHECK_BREAK=no-such-switch bash "$SCRIPTS/claude-hooks/discarded-output-count-check.sh" --selftest
 
+# ════ unanswered-message-check（收工钩子，判别的会话发来的消息回了没有）═══════
+# 样本在 unanswered-message.py 的 SELFTEST_CASES 里；它的 --selftest 另逐个打开弄坏开关，核每个都红在点名的样本上。
+head1 "门禁自证：unanswered-message-check 的判别力"
+run_scripted "unanswered-message-check/自证通过" 0 "unanswered-message 自证：" -- \
+  bash "$SCRIPTS/claude-hooks/unanswered-message-check.sh" --selftest
+run_scripted "unanswered-message-check/UNANSWERED_MESSAGE_BREAK=any-recipient-counts 必须判红" 1 "判错的样本：回给别的会话不算（" -- \
+  env UNANSWERED_MESSAGE_BREAK=any-recipient-counts bash "$SCRIPTS/claude-hooks/unanswered-message-check.sh" --selftest
+
+# ════ session-number-title（会话标题开头写编号）═══════
+# 样本在 session-number-title.py 的 SELFTEST_CASES 里；它的 --selftest 另逐个打开弄坏开关，核每个都红在点名的样本上。
+head1 "门禁自证：session-number-title 的写法"
+run_scripted "session-number-title/自证通过" 0 "session-number-title 自证：" -- \
+  bash "$SCRIPTS/claude-hooks/session-number-title.sh" --selftest
+run_scripted "session-number-title/SESSION_NUMBER_TITLE_BREAK=custom-title-replaced 必须判红" 1 "判错的样本：用户起的标题不换（" -- \
+  env SESSION_NUMBER_TITLE_BREAK=custom-title-replaced bash "$SCRIPTS/claude-hooks/session-number-title.sh" --selftest
+
 # ════ courtesy-phrase-check（收工钩子，判最后一条回复里的客套话）═══════
 # 样本在 courtesy-phrase.py 的 SELFTEST_CASES 里；它的 --selftest 另逐个打开弄坏开关，核每个都红在点名的样本上。
 head1 "门禁自证：courtesy-phrase-check 的判别力"
@@ -821,7 +837,7 @@ hooks_registered_settings() { # hooks_registered_settings <gate-reuse-check 挂�
   local gate_reuse_on_subagent_stop='' gate_reuse_on_stop='{"type":"command","command":"bash gate-reuse-check.sh"},'
   [[ "$1" == yes ]] && gate_reuse_on_subagent_stop='{"type":"command","command":"bash gate-reuse-check.sh"},'
   [[ "$1" == none ]] && gate_reuse_on_stop=''
-  printf '{"hooks":{"PreToolUse":[{"matcher":"Write","hooks":[{"type":"command","command":"bash guard.sh"},{"type":"command","command":"bash pattern-process-guard.sh"}]},{"matcher":"Write|Edit|MultiEdit|NotebookEdit","hooks":[{"type":"command","command":"bash root-entry-guard.sh"}]},{"matcher":"Bash","hooks":[{"type":"command","command":"bash root-entry-guard.sh"}]},{"matcher":"Agent|Task|SendMessage","hooks":[{"type":"command","command":"bash borrowed-convention-guard.sh"}]},{"matcher":"SubagentHandback","hooks":[{"type":"command","command":"bash handback-scratch-check.sh"}]}],"PostToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"bash root-entry-guard.sh"},{"type":"command","command":"bash discarded-output-count-check.sh"}]}],"Stop":[{"hooks":[%s{"type":"command","command":"bash courtesy-phrase-check.sh"}]}],"SubagentStop":[{"hooks":[%s{"type":"command","command":"bash handback-scratch-check.sh"},{"type":"command","command":"bash courtesy-phrase-check.sh"}]}]}}\n' \
+  printf '{"hooks":{"PreToolUse":[{"matcher":"Write","hooks":[{"type":"command","command":"bash guard.sh"},{"type":"command","command":"bash pattern-process-guard.sh"}]},{"matcher":"Write|Edit|MultiEdit|NotebookEdit","hooks":[{"type":"command","command":"bash root-entry-guard.sh"}]},{"matcher":"Bash","hooks":[{"type":"command","command":"bash root-entry-guard.sh"}]},{"matcher":"Agent|Task|SendMessage","hooks":[{"type":"command","command":"bash borrowed-convention-guard.sh"}]},{"matcher":"SubagentHandback","hooks":[{"type":"command","command":"bash handback-scratch-check.sh"}]}],"PostToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"bash root-entry-guard.sh"},{"type":"command","command":"bash discarded-output-count-check.sh"}]}],"SessionStart":[{"hooks":[{"type":"command","command":"bash session-number-title.sh"}]}],"UserPromptSubmit":[{"hooks":[{"type":"command","command":"bash session-number-title.sh"}]}],"Stop":[{"hooks":[%s{"type":"command","command":"bash courtesy-phrase-check.sh"},{"type":"command","command":"bash unanswered-message-check.sh"}]}],"SubagentStop":[{"hooks":[%s{"type":"command","command":"bash handback-scratch-check.sh"},{"type":"command","command":"bash courtesy-phrase-check.sh"}]}]}}\n' \
     "$gate_reuse_on_stop" "$gate_reuse_on_subagent_stop" > "$hooks_project/.claude/settings.json"
 }
 hooks_registered_settings yes
@@ -1289,6 +1305,39 @@ run_scripted "stage-selftest/--item 缺阶段名退 2" 2 "--item （缺阶段名
   bash "$SCRIPTS/stage-selftest.sh" "$stage_selftest_project/.claude/gate.d" --item
 run_scripted "stage-selftest/--list-items 只列配了样本的阶段" 0 "10-demo" "30-broken" -- \
   bash "$SCRIPTS/stage-selftest.sh" "$stage_selftest_project/.claude/gate.d" --list-items
+# 并行喂用例：成功句报并行度；并行度写坏退 2；派出去的没收全判红（弄坏开关 lose-one-result）；并行之后坏阶段照样红
+run_scripted "stage-selftest/成功句报并行度（--jobs）" 0 "点名的 1 道阶段判得都对（2 个用例）：10-demo；没点名的这一趟不喂；并行度 3" -- \
+  bash "$SCRIPTS/stage-selftest.sh" "$stage_selftest_project/.claude/gate.d" --item 10-demo --jobs 3
+run_scripted "stage-selftest/并行度从 STAGE_SELFTEST_JOBS 取" 0 "并行度 2" -- \
+  env STAGE_SELFTEST_JOBS=2 bash "$SCRIPTS/stage-selftest.sh" "$stage_selftest_project/.claude/gate.d" --item 10-demo
+run_scripted "stage-selftest/并行度不是正整数退 2" 2 "并行度「0」不是正整数" -- \
+  bash "$SCRIPTS/stage-selftest.sh" "$stage_selftest_project/.claude/gate.d" --jobs 0
+run_scripted "stage-selftest/--jobs 缺值退 2" 2 "不是正整数" -- \
+  bash "$SCRIPTS/stage-selftest.sh" "$stage_selftest_project/.claude/gate.d" --jobs
+run_scripted "stage-selftest/并行喂时坏阶段照样红" 1 "30-broken                    red              期望退出 1，实测 0" "10-demo                      red              判得对" -- \
+  bash "$SCRIPTS/stage-selftest.sh" "$stage_selftest_project/.claude/gate.d" --jobs 4
+run_scripted "stage-selftest/STAGE_SELFTEST_BREAK=lose-one-result 必须判红" 1 "只收回" "没收回的：10-demo/red" -- \
+  env STAGE_SELFTEST_BREAK=lose-one-result bash "$SCRIPTS/stage-selftest.sh" "$stage_selftest_project/.claude/gate.d" --item 10-demo --jobs 4
+# 用例共用一把锁的阶段：并行喂会撞（证明真的在同时跑），声明串行之后一条一条喂就不撞
+stage_selftest_project="$temporary_directory/stage-selftest-serial"; mkdir -p "$stage_selftest_project/.claude/gate.d/fixtures/40-shared.sh/red" "$stage_selftest_project/.claude/gate.d/fixtures/40-shared.sh/green" "$stage_selftest_project/.claude/gate.d/fixtures/40-shared.sh/third"
+write_shared_lock_stage() { # write_shared_lock_stage <第二行写什么>
+  printf '#!/usr/bin/env bash\n%s\nshared_lock="$(dirname "$0")/shared.lock"\nmkdir "$shared_lock" 2>/dev/null || { echo "  拒绝：别的用例正占着锁"; exit 9; }\nsleep 1\nrmdir "$shared_lock"\n[[ -f "${1:-.}/bad.txt" ]] && { echo "  拒绝：有 bad.txt"; exit 1; }\necho "  通过：没有 bad.txt"\n' "$1" > "$stage_selftest_project/.claude/gate.d/40-shared.sh"
+}
+printf 'exit=1\nwant=有 bad.txt\n' > "$stage_selftest_project/.claude/gate.d/fixtures/40-shared.sh/red/expect"
+: > "$stage_selftest_project/.claude/gate.d/fixtures/40-shared.sh/red/bad.txt"
+printf 'exit=0\n' > "$stage_selftest_project/.claude/gate.d/fixtures/40-shared.sh/green/expect"
+printf 'exit=0\n' > "$stage_selftest_project/.claude/gate.d/fixtures/40-shared.sh/third/expect"
+write_shared_lock_stage '# 没声明串行'
+run_scripted "stage-selftest/共用一把锁的用例并行喂会撞" 1 "实测 9" -- \
+  bash "$SCRIPTS/stage-selftest.sh" "$stage_selftest_project/.claude/gate.d" --jobs 3
+run_scripted "stage-selftest/--jobs 1 一条一条喂不撞" 0 "有用例的阶段判得都对（3 个用例）" "并行度 1" -- \
+  bash "$SCRIPTS/stage-selftest.sh" "$stage_selftest_project/.claude/gate.d" --jobs 1
+write_shared_lock_stage '# stage-selftest: serial 三条用例共用阶段目录下的同一把锁'
+run_scripted "stage-selftest/声明串行的阶段一条一条喂" 0 "有用例的阶段判得都对（3 个用例）" "并行度 3，声明串行的阶段 1 道（40-shared）一条一条喂" -- \
+  bash "$SCRIPTS/stage-selftest.sh" "$stage_selftest_project/.claude/gate.d" --jobs 3
+write_shared_lock_stage '# stage-selftest: serial'
+run_scripted "stage-selftest/串行声明没写理由要判错" 1 "（串行声明）" "后面没写理由" -- \
+  bash "$SCRIPTS/stage-selftest.sh" "$stage_selftest_project/.claude/gate.d" --jobs 3
 
 # ── 脚本执行位：暂存区里丢了可执行位，工作区那份还是可执行的 ──────
 # 手工暂存时写死 100644 就是这个形态，而在工作区上跑的门禁一声不吭。

@@ -3,6 +3,22 @@
 规则与门禁的版本历史。`CLAUDE.md` 与 `rules/*.md` 不留历史节（design-doc-discipline），
 历史一律记在这里；逐条改动细节见 `git log`，提交信息即变更说明。
 
+## 0.0.73 — 2026-11-13
+
+**新加两个钩子：会话启动、恢复时标题开头写会话编号（`session-number-title.sh`），收工前核一遍别的会话发来的消息回了没有（`unanswered-message-check.sh`）；stage-selftest 并行喂用例；naming-lint 修两处误判。**
+
+规则：
+- `communication-discipline.md`：新加小节「收工前核一遍别的会话发来的消息」：每一条要么回给它，要么在回复里写一行「不回 <会话名>：<理由>」；没带会话名、来源是 unknown 的通知不算。
+- `communication-discipline.md`：新加小节「会话标题开头写编号」：标题写成 `(编号) 标题`，编号取默认名 `<目录名>-<编号>` 里的那一段，取不到时用会话 ID 算一个、避开别的会话占着的号。
+
+脚本与门禁：
+- `claude-hooks/unanswered-message-check.sh` 与 `unanswered-message.py`（新）：收工时列出没回、也没写「不回」那一行的消息，同一份清单只拦一次；挂 `Stop`。
+- `claude-hooks/session-number-title.sh` 与 `session-number-title.py`（新）：`SessionStart`（启动、恢复、分叉）时写编号，`UserPromptSubmit` 时补回被去掉的编号、换上自动起的标题；用户起的标题只加编号。从不退 2。
+- `session-transcript.py`：抽出读钩子输入、记「上一次拦下的是什么」的指纹这几段，`courtesy-phrase.py` 与 `unanswered-message.py` 共用。
+- `stage-selftest.sh`：用例默认并行喂（`--jobs`，或环境变量 `STAGE_SELFTEST_JOBS`，不给按 nproc），结果按登记次序回读，派收对不上整道判红；不能同时跑的阶段写 `# stage-selftest: serial <理由>`；新加弄坏开关 `lose-one-result`。
+- `naming-lint.sh`：字节字符 `b'x'` 的前缀 b 不判；打头的 a 后面还有别的段时当英语冠词，不判。
+- `selftest.sh`：接上上面几项的样本与弄坏开关。
+
 ## 0.0.72 — 2026-11-11
 
 **本包只收有检查判的规则：六篇没有检查的规则与各篇里靠 review 的小节挪出本包，放回项目本地；沟通纪律的「不写客套」改由收工钩子 `courtesy-phrase-check.sh` 判；shell-lint 的 S5 判拼接行里没带守卫的那一段；代号检查新加 `⇒` 与带日期的现状句；rules-lint 新加「正文不写某一个使用者的东西」。**

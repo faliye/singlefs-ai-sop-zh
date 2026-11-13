@@ -8,6 +8,8 @@ Claude Code 的记录格式一变，一边跟上了、另一边还按旧格式�
 不单独跑，由别的脚本按路径载入（importlib），函数照原名调。
 """
 import json
+import os
+import hashlib
 import re
 import sys
 from datetime import datetime
@@ -129,3 +131,43 @@ def assistant_texts(transcript_path):
             if block.get('type') == 'text' and isinstance(block.get('text'), str):
                 texts.append((entry_seconds, block['text']))
     return texts
+
+
+def hook_input_object(hook_text):
+    """钩子从标准输入给的文本 → JSON 对象；不是 JSON 对象时是 None。"""
+    try:
+        hook_input = json.loads(hook_text)
+    except ValueError:
+        return None
+    return hook_input if isinstance(hook_input, dict) else None
+
+
+def shown_state_file(state_directory, hook_input, keys_with_fallbacks):
+    """收工钩子记「上一次拦下的是什么」的状态文件路径：文件名由钩子输入里的几项拼成，取不到的用各自的替代名。"""
+    name_parts = []
+    for key, fallback in keys_with_fallbacks:
+        value = hook_input.get(key)
+        name_parts.append(re.sub(r'[^A-Za-z0-9_-]', '_', value) if isinstance(value, str) and value else fallback)
+    return os.path.join(state_directory, '-'.join(name_parts))
+
+
+def fingerprint_of(listed):
+    return hashlib.sha256(json.dumps(listed, ensure_ascii=False).encode('utf-8')).hexdigest()
+
+
+def stored_fingerprint(state_file):
+    """状态文件里记的指纹；没有这份文件或读不了是 None。"""
+    try:
+        with open(state_file, encoding='utf-8') as handle:
+            return handle.read().strip()
+    except OSError:
+        return None
+
+
+def store_fingerprint(state_file, fingerprint):
+    try:
+        os.makedirs(os.path.dirname(state_file), exist_ok=True)
+        with open(state_file, 'w', encoding='utf-8') as handle:
+            handle.write(fingerprint + '\n')
+    except OSError:
+        pass

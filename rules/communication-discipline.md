@@ -25,6 +25,23 @@
 它认的借用说法以 `scripts/borrowed-convention.py` 的 `BORROW_PHRASES` 为准，不在里面的说法不判；出处指得对不对、原文抄得对不对，它不判。
 项目在 `.claude/settings.json` 上注册它，写法在那个钩子的文件头。
 
+## 收工前核一遍别的会话发来的消息
+
+任务做完、收工之前核一次：这个会话收到的别的会话的消息，每一条要么已经回给它，要么在回复里写一行「不回 <会话名>：<理由>」。
+
+收工钩子 `scripts/claude-hooks/unanswered-message-check.sh`（判定在 `scripts/unanswered-message.py`）判这一条：会话记录里别的会话发来的消息，之后既没有发给它的 SendMessage，回复里也没有它的那一行「不回」，就拦下收工、逐条列出；同一份清单只拦一次。
+理由至少 4 个字。子 agent 交回的报告、没带会话名而来源是 unknown 的通知（任务服务的结果通知这类）不算别的会话的消息。那条消息要不要回、回的内容答没答上、理由成不成立，它不判。
+项目在 `.claude/settings.json` 的 `Stop` 上注册一次，写法在那个钩子的文件头。
+
+## 会话标题开头写编号
+
+每个会话启动、恢复时，会话标题开头写会话编号，格式 `(编号) 标题`。编号取 Claude Code 给会话起的默认名 `<目录名>-<编号>` 里的那一段（会话列表里显示的那个名字）。
+标题改过之后编号被去掉的，补回去。
+
+钩子 `scripts/claude-hooks/session-number-title.sh`（写法在 `scripts/session-number-title.py`）做这一条：SessionStart（启动、恢复、分叉）时从 Claude Code 的会话登记取编号写进标题；UserPromptSubmit 时把被去掉的编号补回去，标题还没有正文的，换上自动起的标题。用户自己起的标题只加编号，不换。
+恢复一个已有标题的会话时，Claude Code 若已经把登记换成标题，取不到这一次的新编号，沿用标题里的旧编号；标题里也没有编号的（会话早就起了自定义标题），用会话 ID 的 sha256 算一个两位号，避开别的会话占着的号。子 agent 与不是交互式的会话不写。
+项目在 `.claude/settings.json` 的 `SessionStart` 与 `UserPromptSubmit` 上各注册一次，写法在那个钩子的文件头。
+
 ## 射程与例外
 
 写给第三方读的产出（邮件、公告、对外文档）按它的读者写，不在射程里。

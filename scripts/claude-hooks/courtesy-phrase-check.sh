@@ -3,6 +3,7 @@
 # gate-similar: gate-reuse-check.sh 同挂在 Stop 与 SubagentStop 上，但它判这一轮新写的门禁与钩子该不该单独存在；这里判最后一条回复里的客套话，对象与判定脚本都不同
 # gate-similar: handback-scratch-check.sh 同挂 SubagentStop，判子 agent 交回前删没删自己建的目录；对象不同
 # gate-similar: borrowed-convention-guard.sh 同样是转给一份 python 判定、判 agent 写出去的文字，但它挂在 PreToolUse 的派发与发消息上、判借用句；触发点与词表都不同
+# gate-similar: unanswered-message-check.sh 同挂在 Stop 上、同样转给一份 python 判定，但它判别的会话发来的消息回了没有、读的是会话记录里收到的消息；这里判最后一条回复的文字，对象与判据都不同
 # admission: always Claude Code 在 agent 每一次收工时调它，每一条回复都要现判
 # run-condition: command python3
 # Claude Code 的 Stop / SubagentStop 钩子：这一轮最后一条回复里有客套话（寒暄、道谢、道歉、夸提问、结尾问还要不要别的），

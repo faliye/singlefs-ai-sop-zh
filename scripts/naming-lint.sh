@@ -9,8 +9,8 @@
 #
 # 扫每个 .rs 里我们自己声明的名字：文件名、函数、参数、let / for / match / 闭包里的绑定、类型、字段、枚举成员、
 # 常量、模块、泛型参数、生命周期、标签、use-as 别名、宏与宏变量。判两条：
-#   N1 单字母：整个名字或拆开后的一段是单个字母（后面跟数字也算）。名字中间的 a 是英语冠词（is_not_a_directory）不判，
-#      打头或结尾的 a 是代号照判（a_levels、side_a）。
+#   N1 单字母：整个名字或拆开后的一段是单个字母（后面跟数字也算）。打头与中间的 a 后面还有别的段时是英语冠词
+#      （a_mount_that_stays_short、is_not_a_directory）不判；结尾的 a 与只有一段的 a 是代号照判（side_a）。
 #   N2 缩写：拆开后有一段在 ABBR_TABLE 里而项目没登记。按下划线和大小写边界拆段（HTTPServer → http、server），
 #      去掉尾部数字再查（crc32 按 crc 查），复数也认。
 # 不判：外部定的名字（trait 实现里的方法名、关联类型与关联常量，extern 块，Cargo 定的 lib.rs、main.rs、mod.rs、build.rs；
@@ -451,6 +451,8 @@ function strip_comments_and_literals(line,    stripped_text, position, line_leng
         if (substr(line, hash_end, 1) == "\"") { raw_string_hash_count = hash_end - raw_quote_start; stripped_text = stripped_text "\""; position = hash_end + 1; continue }
         if (character == "r" && hash_end == raw_quote_start + 1 && substr(line, hash_end, 1) ~ /[A-Za-z_]/) { position = hash_end; continue }
       }
+      # 字节字符 b'x'、b'\n' 的前缀 b 不是名字：去掉它，引号那一段照字符字面量剥
+      if (character == "b" && substr(line, position + 1, 1) == "'") { position++; continue }
     }
     if (character == "\"") { in_string_literal = 1; stripped_text = stripped_text "\""; position++; continue }
     if (character == "'") {
@@ -771,7 +773,7 @@ function judge_name(name, name_kind,    core_name, judged_key, snake_case_name, 
     part_without_digits = part; sub(/[0-9]+$/, "", part_without_digits)
     singular_stem = (part_without_digits ~ /..s$/) ? substr(part_without_digits, 1, length(part_without_digits) - 1) : ""
     if ((part in REGISTERED_ABBREVIATION) || (part_without_digits in REGISTERED_ABBREVIATION) || (singular_stem != "" && (singular_stem in REGISTERED_ABBREVIATION))) continue
-    if (part == "a" && part_index > 1 && part_index < part_count) continue
+    if (part == "a" && part_index < part_count) continue
     if (part ~ /^[a-z][0-9]+$/ && (substr(part, 1, 1) in NUMBERED_LETTER)) continue
     if (part ~ /^[a-z][0-9]*$/) { reason = reason (reason == "" ? "" : "；") "「" part "」是单字母" (part ~ /[0-9]/ ? "加数字" : ""); continue }
     if (part_without_digits in ABBREVIATION_FULL_FORM) { reason = reason (reason == "" ? "" : "；") "「" part "」是缩写，写全：" ABBREVIATION_FULL_FORM[part_without_digits]; continue }
