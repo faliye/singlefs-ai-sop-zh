@@ -3,6 +3,24 @@
 规则与门禁的版本历史。`CLAUDE.md` 与 `rules/*.md` 不留历史节（design-doc-discipline），
 历史一律记在这里；逐条改动细节见 `git log`，提交信息即变更说明。
 
+## 0.0.74 — 2026-11-16
+
+**压缩规则与规范文本：八篇规则、门禁技能、决策技能、`CLAUDE.md`、README 去重精炼；新加钩子 `message-target-guard.sh`（找别的会话只找正在跑的）；kb 的编号与简称按语言各判；几道门禁提速。**
+
+规则：
+- 压缩 `command-safety.md`、`communication-discipline.md`、`kb-discipline.md`、`sop-first.md`、`show-me-test.md`、`rules-discipline.md`、`writing-discipline.md`、`design-doc-discipline.md`：删去与脚本文件头重复的「怎么判、认不出什么、怎么注册」，正文只留判据、步骤、阈值、豁免标记与一行「由谁判」；`rules-discipline.md` 第 7 条的位置指代判据改为指向 `kb-discipline.md` 第 1 条。八篇合计约 54 KB 降到 35 KB。
+- `communication-discipline.md`：新加小节「找别的会话，只找正在跑的」；删去小节「射程与例外」，那一句并进篇首；「会话标题开头写编号」补上用提示起标题的做法。
+- `kb-discipline.md`：位置指代的词表补全，第 5 条补「kb 里带译文时编号与简称按语言各判」，第 8 条取号的范围写成同一个 `##` 节、`### 日期`、点名词。
+- `rules-discipline.md`：门禁管哪一半补上 `rules-lint.sh` 实际扫的项目 `CLAUDE.md`、agent 定义与 skill 正文。
+- `skills/gate/SKILL.md`：阶段表加「规则」一列，细节改成指向规则；只在 SOP 仓跑的四个阶段拆成单独一张表。README 去重，加三语仓互链。
+
+脚本与门禁：
+- `claude-hooks/message-target-guard.sh` 与 `message-target.py`（新）：SendMessage 之前判，对象长得像会话名而本机没有正在跑的会话对得上就拒绝；挂 `PreToolUse`。
+- `doc-lint.sh`、`number-name-sync.sh`、`doc-lint-fix-names.py`、`package-family.py`：kb 文件按语言后缀（`.zh.md`、`.en.md`、`.ja.md`）分组，编号的登记位与引用在每种语言里各判各的；新加三组样本。
+- `session-number-title.py`：标题还没有正文时用提示的开头起一段。
+- `gate-lint.sh`、`history-ordinal.sh`、`script-modes.sh`、`relay-timing-lint.py`：先按字面筛掉不可能命中的文件与行再跑正则与逐行扫描。`hooks-registered.sh`：各钩子的自证并行起、按起的次序收退出码，收不全判红。
+- `shell-lint.sh` 文件头改成「查十条」。
+
 ## 0.0.73 — 2026-11-13
 
 **新加两个钩子：会话启动、恢复时标题开头写会话编号（`session-number-title.sh`），收工前核一遍别的会话发来的消息回了没有（`unanswered-message-check.sh`）；stage-selftest 并行喂用例；naming-lint 修两处误判。**

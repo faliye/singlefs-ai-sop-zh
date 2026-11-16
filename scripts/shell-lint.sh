@@ -3,7 +3,7 @@
 # run-condition: command gawk
 # shell 脚本的已知坑，做成会红的检查（rules/command-safety.md）。
 #
-# 查八条：
+# 查十条：
 #
 #   S1 子 shell 里的赋值传不回父进程
 #      三个条件同时成立才判红，误报面很窄：

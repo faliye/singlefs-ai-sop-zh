@@ -20,6 +20,7 @@
 #   C   kb/*.md 以「## 历史版本」收尾；有 .claude/history-carriers 时只判登记的，没登记的不许有这一节。INDEX.md 不判
 #   D   kb 与规范文本（CLAUDE.md、rules/、agents/、skills/*/SKILL.md）的 D-1 位置指代、D-2 自指称呼；D-3 kb 的时间指代
 #   E   kb 引用的不变量编号（I-<类>.<号>）要有定义；F 编号只许一处登记位；G 引用带简称且与登记位一致；H 反复出现（≥3 次）的编号形状要登记
+#       F、G、H 按语言各判各的：kb 文件按语言后缀（.zh.md、.en.md、.ja.md，不带后缀算默认语言）分组，成功句报每组份数
 #   I   给人读的 .md 里翻译腔、古风腔、过度解释的固定构式
 #   J   .claude/doc-lint-exclude 的排除项带理由、指向真实目录、真排到了东西
 #   K   rules/*.md 与 @ 引用逐项相等；项目里开会话读一次登记的名字，在副本或项目本地的 .claude/rules/ 里有一份就不算悬空
@@ -728,8 +729,20 @@ SHORT_NAME_MAXIMUM_WIDTH=48     # 简称的显示宽度上限（汉字算 2、AS
                 # 带不动的名字等于没名字；按显示宽度算，24 个汉字与 24 个 ASCII 字符的信息量差三倍。
 NUMBER_MINIMUM_OCCURRENCES=3        # H：出现几次才算「在当称呼用」。一两次算顺带提及。
 numbering_failure_count=0
-if [[ -n "$kb_files" ]]; then
-  mapfile -t kb_file_array <<< "$kb_files"
+# 编号按语言各判各的：kb 文件按语言后缀（.zh.md、.en.md、.ja.md；不带后缀的算默认语言）分组，F、G、H 在每一组里单独判。
+# 译文里的标题与简称是译过的：同一个编号在每种语言里各有一处登记位，那种语言的引用对那种语言的登记位比。
+# 混在一起判的话，每个编号多出几处登记位，译文的引用拿去对默认语言的简称又全对不上。只按后缀认，不读项目自己的译名表。
+kb_file_language() { # kb_file_language <路径> → 打出它的语言
+  case "$(basename "$1")" in
+    *.zh.md) printf zh ;;
+    *.en.md) printf en ;;
+    *.ja.md) printf ja ;;
+    *) printf '%s' "$DEFAULT_DOCUMENT_LANGUAGE" ;;
+  esac
+}
+check_numbering_of_language() { # check_numbering_of_language：判 numbering_kb_files 里那一组（一行一份），红的记进 numbering_failure_count
+  [[ -n "$numbering_kb_files" ]] || return 0
+  mapfile -t kb_file_array <<< "$numbering_kb_files"
   registry_records_file="$temporary_directory/defs.raw"; definitions_file="$temporary_directory/defs.tsv"
   : > "$registry_records_file"
   while IFS= read -r kb_file; do
@@ -768,7 +781,7 @@ if [[ -n "$kb_files" ]]; then
         printf "DEF\037%s\037%s\037%s\037%d\n", number, short_name, document_name, FNR }
       END { if (in_registry_marker && !in_registry_table) printf "ERR\037%s\037%d\037登记标记后面没有表格\n", document_name, marker_line }
     ' "$kb_file" >> "$registry_records_file"
-  done <<< "$kb_files"
+  done <<< "$numbering_kb_files"
   grep '^DEF' "$registry_records_file" | cut -d$'\037' -f2- > "$definitions_file" || true
 
   # F. 登记表本身写坏了：不在这里报的话，最后由 H 报成「没有任何登记位」，指错方向
@@ -958,8 +971,22 @@ if [[ -n "$kb_files" ]]; then
           "规矩见 rules/kb-discipline.md「编号只能做索引，不能做称呼」。全量清单：DOC_LINT_VERBOSE=1"
     [[ -n "${DOC_LINT_VERBOSE:-}" ]] && printf '%s\n' "$reference_problems" | awk -F'\t' '{printf "        :%s  %s %s —— %s\n", $1, $3, $2, $4}'
     numbering_failure_count=$((numbering_failure_count+1))
+  done <<< "$numbering_kb_files"
+}
+NUMBERING_LANGUAGES=(zh en ja)
+numbering_language_summary=""
+for numbering_language in "${NUMBERING_LANGUAGES[@]}"; do
+  numbering_kb_files=""; numbering_language_file_count=0
+  while IFS= read -r kb_file; do
+    [[ -n "$kb_file" ]] || continue
+    [[ "$(kb_file_language "$kb_file")" == "$numbering_language" ]] || continue
+    numbering_kb_files+="$kb_file"$'\n'; numbering_language_file_count=$((numbering_language_file_count+1))
   done <<< "$kb_files"
-fi
+  numbering_kb_files="${numbering_kb_files%$'\n'}"
+  ((numbering_language_file_count)) || continue
+  numbering_language_summary+="${numbering_language_summary:+、}$numbering_language $numbering_language_file_count 份"
+  check_numbering_of_language
+done
 
 # ── K. 规则清单：rules/ 与 @ 引用必须逐项相等 ─────────────
 # 没被 @ 引用的规则不进上下文，看起来却和生效的一样；引用不存在的文件只是不展开，也不报错。同一个判据管三处：
@@ -1106,4 +1133,4 @@ if [[ $failed_file_count -gt 0 || $undefined_reference_count -gt 0 || $numbering
 fi
 warn "位置指代与自指称呼这两条是**启发式**：只认句首或标点之后的常见说法，"
 warn "  「按本决策办」这种嵌在句中的漏得掉。绿不代表这两条穷举过了。"
-ok "文档铁律检查通过（检查 $checked_file_count，跳过 $skipped_file_count；DOC_LINT_VERBOSE=1 看全部）"
+ok "文档铁律检查通过（检查 $checked_file_count，跳过 $skipped_file_count；kb 的编号按语言各判：${numbering_language_summary:-0 份}；DOC_LINT_VERBOSE=1 看全部）"

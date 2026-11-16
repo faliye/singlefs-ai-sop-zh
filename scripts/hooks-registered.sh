@@ -67,6 +67,8 @@ optional_registration_reason_of() {
 }
 OPTIONAL_REASON_MINIMUM_CHARACTERS=8
 unregistered_hooks=(); failed_selftest_hooks=(); unhooked_events=(); unreadable_registration_hooks=(); optional_unregistered=(); malformed_optional=(); checked_hook_count=0; selftested_hook_count=0
+# 各钩子的自证互不依赖：逐个放后台起，输出各写各的文件，循环之后按起的次序逐个收退出码、回读输出（command-safety.md「并行不许把失败吃掉」）
+selftest_scratch="$(mktemp -d)"; selftest_pids=(); selftest_names=()
 for hook_file in "${hook_files[@]}"; do
   hook_file_name="$(basename "$hook_file")"
   checked_hook_count=$((checked_hook_count + 1))
@@ -97,12 +99,24 @@ for hook_file in "${hook_files[@]}"; do
   done
   grep -q -- '--selftest' "$hook_file" || continue
   selftested_hook_count=$((selftested_hook_count + 1))
-  selftest_output="$(bash "$hook_file" --selftest 2>&1)"
-  if (( $? != 0 )); then
-    failed_selftest_hooks+=("$hook_file_name")
-    printf '%s\n' "$selftest_output" | sed 's/^/        /'   # gate-lint:detail
+  bash "$hook_file" --selftest > "$selftest_scratch/${#selftest_pids[@]}.out" 2>&1 &
+  selftest_pids+=("$!"); selftest_names+=("$hook_file_name")
+done
+selftests_collected=0
+for selftest_index in "${!selftest_pids[@]}"; do
+  if wait "${selftest_pids[$selftest_index]}"; then selftest_exit_code=0; else selftest_exit_code=$?; fi
+  selftests_collected=$((selftests_collected + 1))
+  if (( selftest_exit_code != 0 )); then
+    failed_selftest_hooks+=("${selftest_names[$selftest_index]}")
+    sed 's/^/        /' "$selftest_scratch/$selftest_index.out"   # gate-lint:detail
   fi
 done
+rm -rf "${selftest_scratch:?}"
+if (( selftests_collected != selftested_hook_count )); then
+  bad "起了 $selftested_hook_count 个钩子的自证，只收回 $selftests_collected 个的退出码"
+  howto "看 \$TMPDIR 满没满、有没有写权限，修好再跑；收不全的这一轮不算判过。"
+  exit 1
+fi
 
 if ((${#unreadable_registration_hooks[@]})); then
   bad "${#unreadable_registration_hooks[@]} 个钩子的注册读不出来（hook-registrations.py --for 失败）：${unreadable_registration_hooks[*]}"   # gate-lint:summary

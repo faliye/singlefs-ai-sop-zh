@@ -69,20 +69,37 @@ keys_of_text() { python3 "$KEY_EXTRACTOR"; }
 # 会把搬过去的存量撞号全判成新增（selftest.sh「搬进实验史新文件的存量撞号不算新撞号」专测这个）。
 kb_prefix_pattern="$(printf '%s|' "${KB_RELATIVE_DIRECTORIES[@]}")"; kb_prefix_pattern="${kb_prefix_pattern%|}"
 base_pool_files="$(git ls-tree -r --name-only "$DIFF_BASE" 2>/dev/null | grep -E "^($kb_prefix_pattern)/.*\.md\$" || true)"
-base_keys_all=""
-while IFS= read -r base_file; do
-  [[ -n "$base_file" ]] || continue
-  base_keys_all+="$(git show "$DIFF_BASE:$base_file" 2>/dev/null | keys_of_text)"$'\n'
-done <<<"$base_pool_files"
+# 取键脚本只给带「（其…）」编号的条目出键：文件里没有「（其」这三个字就一行键都没有。基准侧与现行侧都先一次筛出带这三个字的文件，别的不起 git show 与 python。
+# 基准侧的键池只在现行侧真有重号时才用得到，用到时才算（load_base_keys）。
+base_files_with_ordinals="$(git grep -lF -e '（其' "$DIFF_BASE" -- "${KB_RELATIVE_DIRECTORIES[@]}" 2>/dev/null || true)"
+base_keys_all=""; base_keys_loaded=0
+load_base_keys() {
+  local base_file
+  ((base_keys_loaded)) && return 0
+  base_keys_loaded=1
+  while IFS= read -r base_file; do
+    [[ -n "$base_file" ]] || continue
+    grep -qxF -- "$DIFF_BASE:$base_file" <<<"$base_files_with_ordinals" || continue
+    base_keys_all+="$(git show "$DIFF_BASE:$base_file" 2>/dev/null | keys_of_text)"$'\n'
+  done <<<"$base_pool_files"
+}
+declare -A history_files_with_ordinals=()
+if ((${#HISTORY_FILES[@]})); then
+  while IFS= read -r listed_history_file; do
+    [[ -z "$listed_history_file" ]] || history_files_with_ordinals["$listed_history_file"]=1
+  done < <(grep -lF -e '（其' -- "${HISTORY_FILES[@]}" 2>/dev/null || true)
+fi
 
 new_collisions=(); legacy_collision_count=0; checked_file_count=0
 for history_file in "${HISTORY_FILES[@]}"; do
   [[ -f "$history_file" ]] || continue
   checked_file_count=$((checked_file_count + 1))
+  [[ -n "${history_files_with_ordinals[$history_file]:-}" ]] || continue
   current_keys="$(keys_of_text < "$history_file")"
   [[ -n "$current_keys" ]] || continue
   mapfile -t duplicated_keys < <(sort <<<"$current_keys" | uniq -d)
   ((${#duplicated_keys[@]})) || continue
+  load_base_keys
   for key in "${duplicated_keys[@]}"; do
     [[ -n "$key" ]] || continue
     current_count=$(grep -cxF "$key" <<<"$current_keys")

@@ -82,14 +82,22 @@ for scanned_directory in "${SCANNED_DIRECTORIES[@]}"; do
   scanned_repository_root="$(cd "$scanned_directory" && git rev-parse --show-toplevel 2>/dev/null || true)"
   [[ -n "$scanned_repository_root" ]] || continue
   directory_listing="$(find "$scanned_directory" -name .git -prune -o -type d -print)"
+  # 被忽略的与空的各问一次，不逐个目录起进程：git check-ignore 从标准输入收全部目录（一个都不忽略时它退 1），find 一趟列出空目录。
+  # 进出都用 NUL 分隔（-z）：按行出的时候，名字里带引号、反斜杠的路径会被它加上引号再打出来，查表就对不上原名。
+  empty_listing="$(find "$scanned_directory" -name .git -prune -o -type d -empty -print)"
+  declare -A ignored_directory_set=() empty_directory_set=()
+  while IFS= read -r -d '' listed_directory; do [[ -z "$listed_directory" ]] || ignored_directory_set["$listed_directory"]=1; done \
+    < <(tr '\n' '\0' <<< "$directory_listing" | git -C "$scanned_repository_root" check-ignore -z --stdin 2>/dev/null)
+  while IFS= read -r listed_directory; do [[ -z "$listed_directory" ]] || empty_directory_set["$listed_directory"]=1; done <<< "$empty_listing"
   while IFS= read -r candidate_directory; do
     [[ -n "$candidate_directory" ]] || continue
-    if git -C "$scanned_repository_root" check-ignore -q -- "$candidate_directory" 2>/dev/null; then continue; fi
+    if [[ -n "${ignored_directory_set[$candidate_directory]:-}" ]]; then continue; fi
     directories_checked=$((directories_checked + 1))
-    if [[ -z "$(find "$candidate_directory" -mindepth 1 -maxdepth 1 -print -quit)" ]]; then
+    if [[ -n "${empty_directory_set[$candidate_directory]:-}" ]]; then
       empty_directories+=("$candidate_directory")
     fi
   done <<< "$directory_listing"
+  unset ignored_directory_set empty_directory_set
 done
 
 if (( checked_script_count > 0 )); then

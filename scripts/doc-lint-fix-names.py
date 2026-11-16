@@ -35,7 +35,8 @@ import tempfile
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
-from preflight import preflight  # noqa: E402
+from preflight import load_package_module, preflight  # noqa: E402
+PACKAGE_FAMILY = load_package_module('package_family', 'package-family.py')
 
 ENABLED_BREAK_SWITCH = os.environ.get("DOC_LINT_FIX_NAMES_BREAK", "")
 NUMBER_IDENTIFIER_PATTERN = r"[A-Z]+-?[0-9]+(?:[.][0-9]+)*"
@@ -235,9 +236,13 @@ def default_registry_roots(project_root):
 def run(paths, registry_roots, dry_run):
     registry_files = sorted({path for registry_root in registry_roots
                              for path in glob.glob(os.path.join(registry_root, "**", "*.md"), recursive=True)})
-    short_name_by_identifier, duplicated_registration_counts, registry_line_positions = registry_of(registry_files)
-    not_numbers = declared_not_numbers(registry_files)
-    if not short_name_by_identifier:
+    # 登记位按语言分开收：给一份译文补简称，拿的是同一种语言的登记位（译文带语言后缀，简称是译过的）
+    registry_files_by_language = {}
+    for registry_file in registry_files:
+        registry_files_by_language.setdefault(PACKAGE_FAMILY.file_language(registry_file), []).append(registry_file)
+    registry_by_language = {language: registry_of(language_registry_files) + (declared_not_numbers(language_registry_files),)
+                            for language, language_registry_files in registry_files_by_language.items()}
+    if not any(registry[0] for registry in registry_by_language.values()):
         print(f"  ✗ {'、'.join(registry_roots)} 下一处登记位都没找到\n  → 怎么办：--registry-root 给放决策、实验、欠账表的 kb 目录，或在 .claude/kb-directories 登记它们")
         return 2
     total_fixed, problems = 0, []
@@ -246,6 +251,8 @@ def run(paths, registry_roots, dry_run):
             print(f"  ✗ 文件不在：{path}\n  → 怎么办：给存在的 Markdown 文件")
             return 2
         text = open(path, encoding="utf-8", errors="replace").read()
+        short_name_by_identifier, duplicated_registration_counts, registry_line_positions, not_numbers = registry_by_language.get(
+            PACKAGE_FAMILY.file_language(path), ({}, {}, set(), frozenset()))
         new_text, fixed_count, unfixable_identifiers, skipped_as_local = fixed_text(path, text, short_name_by_identifier, duplicated_registration_counts, registry_line_positions, not_numbers)
         total_fixed += fixed_count
         for identifier in unfixable_identifiers:
@@ -265,7 +272,7 @@ def run(paths, registry_roots, dry_run):
     if problems:
         print(f"  → 怎么办：没登记的先在 kb 里登记（登记表或带破折号的登记标题），重复的登记位收成一处，页内局部名按上面各行处理，再跑一次")
         return 1
-    print(f"  ✓ {len(paths)} 份文件共{'会补' if dry_run else '补了'} {total_fixed} 处缺简称的引用（登记位 {len(short_name_by_identifier)} 个）")
+    print(f"  ✓ {len(paths)} 份文件共{'会补' if dry_run else '补了'} {total_fixed} 处缺简称的引用（登记位 {sum(len(registry[0]) for registry in registry_by_language.values())} 个）")
     return 0
 
 

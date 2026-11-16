@@ -304,7 +304,14 @@ def functions_receiving_child_output(masked: str, function_spans: list) -> dict:
     return receivers
 
 
+# 子进程标记（RUST_CHILD_PROCESS_MARKER）的每一种写法都含这几个词之一，词是标识符、中间插不进注释：原文里一个都没有的文件，
+# 抹掉注释与字面量之后也不会有标记，就没有一个函数拿得到子进程的输出、一处循环都不会报，不必逐字符抹一遍
+RUST_CHILD_PROCESS_WORDS = ("piped", "stdout", "stderr", "ChildStdout", "ChildStderr")
+
+
 def analyze_rust(relative_path: str, source: str) -> list:
+    if not any(word in source for word in RUST_CHILD_PROCESS_WORDS):
+        return []
     masked = mask_rust_literals_and_comments(source)
     raw_lines = source.split("\n")
     function_spans = []

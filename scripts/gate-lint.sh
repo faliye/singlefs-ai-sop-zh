@@ -141,7 +141,8 @@ while IFS= read -r scanned_file; do
   # 「成功句报数」认的是 shell 的成功摘要，套到 python 上只会造假红。
   is_shell=0; [[ "$scanned_file" == *.sh ]] && is_shell=1
   heredoc_terminator=""
-if [[ $is_shell -eq 1 ]]; then
+# 整份文件里没有 bad / die 这几个字的，这一遍一处都判不到，不逐行走。
+if [[ $is_shell -eq 1 ]] && grep -qE 'bad[[:space:]]|die[[:space:]]' "$scanned_file"; then
   for ((line_index=0; line_index<${#FILE_LINES[@]}; line_index++)); do
     line="${FILE_LINES[$line_index]}"
     # heredoc 体不是代码：脚本里用 heredoc 生成「故意写坏的样本」是正当写法，按代码读会把样本内容当成真实拒绝。
@@ -151,8 +152,8 @@ if [[ $is_shell -eq 1 ]]; then
     fi
     # 注释行先跳过，再判 heredoc：反过来写的话，注释里一句 `# 用法：python3 - <<PY`
     # 就把这一行之后的整个文件当成 heredoc 体，一条拒绝都不再检查。
-    [[ "$line" =~ ^[[:space:]]*# ]] && continue        # 注释里的拒绝不算
-    if [[ "$line" =~ $HEREDOC_RE ]]; then
+    [[ "$line" == *'#'* && "$line" =~ ^[[:space:]]*# ]] && continue        # 注释里的拒绝不算
+    if [[ "$line" == *'<<'* && "$line" =~ $HEREDOC_RE ]]; then
       heredoc_terminator="${BASH_REMATCH[2]}"
     fi
     # 算术展开不是命令位置：`bad=$((bad + 1))` 里的 `bad ` 紧跟在 `(` 后面，按 CMD_POS 读就成了一处「拒绝」。
@@ -166,7 +167,9 @@ if [[ $is_shell -eq 1 ]]; then
       line="$text_before_arithmetic${text_after_arithmetic_start#*'))'}"
     done
 
-    if [[ "$line" =~ $DIE_CALL_PATTERN ]] && die_without_next_step "$line"; then
+    # 先按字面筛再跑正则：两条判据都要行里有 bad / die 这几个字，没有的行不用编正则。
+    [[ "$line" == *bad* || "$line" == *die* ]] || continue
+    if [[ "$line" == *die* && "$line" =~ $DIE_CALL_PATTERN ]] && die_without_next_step "$line"; then
       checked_rejection_count=$((checked_rejection_count+1))
       bad "$relative_path:$((line_index+1))  拒绝但没有出路（die 只带了一句话）"
       say "        ${FILE_LINES[$line_index]}"
@@ -207,17 +210,21 @@ fi   # ← 「bad 带出路」「die 带出路」到此为止，只对 shell 脚
   # 是真的会打给提交者看的：这一遍只对解释器 heredoc 的体照读。
   rejection_line_indexes=()
   print_pass_heredoc_terminator=""; heredoc_body_is_interpreter_code=0
-  for ((line_index=0; line_index<${#FILE_LINES[@]}; line_index++)); do
+  # 整份文件里没有 ✗ 的，这一遍一处都判不到，不逐行走。
+  file_line_count_for_print_pass=${#FILE_LINES[@]}
+  grep -qF '✗' "$scanned_file" || file_line_count_for_print_pass=0
+  for ((line_index=0; line_index<file_line_count_for_print_pass; line_index++)); do
     line="${FILE_LINES[$line_index]}"
     if [[ -n "$print_pass_heredoc_terminator" ]]; then
       if [[ "$line" == "$print_pass_heredoc_terminator" || "$line" =~ ^[[:space:]]*"$print_pass_heredoc_terminator"[[:space:]]*$ ]]; then print_pass_heredoc_terminator=""; heredoc_body_is_interpreter_code=0; continue; fi
       [[ $heredoc_body_is_interpreter_code -eq 1 ]] || continue
-    elif [[ $is_shell -eq 1 ]] && [[ ! "$line" =~ ^[[:space:]]*# ]] && [[ "$line" =~ $HEREDOC_RE ]]; then
+    elif [[ $is_shell -eq 1 ]] && [[ "$line" == *'<<'* ]] && [[ ! "$line" =~ ^[[:space:]]*# ]] && [[ "$line" =~ $HEREDOC_RE ]]; then
       print_pass_heredoc_terminator="${BASH_REMATCH[2]}"
       heredoc_body_is_interpreter_code=0
       [[ "$line" =~ (python3?|perl|node|gawk|awk)[[:space:]] ]] && heredoc_body_is_interpreter_code=1
       continue
     fi
+    [[ "$line" == *✗* ]] || continue
     [[ "$line" =~ ^[[:space:]]*# ]] && continue
     [[ "$line" =~ $REJECTION_MARK_PATTERN ]] || continue
     [[ "$line" =~ (echo|printf|print\() ]] || continue
@@ -252,6 +259,7 @@ if [[ $is_shell -eq 1 ]]; then
   # nocount 只认单独一行的注释：写在代码里、字符串里的不算豁免（按子串认的话，一句 echo 里提到它就免检了）。
   nocount_exempt=0
   for ((line_index=0; line_index<${#FILE_LINES[@]}; line_index++)); do
+    [[ "${FILE_LINES[$line_index]}" == *gate-lint:nocount* ]] || continue
     [[ "${FILE_LINES[$line_index]}" =~ ^[[:space:]]*#[[:space:]]*gate-lint:nocount([[:space:]]+(.*))?$ ]] || continue
     nocount_reason="${BASH_REMATCH[2]}"
     nocount_reason="${nocount_reason%"${nocount_reason##*[![:space:]]}"}"
@@ -268,6 +276,7 @@ if [[ $is_shell -eq 1 ]]; then
     # 成功句以反斜杠续行的（printf 的格式串一行、参数下一行），连同续行一起算那一句。
     summary_line_number=0; summary_line=""
     for ((line_index=0; line_index<${#FILE_LINES[@]}; line_index++)); do
+      [[ "${FILE_LINES[$line_index]}" == *ok* || "${FILE_LINES[$line_index]}" == *✓* ]] || continue
       [[ "${FILE_LINES[$line_index]}" =~ ^[[:space:]]*# ]] && continue
       # 成功句可以跟在 && / || / ; / then / else / do 后面：(( failure_count == 0 )) && ok "…" 也是成功句
       if [[ "${FILE_LINES[$line_index]}" =~ (^|&&|\|\||;|then|else|do)[[:space:]]*ok[[:space:]]+\" || "${FILE_LINES[$line_index]}" =~ $SUCCESS_MARK_PATTERN ]]; then
@@ -291,17 +300,19 @@ if [[ $is_shell -eq 1 ]]; then
 
   # ── 跳过数带逐条：报了跳过、没记、作废这类数的脚本，同一份里要逐条打出那些条目 ───────────────────────
   # heredoc 体一律不算（解释器 heredoc 里的输出也不算：.py 本来就不判这一条）；注释行不算。
-  file_counter_names="$(counter_names_in_file)"
+  # 整份文件里没有跳过词的，这一遍一处都判不到：不取计数变量名，不逐行走。
+  file_line_count_for_skip_pass=${#FILE_LINES[@]}
+  if grep -qE "$SKIP_WORD_PATTERN" "$scanned_file"; then file_counter_names="$(counter_names_in_file)"; else file_counter_names=""; file_line_count_for_skip_pass=0; fi
   skip_count_line_number=0; skip_count_line=""; has_skip_item_output=0; skip_pass_heredoc_terminator=""
-  for ((line_index=0; line_index<${#FILE_LINES[@]}; line_index++)); do
+  for ((line_index=0; line_index<file_line_count_for_skip_pass; line_index++)); do
     line="${FILE_LINES[$line_index]}"
     if [[ -n "$skip_pass_heredoc_terminator" ]]; then
       if [[ "$line" =~ ^[[:space:]]*"$skip_pass_heredoc_terminator"[[:space:]]*$ ]]; then skip_pass_heredoc_terminator=""; fi
       continue
     fi
-    if [[ "$line" =~ ^[[:space:]]*# ]]; then continue; fi
-    if [[ "$line" =~ $HEREDOC_RE ]]; then skip_pass_heredoc_terminator="${BASH_REMATCH[2]}"; fi
-    if [[ ! "$line" =~ $SKIP_WORD_PATTERN ]]; then continue; fi
+    if [[ "$line" == *'#'* && "$line" =~ ^[[:space:]]*# ]]; then continue; fi
+    if [[ "$line" == *'<<'* && "$line" =~ $HEREDOC_RE ]]; then skip_pass_heredoc_terminator="${BASH_REMATCH[2]}"; fi
+    if [[ "$line" != *没记* && "$line" != *跳过* && "$line" != *作废* && "$line" != *没跑* && "$line" != *未跑* ]]; then continue; fi
     if [[ ! "$line" =~ $SKIP_OUTPUT_CALL_PATTERN ]]; then continue; fi
     # 往文件里写只看输出命令之后、引号外的那一段：前面 (( n > 0 )) 里的 > 与消息正文里的 > 都不是重定向。
     # 引号里的整段换成一个占位词 Q，重定向的目标写在引号里（>> "$log"）照样认得出。

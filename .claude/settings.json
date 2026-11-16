@@ -33,6 +33,15 @@
         ]
       },
       {
+        "matcher": "SendMessage",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR\"/scripts/claude-hooks/message-target-guard.sh"
+          }
+        ]
+      },
+      {
         "matcher": "SubagentHandback",
         "hooks": [
           {

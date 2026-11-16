@@ -16,9 +16,11 @@
   都没有（会话早就起了自定义标题，默认名已经换掉）时，用会话 ID 的 sha256 前两位十六进制；
   这个号已被登记里别的会话占着（默认名的编号，或标题开头的编号）就顺着 sha256 往后取下一对。
 写什么：
-  SessionStart（startup / resume / fork）：`(编号) <原标题去掉旧编号>`；原来没有标题时取会话记录里最新的自动标题（ai-title），也没有就只写 `(编号)`。
-  UserPromptSubmit：标题开头没有编号（被 /rename 改掉了）就补上；标题只有编号、或编号后面是这个会话的某个自动标题时，换成最新的自动标题。
-  用户自己起的标题只加编号，不换。
+  SessionStart（startup / resume / fork）：`(编号) <原标题去掉旧编号>`；原来没有标题时取会话记录里最新的自动标题（ai-title），
+    没有自动标题取会话记录里第一条用户提示起的标题（提示标题），都没有就只写 `(编号)`。
+  UserPromptSubmit：标题开头没有编号（被 /rename 改掉了）就补上；标题只有编号时，补上最新的自动标题，还没有自动标题就用这一次的提示起提示标题。
+  提示标题：提示里成对的 <标签>…</标签> 去掉、空白并成一个空格，按显示宽度截到 PROMPT_TITLE_WIDTH（汉字算 2），用的是用户说话的语言。
+  编号后面的正文一旦写下就不换：自动标题后来变了、提示标题之后出了自动标题、用户自己起的标题，都只管编号。
 退出码：写了或不用写 0（要写时往标准输出打 hookSpecificOutput.sessionTitle）；取不到编号或输入不对 1（不拦，stderr 留一行原因）。
   UserPromptSubmit 上退 2 会挡掉用户的提示，所以这一道从不退 2。
   状态目录默认 ${TMPDIR:-/tmp}/session-number-title，SESSION_NUMBER_TITLE_STATE_DIRECTORY 可改；
@@ -40,6 +42,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import unicodedata
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
@@ -53,16 +56,19 @@ BREAK_ENVIRONMENT_VARIABLE = "SESSION_NUMBER_TITLE_BREAK"
 # 弄坏开关 → 打开后自证必须红在哪个样本上
 BREAK_SWITCHES = {
     "old-number-kept": "恢复时换成新编号",
-    "custom-title-replaced": "用户起的标题不换",
+    "custom-title-replaced": "正文写下之后自动标题变了也不换",
     "removed-number-ignored": "被改掉的编号补回去",
     "fallback-ignored": "默认名已换掉时用会话 ID 算的号",
     "collision-ignored": "算的号被别的会话占着就取下一对",
+    "prompt-title-ignored": "只有编号时用提示起标题",
 }
 
 NUMBERED_TITLE = re.compile(r"^\(([^()\s]+)\)\s*(.*)$", re.S)
 REGISTRY_WAIT_SECONDS = 3.0
 REGISTRY_POLL_SECONDS = 0.1
 SESSION_START_SOURCES = ("startup", "resume", "fork")
+PROMPT_TITLE_WIDTH = 40
+PAIRED_TAG = re.compile(r"<([A-Za-z][\w-]*)[^>]*>.*?</\1>", re.S)
 
 
 def break_switch() -> str:
@@ -81,11 +87,33 @@ def composed_title(number: str, base: str) -> str:
     return f"({number}) {base}".strip()
 
 
-def next_title(event: str, current_title: str, registry_number, stored_number, ai_titles: list, fallback_number=None):
+def display_width(character: str) -> int:
+    return 2 if unicodedata.east_asian_width(character) in ("W", "F") else 1
+
+
+def prompt_title(prompt) -> str:
+    """用户提示起的标题：去掉成对的标签块、空白并成一个空格，按显示宽度截到 PROMPT_TITLE_WIDTH。"""
+    if not isinstance(prompt, str):
+        return ""
+    text = " ".join(PAIRED_TAG.sub(" ", prompt).split())
+    clipped, width = [], 0
+    for character in text:
+        width += display_width(character)
+        if width > PROMPT_TITLE_WIDTH:
+            break
+        clipped.append(character)
+    return "".join(clipped).strip()
+
+
+def next_title(event: str, current_title: str, registry_number, stored_number, ai_titles: list, fallback_number=None,
+               prompt_based_title: str = ""):
     """要写的新标题；不用改时是 None。ai_titles 是会话记录里的自动标题，按出现先后排。
-    fallback_number 是前几样都取不到时用的号（会话 ID 算的）。返回 (新标题或 None, 用的编号或 None)。"""
+    fallback_number 是前几样都取不到时用的号（会话 ID 算的）。prompt_based_title 是还没有自动标题时用的提示标题。
+    编号后面已有正文的不换正文。返回 (新标题或 None, 用的编号或 None)。"""
     if break_switch() == "fallback-ignored":
         fallback_number = None
+    if break_switch() == "prompt-title-ignored":
+        prompt_based_title = ""
     title_number, base = split_title(current_title)
     latest_ai_title = ai_titles[-1] if ai_titles else ""
     if event == "SessionStart":
@@ -95,7 +123,7 @@ def next_title(event: str, current_title: str, registry_number, stored_number, a
         if number is None:
             return None, None
         if not base:
-            base = latest_ai_title
+            base = latest_ai_title or prompt_based_title
         title = composed_title(number, base)
         return (title if title != current_title else None), number
     # UserPromptSubmit
@@ -105,10 +133,12 @@ def next_title(event: str, current_title: str, registry_number, stored_number, a
     if title_number is None:
         if break_switch() == "removed-number-ignored":
             return None, number
-        return composed_title(number, base or latest_ai_title), number
-    automatic = not base or base in ai_titles or break_switch() == "custom-title-replaced"
-    if automatic and latest_ai_title and latest_ai_title != base:
-        return composed_title(number, latest_ai_title), number
+        return composed_title(number, base or latest_ai_title or prompt_based_title), number
+    if base and break_switch() != "custom-title-replaced":
+        return None, number
+    replacement = latest_ai_title or prompt_based_title
+    if replacement and replacement != base:
+        return composed_title(number, replacement), number
     return None, number
 
 
@@ -219,6 +249,16 @@ def state_file(session_id: str) -> str:
     return os.path.join(directory, re.sub(r"[^A-Za-z0-9_-]", "_", session_id or "no-session"))
 
 
+def first_prompt_in(transcript_path) -> str:
+    """会话记录里第一条用户提示（Claude Code 记成 last-prompt 那一类，第一条就是第一次提示）。"""
+    if not isinstance(transcript_path, str) or not os.path.isfile(transcript_path):
+        return ""
+    for entry in SESSION_TRANSCRIPT.transcript_entries(transcript_path, '"last-prompt"'):
+        if entry.get("type") == "last-prompt" and isinstance(entry.get("lastPrompt"), str):
+            return entry["lastPrompt"]
+    return ""
+
+
 def ai_titles_in(transcript_path) -> list:
     if not isinstance(transcript_path, str) or not os.path.isfile(transcript_path):
         return []
@@ -251,7 +291,10 @@ def judge_hook(hook_text: str) -> int:
     stored = SESSION_TRANSCRIPT.stored_fingerprint(state_file(session_id)) or None
     found = registry_number(session_id, wait=(event == "SessionStart" and not split_title(current_title)[0]))
     fallback = fallback_number(session_id, numbers_in_use(session_id))
-    title, number = next_title(event, current_title, found, stored, ai_titles_in(hook_input.get("transcript_path")), fallback)
+    transcript_path = hook_input.get("transcript_path")
+    prompt = hook_input.get("prompt") if event == "UserPromptSubmit" else first_prompt_in(transcript_path)
+    based_on_prompt = prompt_title(prompt)
+    title, number = next_title(event, current_title, found, stored, ai_titles_in(transcript_path), fallback, based_on_prompt)
     if number is None:
         print(f"session-number-title：会话登记目录 {registry_directory()} 里取不到这个会话的默认名编号，标题里也没有，输入里也没有 session_id 可算，这一次没写标题", file=sys.stderr)
         return EXIT_NOT_WRITTEN
@@ -273,10 +316,27 @@ SELFTEST_CASES = (
     ("默认名已换掉时用会话 ID 算的号", "SessionStart", "里程碑5", None, None, [], "(c9) 里程碑5"),
     ("提示时默认名已换掉也用会话 ID 算的号", "UserPromptSubmit", "里程碑3 收尾", None, None, [], "(c9) 里程碑3 收尾"),
     ("自动标题出来了换上", "UserPromptSubmit", "(42)", None, None, AI, "(42) 对话编号前缀规范"),
-    ("自动标题变了跟着换", "UserPromptSubmit", "(42) 旧的自动标题", None, None, ["旧的自动标题", "新的自动标题"], "(42) 新的自动标题"),
+    ("正文写下之后自动标题变了也不换", "UserPromptSubmit", "(42) 旧的自动标题", None, None, ["旧的自动标题", "新的自动标题"], None),
     ("用户起的标题不换", "UserPromptSubmit", "(42) 里程碑5 小文件打包", None, None, AI, None),
     ("被改掉的编号补回去", "UserPromptSubmit", "里程碑5 小文件打包", None, "42", AI, "(42) 里程碑5 小文件打包"),
     ("已经是最新的不改", "UserPromptSubmit", "(42) 对话编号前缀规范", None, None, AI, None),
+)
+
+
+# 提示标题样本：(样本名, 事件, 原标题, 自动标题, 提示标题, 期望的新标题)；编号一律取标题里的或登记的 "42"
+PROMPT_CASES = (
+    ("只有编号时用提示起标题", "UserPromptSubmit", "(42)", [], "修改规则 会话命名", "(42) 修改规则 会话命名"),
+    ("新会话没有自动标题时用提示起标题", "SessionStart", "", [], "修改规则 会话命名", "(42) 修改规则 会话命名"),
+    ("自动标题优先于提示标题", "UserPromptSubmit", "(42)", AI, "修改规则 会话命名", "(42) 对话编号前缀规范"),
+    ("提示标题写下之后出了自动标题也不换", "UserPromptSubmit", "(42) 修改规则 会话命名", AI, "下一条提示", None),
+    ("提示标题写下之后的提示不换标题", "UserPromptSubmit", "(42) 修改规则 会话命名", [], "下一条提示", None),
+)
+# 提示截标题样本：(样本名, 提示, 期望的提示标题)
+PROMPT_TITLE_CASES = (
+    ("标签块去掉、空白并成一个", "<ide_selection>选中的代码</ide_selection>修改规则\n  会话命名", "修改规则 会话命名"),
+    ("按显示宽度截，汉字算 2", "一二三四五六七八九十" * 3, "一二三四五六七八九十" * 2),
+    ("英文按 1 算", "a" * 50, "a" * 40),
+    ("不是字符串起不出", None, ""),
 )
 
 
@@ -295,6 +355,14 @@ def run_selftest_cases() -> list:
         actual, _ = next_title(event, current_title, found, stored, ai_titles, "c9")
         if actual != expected:
             misjudged_cases.append((case_name, expected, actual))
+    for case_name, event, current_title, ai_titles, based_on_prompt, expected in PROMPT_CASES:
+        actual, _ = next_title(event, current_title, "42", None, ai_titles, "c9", based_on_prompt)
+        if actual != expected:
+            misjudged_cases.append((case_name, expected, actual))
+    for case_name, prompt, expected in PROMPT_TITLE_CASES:
+        actual = prompt_title(prompt)
+        if actual != expected:
+            misjudged_cases.append((case_name, expected, actual))
     for case_name, session_id, used, expected in FALLBACK_CASES:
         actual = fallback_number(session_id, used)
         if actual != expected:
@@ -302,7 +370,7 @@ def run_selftest_cases() -> list:
     return misjudged_cases
 
 
-HOOK_PATH_COUNT = 9
+HOOK_PATH_COUNT = 11
 
 
 def run_hook_cases() -> list:
@@ -349,6 +417,13 @@ def run_hook_cases() -> list:
             json.dump({"pid": 3, "sessionId": "o", "cwd": "/work/demo", "name": f"demo-{hashlib.sha256(b'p').hexdigest()[:2]}", "nameSource": "derived"}, handle)
         expect("算的号被别的会话占着就取下一对", hook_json(hook_event_name="UserPromptSubmit", session_id="p", session_title="里程碑5"),
                EXIT_PASS, f"({hashlib.sha256(b'p').hexdigest()[2:4]}) 里程碑5")
+        expect("只有编号时用这一次的提示起标题", hook_json(hook_event_name="UserPromptSubmit", session_id="n", session_title="(c1)",
+                                             prompt="<ide_selection>x</ide_selection>修改规则\n会话命名"), EXIT_PASS, "(c1) 修改规则 会话命名")
+        titled_transcript = os.path.join(scratch_directory, "titled.jsonl")
+        with open(titled_transcript, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps({"type": "ai-title", "aiTitle": "会话命名规则", "sessionId": "n"}, ensure_ascii=False) + "\n")
+        expect("提示标题写下之后出了自动标题也不换", hook_json(hook_event_name="UserPromptSubmit", session_id="n", session_title="(c1) 修改规则 会话命名",
+                                                prompt="下一条", transcript_path=titled_transcript), EXIT_PASS, None)
         expect("没有会话 ID 也取不到编号不写", hook_json(hook_event_name="UserPromptSubmit", session_title="里程碑5"), EXIT_NOT_WRITTEN, None)
         expect("clear 与 compact 不写", hook_json(hook_event_name="SessionStart", source="compact", session_id="s"), EXIT_PASS, None)
         expect("子 agent 不写", hook_json(hook_event_name="UserPromptSubmit", session_id="s", agent_id="a1"), EXIT_PASS, None)
@@ -361,10 +436,10 @@ def selftest() -> int:
     if not break_switch():
         misjudged_cases += run_hook_cases()
     exit_code = BREAK_SWITCH_SELFTEST.finish_selftest(__file__, BREAK_ENVIRONMENT_VARIABLE, BREAK_SWITCHES, misjudged_cases,
-                                                      len(SELFTEST_CASES) + len(FALLBACK_CASES), "next_title / fallback_number / judge_hook")
+                                                      len(SELFTEST_CASES) + len(PROMPT_CASES) + len(PROMPT_TITLE_CASES) + len(FALLBACK_CASES), "next_title / prompt_title / fallback_number / judge_hook")
     if exit_code is not None:
         return exit_code
-    print(f"  ✓ session-number-title 自证：{len(SELFTEST_CASES) + len(FALLBACK_CASES)} 个样本与 {HOOK_PATH_COUNT} 条钩子路径写得对；"
+    print(f"  ✓ session-number-title 自证：{len(SELFTEST_CASES) + len(PROMPT_CASES) + len(PROMPT_TITLE_CASES) + len(FALLBACK_CASES)} 个样本与 {HOOK_PATH_COUNT} 条钩子路径写得对；"
           f"{len(BREAK_SWITCHES)} 个弄坏开关逐个打开，各自红在点名的样本上")
     return 0
 

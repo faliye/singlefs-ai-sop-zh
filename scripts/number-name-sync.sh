@@ -77,14 +77,15 @@ KB_SCAN_DIRECTORIES = [directory for directory in os.environ.get('NUMBER_NAME_KB
 def normalized_short_name(text):
     return re.sub(r'[ \t]+', ' ', re.sub(r'[*`]', '', text)).strip()
 
-registered_short_name_by_number = {}
+# 登记位按语言分开收：译文（.en.md、.ja.md 这类带语言后缀的）里的简称是译过的，一个编号在每种语言里各有一处登记位
+registered_short_names_by_language = {}
 for kb_directory in KB_SCAN_DIRECTORIES:
   for registry_glob, number_prefix in ((os.path.join(kb_directory, 'experiments', '*.md'), 'E'), (os.path.join(kb_directory, 'decisions', '*.md'), 'D')):
     for registry_file in glob.glob(registry_glob):
         first_line = open(registry_file, encoding='utf-8').read().split('\n', 1)[0]
         heading_match = re.match(r'## (' + number_prefix + r'\d+) (.+?)\s*——', first_line)
         if heading_match:
-            registered_short_name_by_number[heading_match.group(1)] = heading_match.group(2).strip()
+            registered_short_names_by_language.setdefault(PACKAGE_FAMILY.file_language(registry_file), {})[heading_match.group(1)] = heading_match.group(2).strip()
 
 
 
@@ -111,6 +112,7 @@ for scan_root in scan_roots:
 
 mismatches = []
 for scanned_file in sorted(set(scanned_files)):
+    registered_short_name_by_number = registered_short_names_by_language.get(PACKAGE_FAMILY.file_language(scanned_file), {})
     for line_number, line in enumerate(open(scanned_file, encoding='utf-8', errors='ignore'), 1):
         # 简称可以含一层全角括号：[^）]* 吃到第一个「）」就停，这类引用怎么写都判红（实测）。
         for number, written_short_name in re.findall(r'([ED]\d+)（((?:[^（）]|（[^（）]*）)*)）', line):

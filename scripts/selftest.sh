@@ -394,6 +394,14 @@ run_scripted "unanswered-message-check/自证通过" 0 "unanswered-message 自�
 run_scripted "unanswered-message-check/UNANSWERED_MESSAGE_BREAK=any-recipient-counts 必须判红" 1 "判错的样本：回给别的会话不算（" -- \
   env UNANSWERED_MESSAGE_BREAK=any-recipient-counts bash "$SCRIPTS/claude-hooks/unanswered-message-check.sh" --selftest
 
+# ════ message-target-guard（只给正在跑的会话发消息）═══════
+# 样本在 message-target.py 的 SELFTEST_CASES 里；它的 --selftest 另逐个打开弄坏开关，核每个都红在点名的样本上。
+head1 "门禁自证：message-target-guard 的判别力"
+run_scripted "message-target-guard/自证通过" 0 "message-target 自证：" -- \
+  bash "$SCRIPTS/claude-hooks/message-target-guard.sh" --selftest
+run_scripted "message-target-guard/MESSAGE_TARGET_BREAK=dead-process-counts 必须判红" 1 "判错的样本：进程已经退出的会话拒绝（" -- \
+  env MESSAGE_TARGET_BREAK=dead-process-counts bash "$SCRIPTS/claude-hooks/message-target-guard.sh" --selftest
+
 # ════ session-number-title（会话标题开头写编号）═══════
 # 样本在 session-number-title.py 的 SELFTEST_CASES 里；它的 --selftest 另逐个打开弄坏开关，核每个都红在点名的样本上。
 head1 "门禁自证：session-number-title 的写法"
@@ -789,6 +797,19 @@ printf '// 照 D1（数据可移动性）办。\n' > "$number_name_project/src/a
 printf '登记位自己目录里的「D1（旧名字）」不该被扫\n' > "$number_name_project/crates/checker/invariants/decisions/02-ref.md"
 run_scripted "number-name-sync/登记的 kb 目录自己排除在扫描范围外" 0 "编号与简称一致" -- \
   bash "$SCRIPTS/number-name-sync.sh" "$number_name_project"
+# 三种语言各有一处登记位：引用对同一种语言的登记位比。三份都带语言后缀，哪个语言仓里跑都是三组
+number_name_languages_project="$temporary_directory/number-name-languages"; mkdir -p "$number_name_languages_project/.claude/kb/decisions" "$number_name_languages_project/docs"
+printf '## D1 数据可移动性 —— 已定\n\n正文。\n' > "$number_name_languages_project/.claude/kb/decisions/01-a.zh.md"
+printf '## D1 Data mobility —— decided\n\nBody.\n' > "$number_name_languages_project/.claude/kb/decisions/01-a.en.md"
+printf '## D1 データ移動性 —— 決定済み\n\n本文。\n' > "$number_name_languages_project/.claude/kb/decisions/01-a.ja.md"
+printf '照 D1（数据可移动性）办。\n' > "$number_name_languages_project/docs/note.zh.md"
+printf 'Per D1（Data mobility）.\n' > "$number_name_languages_project/docs/note.en.md"
+printf 'D1（データ移動性）に従う。\n' > "$number_name_languages_project/docs/note.ja.md"
+run_scripted "number-name-sync/译文的引用对同一种语言的登记位比，三种语言各自一致时通过" 0 "编号与简称一致" -- \
+  bash "$SCRIPTS/number-name-sync.sh" "$number_name_languages_project"
+printf 'Per D1（数据可移动性）.\n' > "$number_name_languages_project/docs/note.en.md"
+run_scripted "number-name-sync/译文里写了别的语言的简称判红" 1 "docs/note.en.md:1  D1 写的「数据可移动性」，登记处是「Data mobility」" -- \
+  bash "$SCRIPTS/number-name-sync.sh" "$number_name_languages_project"
 printf 'nope  # 登记的目录不存在\n' > "$number_name_project/.claude/kb-directories"
 run_scripted "number-name-sync/kb 目录登记指到不存在的路径判红" 2 "登记的目录不存在：nope" -- \
   bash "$SCRIPTS/number-name-sync.sh" "$number_name_project"
@@ -837,7 +858,7 @@ hooks_registered_settings() { # hooks_registered_settings <gate-reuse-check 挂�
   local gate_reuse_on_subagent_stop='' gate_reuse_on_stop='{"type":"command","command":"bash gate-reuse-check.sh"},'
   [[ "$1" == yes ]] && gate_reuse_on_subagent_stop='{"type":"command","command":"bash gate-reuse-check.sh"},'
   [[ "$1" == none ]] && gate_reuse_on_stop=''
-  printf '{"hooks":{"PreToolUse":[{"matcher":"Write","hooks":[{"type":"command","command":"bash guard.sh"},{"type":"command","command":"bash pattern-process-guard.sh"}]},{"matcher":"Write|Edit|MultiEdit|NotebookEdit","hooks":[{"type":"command","command":"bash root-entry-guard.sh"}]},{"matcher":"Bash","hooks":[{"type":"command","command":"bash root-entry-guard.sh"}]},{"matcher":"Agent|Task|SendMessage","hooks":[{"type":"command","command":"bash borrowed-convention-guard.sh"}]},{"matcher":"SubagentHandback","hooks":[{"type":"command","command":"bash handback-scratch-check.sh"}]}],"PostToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"bash root-entry-guard.sh"},{"type":"command","command":"bash discarded-output-count-check.sh"}]}],"SessionStart":[{"hooks":[{"type":"command","command":"bash session-number-title.sh"}]}],"UserPromptSubmit":[{"hooks":[{"type":"command","command":"bash session-number-title.sh"}]}],"Stop":[{"hooks":[%s{"type":"command","command":"bash courtesy-phrase-check.sh"},{"type":"command","command":"bash unanswered-message-check.sh"}]}],"SubagentStop":[{"hooks":[%s{"type":"command","command":"bash handback-scratch-check.sh"},{"type":"command","command":"bash courtesy-phrase-check.sh"}]}]}}\n' \
+  printf '{"hooks":{"PreToolUse":[{"matcher":"Write","hooks":[{"type":"command","command":"bash guard.sh"},{"type":"command","command":"bash pattern-process-guard.sh"}]},{"matcher":"Write|Edit|MultiEdit|NotebookEdit","hooks":[{"type":"command","command":"bash root-entry-guard.sh"}]},{"matcher":"Bash","hooks":[{"type":"command","command":"bash root-entry-guard.sh"}]},{"matcher":"Agent|Task|SendMessage","hooks":[{"type":"command","command":"bash borrowed-convention-guard.sh"}]},{"matcher":"SendMessage","hooks":[{"type":"command","command":"bash message-target-guard.sh"}]},{"matcher":"SubagentHandback","hooks":[{"type":"command","command":"bash handback-scratch-check.sh"}]}],"PostToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"bash root-entry-guard.sh"},{"type":"command","command":"bash discarded-output-count-check.sh"}]}],"SessionStart":[{"hooks":[{"type":"command","command":"bash session-number-title.sh"}]}],"UserPromptSubmit":[{"hooks":[{"type":"command","command":"bash session-number-title.sh"}]}],"Stop":[{"hooks":[%s{"type":"command","command":"bash courtesy-phrase-check.sh"},{"type":"command","command":"bash unanswered-message-check.sh"}]}],"SubagentStop":[{"hooks":[%s{"type":"command","command":"bash handback-scratch-check.sh"},{"type":"command","command":"bash courtesy-phrase-check.sh"}]}]}}\n' \
     "$gate_reuse_on_stop" "$gate_reuse_on_subagent_stop" > "$hooks_project/.claude/settings.json"
 }
 hooks_registered_settings yes
@@ -870,7 +891,7 @@ SETTINGS
 run_scripted "hooks-registered/挂在别的 matcher 上判红" 1 "handback-scratch-check.sh→PreToolUse:SubagentHandback" -- \
   bash "$SCRIPTS/hooks-registered.sh" "$hooks_project"
 # 按文件名的边界认：注册的是 old-guard.sh，不等于 guard.sh 注册着
-printf '{"hooks":{"PreToolUse":[{"matcher":"Write","hooks":[{"type":"command","command":"bash .claude/hooks/old-guard.sh"},{"type":"command","command":"bash pattern-process-guard.sh"}]},{"matcher":"Write|Edit|MultiEdit|NotebookEdit","hooks":[{"type":"command","command":"bash root-entry-guard.sh"}]},{"matcher":"Bash","hooks":[{"type":"command","command":"bash root-entry-guard.sh"}]},{"matcher":"Agent|Task|SendMessage","hooks":[{"type":"command","command":"bash borrowed-convention-guard.sh"}]}],"PostToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"bash root-entry-guard.sh"}]}],"Stop":[{"hooks":[{"type":"command","command":"bash gate-reuse-check.sh"}]}],"SubagentStop":[{"hooks":[{"type":"command","command":"bash gate-reuse-check.sh"},{"type":"command","command":"bash handback-scratch-check.sh"}]}]}}\n' > "$hooks_project/.claude/settings.json"
+printf '{"hooks":{"PreToolUse":[{"matcher":"Write","hooks":[{"type":"command","command":"bash .claude/hooks/old-guard.sh"},{"type":"command","command":"bash pattern-process-guard.sh"}]},{"matcher":"Write|Edit|MultiEdit|NotebookEdit","hooks":[{"type":"command","command":"bash root-entry-guard.sh"}]},{"matcher":"Bash","hooks":[{"type":"command","command":"bash root-entry-guard.sh"}]},{"matcher":"Agent|Task|SendMessage","hooks":[{"type":"command","command":"bash borrowed-convention-guard.sh"}]},{"matcher":"SendMessage","hooks":[{"type":"command","command":"bash message-target-guard.sh"}]}],"PostToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"bash root-entry-guard.sh"}]}],"Stop":[{"hooks":[{"type":"command","command":"bash gate-reuse-check.sh"}]}],"SubagentStop":[{"hooks":[{"type":"command","command":"bash gate-reuse-check.sh"},{"type":"command","command":"bash handback-scratch-check.sh"}]}]}}\n' > "$hooks_project/.claude/settings.json"
 run_scripted "hooks-registered/名字是别的钩子名的一截也不算注册" 1 "没在 settings.json 里注册" "guard.sh  要挂的事件" -- \
   bash "$SCRIPTS/hooks-registered.sh" "$hooks_project"
 printf '{ 坏掉的 JSON\n' > "$hooks_project/.claude/settings.json"
