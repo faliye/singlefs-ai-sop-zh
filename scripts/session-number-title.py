@@ -15,6 +15,9 @@
   取不到时沿用标题里已有的编号，再取不到用 SessionStart 记下的那个（状态目录）；
   都没有（会话早就起了自定义标题，默认名已经换掉）时，用会话 ID 的 sha256 前两位十六进制；
   这个号已被登记里别的会话占着（默认名的编号，或标题开头的编号）就顺着 sha256 往后取下一对。
+让号：不管号是从哪来的（默认名、标题、状态目录），登记里别的会话也用着同一个号、而且它起得更早（比登记的 startedAt；
+  一样早或有一边没记时，会话 ID 小的算早），这个会话就不用这个号，换成会话 ID 算的那一个；起得早的一方不动。
+  默认名的号是随机的两位十六进制，两个在跑的会话会撞上。
 写什么：
   SessionStart（startup / resume / fork）：`(编号) <原标题去掉旧编号>`；原来没有标题时取会话记录里最新的自动标题（ai-title），
     没有自动标题取会话记录里第一条用户提示起的标题（提示标题），都没有就只写 `(编号)`。
@@ -61,6 +64,7 @@ BREAK_SWITCHES = {
     "fallback-ignored": "默认名已换掉时用会话 ID 算的号",
     "collision-ignored": "算的号被别的会话占着就取下一对",
     "prompt-title-ignored": "只有编号时用提示起标题",
+    "taken-number-kept": "默认名的号被更早的会话占着就换",
 }
 
 NUMBERED_TITLE = re.compile(r"^\(([^()\s]+)\)\s*(.*)$", re.S)
@@ -106,15 +110,20 @@ def prompt_title(prompt) -> str:
 
 
 def next_title(event: str, current_title: str, registry_number, stored_number, ai_titles: list, fallback_number=None,
-               prompt_based_title: str = ""):
+               prompt_based_title: str = "", numbers_to_yield=frozenset()):
     """要写的新标题；不用改时是 None。ai_titles 是会话记录里的自动标题，按出现先后排。
     fallback_number 是前几样都取不到时用的号（会话 ID 算的）。prompt_based_title 是还没有自动标题时用的提示标题。
+    numbers_to_yield 是更早的会话占着、这个会话要让出来的号：登记、标题、状态目录里的号在其中的都当没有，落到 fallback_number 上。
     编号后面已有正文的不换正文。返回 (新标题或 None, 用的编号或 None)。"""
     if break_switch() == "fallback-ignored":
         fallback_number = None
     if break_switch() == "prompt-title-ignored":
         prompt_based_title = ""
     title_number, base = split_title(current_title)
+    if fallback_number is not None and break_switch() != "taken-number-kept":
+        # 没有可换的号（算不出）时不让：留着撞的号也比没有号强
+        registry_number, title_number, stored_number = (
+            None if number in numbers_to_yield else number for number in (registry_number, title_number, stored_number))
     latest_ai_title = ai_titles[-1] if ai_titles else ""
     if event == "SessionStart":
         number = registry_number or title_number or stored_number or fallback_number
@@ -205,25 +214,39 @@ def number_in_registration(registration) -> str | None:
     return name.rsplit("-", 1)[-1] or None
 
 
-def numbers_in_use(session_id: str) -> set:
-    """登记里别的会话占着的编号：默认名的编号与标题开头的编号。"""
+def start_order(registration, session_id: str) -> tuple:
+    """会话起得早晚的排序键：登记的 startedAt，没记的排在记了的后面；一样时比会话 ID。"""
+    started_at = registration.get("startedAt") if isinstance(registration, dict) else None
+    if isinstance(started_at, bool) or not isinstance(started_at, (int, float)):
+        return (1, 0, session_id)
+    return (0, started_at, session_id)
+
+
+def numbers_in_use(session_id: str) -> dict:
+    """登记里别的会话占着的编号（默认名的编号与标题开头的编号）→ 占着它的会话里最早那个的排序键。"""
     directory = registry_directory()
     try:
         names = os.listdir(directory)
     except OSError:
-        return set()
-    used = set()
+        return {}
+    used = {}
     for name in names:
         registration = read_registration(os.path.join(directory, name)) if name.endswith(".json") else None
         if registration is None or (session_id and registration.get("sessionId") == session_id):
             continue
         number = number_in_registration(registration) or split_title(str(registration.get("name") or ""))[0]
         if number:
-            used.add(number)
+            order = start_order(registration, str(registration.get("sessionId") or ""))
+            used[number] = min(used.get(number, order), order)
     return used
 
 
-def fallback_number(session_id: str, used: set):
+def numbers_taken_earlier(own_order: tuple, used: dict) -> frozenset:
+    """别的会话占着、而且那个会话比这个会话起得早的号：这个会话要让出来。"""
+    return frozenset(number for number, other_order in used.items() if other_order < own_order)
+
+
+def fallback_number(session_id: str, used):
     """会话 ID 的 sha256 里第一对没被占的两位十六进制；没有会话 ID 是 None。"""
     if not session_id:
         return None
@@ -290,11 +313,13 @@ def judge_hook(hook_text: str) -> int:
     current_title = hook_input.get("session_title") if isinstance(hook_input.get("session_title"), str) else ""
     stored = SESSION_TRANSCRIPT.stored_fingerprint(state_file(session_id)) or None
     found = registry_number(session_id, wait=(event == "SessionStart" and not split_title(current_title)[0]))
-    fallback = fallback_number(session_id, numbers_in_use(session_id))
+    used_by_others = numbers_in_use(session_id)
+    fallback = fallback_number(session_id, used_by_others)
+    numbers_to_yield = numbers_taken_earlier(start_order(own_registration(session_id), session_id), used_by_others)
     transcript_path = hook_input.get("transcript_path")
     prompt = hook_input.get("prompt") if event == "UserPromptSubmit" else first_prompt_in(transcript_path)
     based_on_prompt = prompt_title(prompt)
-    title, number = next_title(event, current_title, found, stored, ai_titles_in(transcript_path), fallback, based_on_prompt)
+    title, number = next_title(event, current_title, found, stored, ai_titles_in(transcript_path), fallback, based_on_prompt, numbers_to_yield)
     if number is None:
         print(f"session-number-title：会话登记目录 {registry_directory()} 里取不到这个会话的默认名编号，标题里也没有，输入里也没有 session_id 可算，这一次没写标题", file=sys.stderr)
         return EXIT_NOT_WRITTEN
@@ -340,6 +365,21 @@ PROMPT_TITLE_CASES = (
 )
 
 
+# 让号样本：(样本名, 事件, 原标题, 登记里的编号, 状态里记的编号, 要让出来的号, 期望的新标题；None 是不用改)；会话 ID 算的号是 "c9"
+YIELD_CASES = (
+    ("默认名的号被更早的会话占着就换", "SessionStart", "", "42", None, {"42"}, "(c9)"),
+    ("标题里的号被更早的会话占着就换", "UserPromptSubmit", "(42) 里程碑5", None, "42", {"42"}, "(c9) 里程碑5"),
+    ("更早的会话占的是别的号不换", "UserPromptSubmit", "(42) 里程碑5", None, None, {"17"}, None),
+)
+# 早晚样本：(样本名, 这个会话的 (startedAt, 会话 ID), 别的会话占着的号 → 它的 (startedAt, 会话 ID), 期望要让出来的号)；startedAt 是 None 表示登记里没记
+ORDER_CASES = (
+    ("起得晚的一方让号", (200, "b"), {"97": (100, "a")}, {"97"}),
+    ("起得早的一方不让", (100, "a"), {"97": (200, "b")}, set()),
+    ("一样早时会话 ID 大的让", (100, "b"), {"97": (100, "a")}, {"97"}),
+    ("自己没记起始时刻就让", (None, "a"), {"97": (100, "b")}, {"97"}),
+)
+
+
 P_DIGEST = hashlib.sha256(b"p").hexdigest()
 # 算号样本：(样本名, 会话 ID, 别的会话占着的号, 期望的号)
 FALLBACK_CASES = (
@@ -363,6 +403,15 @@ def run_selftest_cases() -> list:
         actual = prompt_title(prompt)
         if actual != expected:
             misjudged_cases.append((case_name, expected, actual))
+    for case_name, event, current_title, found, stored, numbers_to_yield, expected in YIELD_CASES:
+        actual, _ = next_title(event, current_title, found, stored, [], "c9", "", frozenset(numbers_to_yield))
+        if actual != expected:
+            misjudged_cases.append((case_name, expected, actual))
+    for case_name, (own_started_at, own_session_id), used, expected in ORDER_CASES:
+        used_orders = {number: start_order({"startedAt": started_at}, other_session_id) for number, (started_at, other_session_id) in used.items()}
+        actual = set(numbers_taken_earlier(start_order({"startedAt": own_started_at}, own_session_id), used_orders))
+        if actual != expected:
+            misjudged_cases.append((case_name, expected, actual))
     for case_name, session_id, used, expected in FALLBACK_CASES:
         actual = fallback_number(session_id, used)
         if actual != expected:
@@ -370,7 +419,7 @@ def run_selftest_cases() -> list:
     return misjudged_cases
 
 
-HOOK_PATH_COUNT = 11
+HOOK_PATH_COUNT = 14
 
 
 def run_hook_cases() -> list:
@@ -424,6 +473,15 @@ def run_hook_cases() -> list:
             handle.write(json.dumps({"type": "ai-title", "aiTitle": "会话命名规则", "sessionId": "n"}, ensure_ascii=False) + "\n")
         expect("提示标题写下之后出了自动标题也不换", hook_json(hook_event_name="UserPromptSubmit", session_id="n", session_title="(c1) 修改规则 会话命名",
                                                 prompt="下一条", transcript_path=titled_transcript), EXIT_PASS, None)
+        for pid, registered_session_id, started_at in ((4, "e", 100), (5, "l", 200)):
+            with open(os.path.join(registry, f"{pid}.json"), "w", encoding="utf-8") as handle:
+                json.dump({"pid": pid, "sessionId": registered_session_id, "cwd": "/work/demo", "name": "demo-7a", "nameSource": "derived", "startedAt": started_at}, handle)
+        later_session_number = hashlib.sha256(b"l").hexdigest()[:2]
+        expect("两个会话的默认名同号，起得晚的换成算的号", hook_json(hook_event_name="SessionStart", source="startup", session_id="l"),
+               EXIT_PASS, f"({later_session_number})")
+        expect("两个会话的默认名同号，起得早的不动", hook_json(hook_event_name="SessionStart", source="startup", session_id="e"), EXIT_PASS, "(7a)")
+        expect("标题里已经写下的撞号，起得晚的在提示时换", hook_json(hook_event_name="UserPromptSubmit", session_id="l", session_title="(7a) 里程碑5"),
+               EXIT_PASS, f"({later_session_number}) 里程碑5")
         expect("没有会话 ID 也取不到编号不写", hook_json(hook_event_name="UserPromptSubmit", session_title="里程碑5"), EXIT_NOT_WRITTEN, None)
         expect("clear 与 compact 不写", hook_json(hook_event_name="SessionStart", source="compact", session_id="s"), EXIT_PASS, None)
         expect("子 agent 不写", hook_json(hook_event_name="UserPromptSubmit", session_id="s", agent_id="a1"), EXIT_PASS, None)
@@ -436,10 +494,10 @@ def selftest() -> int:
     if not break_switch():
         misjudged_cases += run_hook_cases()
     exit_code = BREAK_SWITCH_SELFTEST.finish_selftest(__file__, BREAK_ENVIRONMENT_VARIABLE, BREAK_SWITCHES, misjudged_cases,
-                                                      len(SELFTEST_CASES) + len(PROMPT_CASES) + len(PROMPT_TITLE_CASES) + len(FALLBACK_CASES), "next_title / prompt_title / fallback_number / judge_hook")
+                                                      len(SELFTEST_CASES) + len(PROMPT_CASES) + len(PROMPT_TITLE_CASES) + len(YIELD_CASES) + len(ORDER_CASES) + len(FALLBACK_CASES), "next_title / prompt_title / numbers_taken_earlier / fallback_number / judge_hook")
     if exit_code is not None:
         return exit_code
-    print(f"  ✓ session-number-title 自证：{len(SELFTEST_CASES) + len(PROMPT_CASES) + len(PROMPT_TITLE_CASES) + len(FALLBACK_CASES)} 个样本与 {HOOK_PATH_COUNT} 条钩子路径写得对；"
+    print(f"  ✓ session-number-title 自证：{len(SELFTEST_CASES) + len(PROMPT_CASES) + len(PROMPT_TITLE_CASES) + len(YIELD_CASES) + len(ORDER_CASES) + len(FALLBACK_CASES)} 个样本与 {HOOK_PATH_COUNT} 条钩子路径写得对；"
           f"{len(BREAK_SWITCHES)} 个弄坏开关逐个打开，各自红在点名的样本上")
     return 0
 

@@ -402,6 +402,14 @@ run_scripted "message-target-guard/自证通过" 0 "message-target 自证：" --
 run_scripted "message-target-guard/MESSAGE_TARGET_BREAK=dead-process-counts 必须判红" 1 "判错的样本：进程已经退出的会话拒绝（" -- \
   env MESSAGE_TARGET_BREAK=dead-process-counts bash "$SCRIPTS/claude-hooks/message-target-guard.sh" --selftest
 
+# ════ session-checks（会话启动与压缩之后的检测）═══════
+# 样本在 session-checks.py 的 run_selftest_cases 里；它的 --selftest 另逐个打开弄坏开关，核每个都红在点名的样本上。
+head1 "门禁自证：session-checks 的判别力"
+run_scripted "session-checks/自证通过" 0 "session-checks 自证：" -- \
+  bash "$SCRIPTS/claude-hooks/session-checks.sh" --selftest
+run_scripted "session-checks/SESSION_CHECKS_BREAK=failure-dropped 必须判红" 1 "判错的样本：检查项退非 0 报没查成（" -- \
+  env SESSION_CHECKS_BREAK=failure-dropped bash "$SCRIPTS/claude-hooks/session-checks.sh" --selftest
+
 # ════ session-number-title（会话标题开头写编号）═══════
 # 样本在 session-number-title.py 的 SELFTEST_CASES 里；它的 --selftest 另逐个打开弄坏开关，核每个都红在点名的样本上。
 head1 "门禁自证：session-number-title 的写法"
@@ -858,12 +866,22 @@ hooks_registered_settings() { # hooks_registered_settings <gate-reuse-check 挂�
   local gate_reuse_on_subagent_stop='' gate_reuse_on_stop='{"type":"command","command":"bash gate-reuse-check.sh"},'
   [[ "$1" == yes ]] && gate_reuse_on_subagent_stop='{"type":"command","command":"bash gate-reuse-check.sh"},'
   [[ "$1" == none ]] && gate_reuse_on_stop=''
-  printf '{"hooks":{"PreToolUse":[{"matcher":"Write","hooks":[{"type":"command","command":"bash guard.sh"},{"type":"command","command":"bash pattern-process-guard.sh"}]},{"matcher":"Write|Edit|MultiEdit|NotebookEdit","hooks":[{"type":"command","command":"bash root-entry-guard.sh"}]},{"matcher":"Bash","hooks":[{"type":"command","command":"bash root-entry-guard.sh"}]},{"matcher":"Agent|Task|SendMessage","hooks":[{"type":"command","command":"bash borrowed-convention-guard.sh"}]},{"matcher":"SendMessage","hooks":[{"type":"command","command":"bash message-target-guard.sh"}]},{"matcher":"SubagentHandback","hooks":[{"type":"command","command":"bash handback-scratch-check.sh"}]}],"PostToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"bash root-entry-guard.sh"},{"type":"command","command":"bash discarded-output-count-check.sh"}]}],"SessionStart":[{"hooks":[{"type":"command","command":"bash session-number-title.sh"}]}],"UserPromptSubmit":[{"hooks":[{"type":"command","command":"bash session-number-title.sh"}]}],"Stop":[{"hooks":[%s{"type":"command","command":"bash courtesy-phrase-check.sh"},{"type":"command","command":"bash unanswered-message-check.sh"}]}],"SubagentStop":[{"hooks":[%s{"type":"command","command":"bash handback-scratch-check.sh"},{"type":"command","command":"bash courtesy-phrase-check.sh"}]}]}}\n' \
+  printf '{"hooks":{"PreToolUse":[{"matcher":"Write","hooks":[{"type":"command","command":"bash guard.sh"},{"type":"command","command":"bash pattern-process-guard.sh"}]},{"matcher":"Write|Edit|MultiEdit|NotebookEdit","hooks":[{"type":"command","command":"bash root-entry-guard.sh"}]},{"matcher":"Bash","hooks":[{"type":"command","command":"bash root-entry-guard.sh"}]},{"matcher":"Agent|Task|SendMessage","hooks":[{"type":"command","command":"bash borrowed-convention-guard.sh"}]},{"matcher":"SendMessage","hooks":[{"type":"command","command":"bash message-target-guard.sh"}]},{"matcher":"SubagentHandback","hooks":[{"type":"command","command":"bash handback-scratch-check.sh"}]}],"PostToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"bash root-entry-guard.sh"},{"type":"command","command":"bash discarded-output-count-check.sh"}]}],"SessionStart":[{"hooks":[{"type":"command","command":"bash session-number-title.sh"},{"type":"command","command":"bash session-checks.sh"}]}],"UserPromptSubmit":[{"hooks":[{"type":"command","command":"bash session-number-title.sh"}]}],"Stop":[{"hooks":[%s{"type":"command","command":"bash courtesy-phrase-check.sh"},{"type":"command","command":"bash unanswered-message-check.sh"}]}],"SubagentStop":[{"hooks":[%s{"type":"command","command":"bash handback-scratch-check.sh"},{"type":"command","command":"bash courtesy-phrase-check.sh"}]}]}}\n' \
     "$gate_reuse_on_stop" "$gate_reuse_on_subagent_stop" > "$hooks_project/.claude/settings.json"
 }
 hooks_registered_settings yes
 run_scripted "hooks-registered/注册着且自证过就通过" 0 "个钩子都注册着" -- \
   bash "$SCRIPTS/hooks-registered.sh" "$hooks_project"
+# 会话检查项（rules/communication-discipline.md「会话启动与压缩之后的检测」）：文件头没写超时的那一项要红，写对了放行
+mkdir -p "$hooks_project/.claude/session-checks"
+printf '#!/usr/bin/env bash\n# session-check-sources: startup\nexit 0\n' > "$hooks_project/.claude/session-checks/oom"
+chmod +x "$hooks_project/.claude/session-checks/oom"
+run_scripted "hooks-registered/会话检查项文件头没写超时判红" 1 "会话检查项没过" "oom：文件头没写对 # session-check-timeout" -- \
+  bash "$SCRIPTS/hooks-registered.sh" "$hooks_project"
+printf '#!/usr/bin/env bash\n# session-check-sources: startup\n# session-check-timeout: 5\nexit 0\n' > "$hooks_project/.claude/session-checks/oom"
+run_scripted "hooks-registered/会话检查项写对了放行" 0 "会话检查项 1 项文件头都写对了" -- \
+  bash "$SCRIPTS/hooks-registered.sh" "$hooks_project"
+rm -rf "${hooks_project:?}/.claude/session-checks"
 hooks_registered_settings no
 run_scripted "hooks-registered/声明的事件没挂全判红" 1 "gate-reuse-check.sh→SubagentStop" -- \
   bash "$SCRIPTS/hooks-registered.sh" "$hooks_project"

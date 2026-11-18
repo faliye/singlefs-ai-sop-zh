@@ -7,7 +7,9 @@
 # admission: always Claude Code 在 agent 每一次收工时调它，每一条回复都要现判
 # run-condition: command python3
 # Claude Code 的 Stop / SubagentStop 钩子：这一轮最后一条回复里有客套话（寒暄、道谢、道歉、夸提问、结尾问还要不要别的），
-#   就拦下收工，要它删掉重写（rules/communication-discipline.md「不写客套」）。
+#   就拦下收工，要它删掉重写（rules/communication-discipline.md「不写客套」）；
+#   有推测的说法（「可能是」「应该是」「大概」「我记得」这类）、那一行又没写「未验证：<为什么验不了>」的，
+#   也拦下，要它先去核实再重写（同一篇的「推测先去核实，再回答」）。两样判的是同一条回复，所以并在一个钩子里。
 #
 # 判定全在 scripts/courtesy-phrase.py（它不是门禁阶段，只给这个钩子用），这里只转交钩子的 JSON，自证也由它做。
 # 退出码：拦下 2（不让收工，stderr 交给 agent）；放行 0；判不了 1（不拦，stderr 留一行原因）；准入与运行条件不满足 78。

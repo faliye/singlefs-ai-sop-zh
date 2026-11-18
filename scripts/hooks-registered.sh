@@ -11,6 +11,8 @@
 #   自证：它带 `--selftest` 时，自证要通过（自证本身证明这道闸会拒绝）；
 #   事件：它文件头写了 `# hook-events: <事件> …` 时，每个事件都有一条注册指向它；
 #      写成 `<事件>:<工具名>` 的，那条注册的 matcher 还要认得这个工具名（空 matcher 与 * 认全部）。
+#   会话检查项：项目有 `.claude/session-checks/` 时，交给 session-checks.py --check-items 判每一项的文件头、执行位与 --selftest
+#      （rules/communication-discipline.md「会话启动与压缩之后的检测」）；没有这个目录不判，成功那句里写明。
 # 例外：副本里的钩子文件头写了 `# hook-registration: optional <理由>`，项目可以不注册它，
 #   成功那句逐个列出没注册的可选钩子；注册了就照自证、事件两条判。项目自己的钩子写这一行不算数：不用就连文件删掉。
 # 一个钩子都没有时退 77（本次无对象可判），不报绿。有钩子却没有 settings.json 判红：那等于每一个都没注册。
@@ -154,8 +156,21 @@ if ((${#failed_selftest_hooks[@]})); then
         "自证就是这道闸「会拒绝」的证据，自证不过等于闸开着。"
   exit 1
 fi
+SESSION_CHECKS_JUDGE="$(dirname "${BASH_SOURCE[0]}")/session-checks.py"
+session_checks_summary="项目没有 .claude/session-checks/，会话检查项没判"
+if [[ -d "$PROJECT_ROOT/.claude/session-checks" ]]; then
+  if session_checks_output="$(python3 "$SESSION_CHECKS_JUDGE" --check-items "$PROJECT_ROOT" 2>&1)"; then
+    session_checks_summary="$(sed -n 's/^  ✓ //p' <<<"$session_checks_output" | head -1)"
+  else
+    say "$session_checks_output"
+    bad "会话检查项没过 session-checks.py --check-items（明细与出路在上面那几行）"
+    howto "照上面列的逐项改：文件头写全 # session-check-sources: 与 # session-check-timeout:，加执行位，带 --selftest 的自证要过；" \
+          "改完单跑 python3 $SESSION_CHECKS_JUDGE --check-items $PROJECT_ROOT 看它转绿。"
+    exit 1
+  fi
+fi
 if ((${#optional_unregistered[@]})); then
-  ok "$checked_hook_count 个钩子里 $((checked_hook_count - ${#optional_unregistered[@]})) 个注册着，其中 $selftested_hook_count 个的自证通过；${#optional_unregistered[@]} 个可选钩子没注册：${optional_unregistered[*]}"
+  ok "$checked_hook_count 个钩子里 $((checked_hook_count - ${#optional_unregistered[@]})) 个注册着，其中 $selftested_hook_count 个的自证通过；${#optional_unregistered[@]} 个可选钩子没注册：${optional_unregistered[*]}；$session_checks_summary"
 else
-  ok "$checked_hook_count 个钩子都注册着，其中 $selftested_hook_count 个的自证通过"
+  ok "$checked_hook_count 个钩子都注册着，其中 $selftested_hook_count 个的自证通过；$session_checks_summary"
 fi

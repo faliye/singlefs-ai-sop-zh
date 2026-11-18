@@ -3,6 +3,20 @@
 规则与门禁的版本历史。`CLAUDE.md` 与 `rules/*.md` 不留历史节（design-doc-discipline），
 历史一律记在这里；逐条改动细节见 `git log`，提交信息即变更说明。
 
+## 0.0.75 — 2026-11-18
+
+**新加规则「推测先去核实，再回答」，由收工钩子 `courtesy-phrase-check.sh` 判；新加钩子 `session-checks.sh`（会话启动、恢复、清空与压缩之后的检测）；会话编号撞了别的在跑会话时，起得晚的一方换号。**
+
+规则：
+- `communication-discipline.md`：新加小节「推测先去核实，再回答」：回复里有推测的说法（「可能是」「应该是」「大概」「我记得」这类）或自己标明没核实的说法（「推测」「推论」「这是推的」「没核实」这类），先去核实再改写成带依据的结论；验不了的在那一行写「未验证：<为什么验不了>」，理由至少 4 个字。
+- `communication-discipline.md`：新加小节「会话启动与压缩之后的检测」：压缩之后补一段对齐提示，项目要检的项登记在 `.claude/session-checks/`，没查成照常放行并留一行记录。
+- `communication-discipline.md`「会话标题开头写编号」：补一句「编号已被别的正在跑的会话占着时，起得晚的一方换号，起得早的一方不动」。
+
+脚本与门禁：
+- `courtesy-phrase.py`、`claude-hooks/courtesy-phrase-check.sh`：新加词表 `SPECULATION_PHRASES`，最后一条回复里命中、同一行又没写「未验证：」的拦下收工；与客套话判同一条回复，并在同一个钩子里，注册不用改。新加弄坏开关 `speculation-ignored`、`unverified-mark-ignored`。词表拿使用者项目最近 40 份会话记录里的收工回复对照过，去掉「八成」「原估计是」「按理解」「说不准确」与说风险的「可能在」几种误判。
+- `claude-hooks/session-checks.sh` 与 `session-checks.py`（新）：挂 `SessionStart`，只报不改；`hooks-registered.sh` 在项目有 `.claude/session-checks/` 时调它的 `--check-items` 判检查项的文件头、执行位与 `--selftest`。
+- `session-number-title.py`：默认名、标题、状态目录里的号此前不与别的会话占着的号比，两个在跑的会话会用同一个号；现在别的会话也用着同一个号、而且它起得更早（比登记的 `startedAt`，一样早或有一边没记时比会话 ID）时，这个会话改用会话 ID 算的号。新加弄坏开关 `taken-number-kept`。
+
 ## 0.0.74 — 2026-11-16
 
 **压缩规则与规范文本：八篇规则、门禁技能、决策技能、`CLAUDE.md`、README 去重精炼；新加钩子 `message-target-guard.sh`（找别的会话只找正在跑的）；kb 的编号与简称按语言各判；几道门禁提速。**
