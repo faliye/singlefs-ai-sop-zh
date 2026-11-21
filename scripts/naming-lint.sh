@@ -451,8 +451,8 @@ function strip_comments_and_literals(line,    stripped_text, position, line_leng
         if (substr(line, hash_end, 1) == "\"") { raw_string_hash_count = hash_end - raw_quote_start; stripped_text = stripped_text "\""; position = hash_end + 1; continue }
         if (character == "r" && hash_end == raw_quote_start + 1 && substr(line, hash_end, 1) ~ /[A-Za-z_]/) { position = hash_end; continue }
       }
-      # 字节字符 b'x'、b'\n' 的前缀 b 不是名字：去掉它，引号那一段照字符字面量剥
-      if (character == "b" && substr(line, position + 1, 1) == "'") { position++; continue }
+      # 字节字符 b'x'、字节串 b"x" 的前缀 b 不是名字：去掉它，引号那一段照字面量剥
+      if (character == "b" && substr(line, position + 1, 1) ~ /['"]/) { position++; continue }
     }
     if (character == "\"") { in_string_literal = 1; stripped_text = stripped_text "\""; position++; continue }
     if (character == "'") {

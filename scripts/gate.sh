@@ -442,6 +442,9 @@ run_stage_may_skip "转发计时" "本次无对象可判：它扫的那几处目
 # 同一作用域里同名定义两次，后一个静默盖掉前一个（rules/code-discipline.md「同一作用域里一个名字只定义一次」）。
 run_stage_may_skip "同名定义" "本次无对象可判：它扫的那几处目录里没有 .py / .sh（扫哪几处见上方它的输出）" \
   python3 "$SCRIPTS_DIRECTORY/duplicate-definitions.py" --check "$ROOT"
+# 一个代码文件不算注释不超过 2000 行（rules/code-discipline.md「一个代码文件不超过 2000 行」）；钩子 code-length-guard.sh 在写之前拦，这一道在提交前兜底。
+run_stage_may_skip "代码文件长度" "本次无对象可判：它扫的那几处目录里没有 .rs / .py / .sh / .wgsl（扫哪几处见上方它的输出）" \
+  python3 "$SCRIPTS_DIRECTORY/code-length.py" --check "$ROOT"
 # 新加的文字里不拿代号指东西（rules/writing-discipline.md「不写缩写，不用代号指东西」）；只判这一次新加的行，存量不回扫。
 run_stage_may_skip "代号" "本次无对象可判：不在 git 仓里，或这一次没有新加的 .md 行" \
   python3 "$SCRIPTS_DIRECTORY/code-name-lint.py" --check "$ROOT"

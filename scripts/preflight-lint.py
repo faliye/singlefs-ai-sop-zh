@@ -58,10 +58,11 @@ PACKAGE_EXCLUDED = {
     'scripts/session-transcript.py': '被 gate-overlap.py 与 handback-scratch.py import 的库，没有自己的入口',
     'scripts/package-family.py': '被 link-targets.py、preflight-lint.py 与 number-name-sync.sh 载入的库，没有自己的入口',
     'scripts/evidence-exclude.py': '被 link-targets.py、number-name-sync.sh 与 source-files.py 载入的库，没有自己的入口',
-    'scripts/source-files.py': '被 relay-timing-lint.py 与 duplicate-definitions.py 载入的库（扫全仓源码的走法），没有自己的入口',
-    'scripts/break-switch-selftest.py': '被 duplicate-definitions.py、code-name-lint.py、borrowed-convention.py、courtesy-phrase.py、unanswered-message.py、session-number-title.py、message-target.py 与 session-checks.py 载入的库（自证里逐个打开弄坏开关），没有自己的入口',
+    'scripts/source-files.py': '被 relay-timing-lint.py、duplicate-definitions.py 与 code-length.py 载入的库（扫全仓源码的走法），没有自己的入口',
+    'scripts/break-switch-selftest.py': '被 duplicate-definitions.py、code-name-lint.py、borrowed-convention.py、courtesy-phrase.py、unanswered-message.py、session-number-title.py、message-target.py、session-checks.py 与 code-length.py 载入的库（自证里逐个打开弄坏开关），没有自己的入口',
     'scripts/preflight.py': '它就是判条件的那一个：自己再判一遍自己，会把要转给被判脚本的 --force 吃掉',
     'scripts/preflight.sh': '被 lib.sh 与钩子 source 的函数库（preflight、preflight_record_success），不单独调',
+    'scripts/selftest-repository-gates.sh': '被 selftest.sh 在原位 source 的一段用例，用的是它的断言器与变量，不单独调',
 }
 # 项目要判的目录：项目登记的门禁目录（PREFLIGHT.project_gate_directory，默认 .claude/gate.d），加上 .claude/preflight-dirs 登记的那几处；
 # 项目登记的钩子目录（PREFLIGHT.project_hooks_directory，默认 .claude/hooks）与 .claude/scripts/ 不判：轻脚本不写准入（rules/preflight-discipline.md）。

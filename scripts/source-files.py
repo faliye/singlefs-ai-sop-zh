@@ -6,7 +6,9 @@
 不扫：项目根 `.claude/doc-lint-exclude` 登记的目录（evidence-exclude.py 读），那是原样保存的证据；
 每个登记目录里跳过了几个文件现数出来，交给调用方报进统计。
 
-不单独跑，由 relay-timing-lint.py、duplicate-definitions.py 与 code-name-lint.py（只用 default_root）按路径载入（preflight.py 的 load_package_module），函数照原名调；
+一次只看一个文件的调用方（钩子）用 is_walked_relative_path 判这个文件在不在上面的范围里。
+
+不单独跑，由 relay-timing-lint.py、duplicate-definitions.py、code-length.py 与 code-name-lint.py（只用 default_root）按路径载入（preflight.py 的 load_package_module），函数照原名调；
 不给仓库根时判哪个仓（default_root）也在这里，两边一样。
 """
 import dataclasses
@@ -59,6 +61,23 @@ def walk_source_files(repository_root: pathlib.Path, suffixes: tuple) -> SourceW
                     continue
                 relative_paths.append(relative_path)
     return SourceWalk(relative_paths, frozen_file_counts)
+
+
+def is_walked_relative_path(repository_root: pathlib.Path, relative_path: str, suffixes: tuple) -> bool:
+    """walk_source_files 会不会走到这一个文件：给钩子这类一次只看一个文件的调用方用，判的范围与整仓扫的一样。"""
+    path_components = pathlib.PurePosixPath(relative_path).parts
+    if len(path_components) < 2 or not relative_path.endswith(suffixes):
+        return False
+    top_directory = path_components[0]
+    if top_directory.startswith("."):
+        if not top_directory.startswith(".claude"):
+            return False
+    elif top_directory in SKIP_TOP_DIRECTORIES:
+        return False
+    if any(component in SKIPPED_DIRECTORY_NAMES for component in path_components[1:-1]):
+        return False
+    return not any(relative_path.startswith(directory + "/")
+                   for directory in EVIDENCE_EXCLUDE.frozen_evidence_directories(repository_root))
 
 
 def default_root() -> pathlib.Path:

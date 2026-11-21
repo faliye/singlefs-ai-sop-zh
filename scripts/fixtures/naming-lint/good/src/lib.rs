@@ -110,6 +110,15 @@ pub fn byte_class(byte: u8) -> u8 {
     }
 }
 
+/// 字节串 `b"yes"` 的前缀 b 不是名字，match 分支里也不判。
+pub fn byte_string_class(line: &[u8]) -> u8 {
+    match line {
+        b"agreement=yes" => 1,
+        b"a\"b" => 2,
+        _ => 0,
+    }
+}
+
 /// 打头的冠词 a 后面还有别的段，是英语冠词，不判。
 pub fn a_mount_that_stays_short_is_not_admitted() -> bool {
     false

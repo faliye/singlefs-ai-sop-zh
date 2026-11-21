@@ -3,6 +3,20 @@
 规则与门禁的版本历史。`CLAUDE.md` 与 `rules/*.md` 不留历史节（design-doc-discipline），
 历史一律记在这里；逐条改动细节见 `git log`，提交信息即变更说明。
 
+## 0.0.76 — 2026-11-22
+
+**新加规则「一个代码文件不超过 2000 行」，由钩子 `code-length-guard.sh` 在写之前拦、门禁阶段「代码文件长度」在提交前兜底；`naming-lint` 修字节串前缀的误判。**
+
+规则：
+- `code-discipline.md`：新加小节「一个代码文件不超过 2000 行」：`.rs`、`.py`、`.sh`、`.wgsl` 不算注释不超过 2000 行；空行算，只有注释的行不算，字符串与 heredoc 里的 `//`、`#` 照代码算；超了按职责拆，没有豁免，已经超了的只许改短。
+
+脚本与门禁：
+- `code-length.py`（新）：门禁阶段「代码文件长度」扫全仓（扫哪些目录以 `source-files.py` 为准），超了的逐个报出来判红；`--hook` 给钩子用。
+- `claude-hooks/code-length-guard.sh`（新）：挂 `PreToolUse` 的 Write、Edit、MultiEdit，写完之后超过 2000 行、而且比写之前长的拒绝；已经超了的文件改短放行。
+- `source-files.py`：新加 `is_walked_relative_path`，一次只看一个文件的钩子拿它判这个文件在不在整仓扫的范围里。
+- `selftest.sh`：仓级门禁与钩子的用例拆进 `selftest-repository-gates.sh`，由 `selftest.sh` 原位 source，跑的次序不变。
+- `naming-lint.sh`：字节串 `b"x"` 的前缀 `b` 此前被当成名字，现在与字节字符 `b'x'` 一样去掉。
+
 ## 0.0.75 — 2026-11-18
 
 **新加规则「推测先去核实，再回答」，由收工钩子 `courtesy-phrase-check.sh` 判；新加钩子 `session-checks.sh`（会话启动、恢复、清空与压缩之后的检测）；会话编号撞了别的在跑会话时，起得晚的一方换号。**

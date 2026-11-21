@@ -155,6 +155,15 @@ fn walk(node: &VerifiedNode) { /* ... */ }   // 想跳过验证就构造不出�
   编译器报的 `never used` 当错误处理。
 - **`TODO` 写清缺什么、为什么现在不做。** 欠着的检查记进项目 kb 的欠账表，代码里指过去。
 
+## 一个代码文件不超过 2000 行
+
+- 代码文件指 `.rs`、`.py`、`.sh`、`.wgsl`。一份不算注释不超过 2000 行。
+- 空行算；代码后面跟着行尾注释的照代码算。
+- 只有注释的行不算：Rust 与 WGSL 的 `//`、`/* */`，python 的 `#` 与模块、类、函数的 docstring，shell 的 `#`。块注释与 docstring 中间的空行也不算。
+- 字符串、字符字面量、python 的普通多行字符串、shell 的 heredoc 体里的 `//`、`#` 不是注释，那几行照代码算。
+- 超了就按职责拆：Rust 拆成子模块，python 拆成被 import 的模块，shell 拆成被 source 的库。先把要挪走的那一段写进新文件，再从原文件里删掉。
+- 没有豁免。已经超了的文件只许改短，直到拆完。
+
 ## 什么时候不套用
 
 **这些细则对「删得掉的东西」随便用，对「删不掉的东西」要另说。**
@@ -172,6 +181,7 @@ fn walk(node: &VerifiedNode) { /* ... */ }   // 想跳过验证就构造不出�
 | 含义无关的同名遮蔽 | clippy `shadow_unrelated` |
 | `.py` 与 `.sh` 里同一作用域同名定义两次 | `scripts/duplicate-definitions.py`（门禁阶段「同名定义」）：扫全仓，冻结证据不扫，shell 只判顶格写的定义；按顺序重定义是有意的，在后一个定义那一行写 `# duplicate-definitions:allow <理由>`。赋值盖掉函数、import 进来的名字被 def 盖掉、跨文件的同名，它认不出，靠 review |
 | 警告按错误处理 | clippy `-D warnings` |
+| 一个代码文件不超过 2000 行 | 钩子 `scripts/claude-hooks/code-length-guard.sh` 在 Write、Edit、MultiEdit 之前拦：写完之后超过 2000 行、而且比写之前长的拒绝。门禁阶段「代码文件长度」（`scripts/code-length.py`）扫全仓（扫哪些目录见 `scripts/source-files.py`），超了的逐个报出来判红。Bash 里写的文件钩子看不见，由门禁阶段兜底；shell 多行字符串中间以 `#` 起头的行会被当成注释，靠 review |
 | 名字说没说清、一个概念是不是一个名字、函数是不是只做一件事、注释写的是不是为什么、注释里有没有引别的文件的行号、名字与注释里有没有拿序号或位置当代称、注释里有没有缩写、错误成员是不是按调用方的决定分的、循环的状态有没有写清、`..Default::default()` | review |
 | `.rs` 以外的代码（shell、python 这类）与文档里的名字、缩写、代称 | **还没做成检查**，`gate.sh` 把它列在未实现的阶段里（键「命名纪律（shell）」） |
 

@@ -20,6 +20,10 @@
           {
             "type": "command",
             "command": "bash \"$CLAUDE_PROJECT_DIR\"/scripts/claude-hooks/root-entry-guard.sh"
+          },
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR\"/scripts/claude-hooks/code-length-guard.sh"
           }
         ]
       },
