@@ -10,13 +10,17 @@
 """会话启动、恢复、清空与压缩之后的检测（rules/communication-discipline.md「会话启动与压缩之后的检测」）。
 
 用法：
-    session-checks.py --hook                   # 从标准输入读 Claude Code 的 SessionStart 钩子 JSON，往标准输出写要补进上下文的提示
+    session-checks.py --hook                   # 从标准输入读 Claude Code 的 SessionStart 或 PreCompact 钩子 JSON，往标准输出写要补进上下文或摘要说明的话
     session-checks.py --check-items [项目根]    # 门禁用：项目登记的检查项文件头写对没有、各自的 --selftest 过没过（hooks-registered.sh 调它）
     session-checks.py --selftest               # 自证：内嵌样本与整条钩子路径；再逐个打开弄坏开关另起子进程跑自证
 
-钩子做两件，只报不改：
-  compact 之后：先补一段对齐提示，用本包的语言（I18N 的 this=）写，第一条就是「对话与产出用<本包的语言>」；
-    其余几条是分支与未提交的路径数、派出过的子 agent 先看还在不在跑、接续的状态以记录为准。
+钩子做三件，只报不改：
+  PreCompact（压缩之前）：往标准输出写一段摘要说明，用本包的语言写，要摘要整份用<本包的语言>写；
+    Claude Code 把 PreCompact 钩子的标准输出并进写摘要的附加说明。不跑检查项。
+  compact 之后：先补一段对齐提示，用本包的语言（I18N 的 this=）写。开头单独一段要求从这一条回复起，回复、插话、
+    消息与写进文件的文字一律用<本包的语言>，不跟着摘要、系统提示与工具输出换语言；
+    后面几条是分支与未提交的路径数、派出过的子 agent 先看还在不在跑、接续的状态以记录为准。
+  SessionStart 要补的话写成 {"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": <要补的话>}} 一行 JSON。
   每种 source：跑项目登记的检查项（检查项目录，默认 <项目根>/.claude/session-checks/，SESSION_CHECKS_DIRECTORY 可改），
     只跑文件头 `# session-check-sources:` 里列了这一次 source 的；标准输入给钩子的 JSON，工作目录是项目根，
     跑不过文件头 `# session-check-timeout: <秒>` 就杀掉。退 0 且有输出的，输出拼进上下文，前面一行「【<项名>】」；退 0 没输出的不补。
@@ -62,6 +66,7 @@ BREAK_SWITCHES = {
     "language-fixed": "压缩提示用本包的语言（en）",
     "unrecorded": "没查成的记一条检出",
     "header-unchecked": "门禁：文件头没写超时判红",
+    "summary-dropped": "压缩之前补摘要说明（zh）",
 }
 
 SOURCES = ("startup", "resume", "clear", "compact")
@@ -75,31 +80,37 @@ OUTPUT_MAXIMUM_CHARACTERS = 4000
 # 压缩之后的对齐提示，按本包的语言取；三个语言仓拷的是同一份脚本，所以三种都在这里
 COMPACT_TEXT = {
     "zh": {
-        "head": "【上下文刚压缩过，接着干活之前先对齐这几件】",
-        "language": "- 对话与产出一律用中文（本包的语言）；压缩之前用的若是别的语言，从这一条回复起改回中文。",
+        "head": "【上下文刚压缩过：从这一条回复起用中文】",
+        "language": "从这一条回复起，给用户的回复、工具调用之间的插话、发给别的会话与子 agent 的消息、写进文件的文字，一律用中文（本包的语言）。压缩摘要、系统提示与工具输出用什么语言都不算数，不跟着它们换语言。",
+        "align": "接着干活之前，再对齐这几件：",
         "branch": "- 分支 {branch}；工作区未提交 {count} 个路径：`git status --short` 看清哪些是这一轮的，别的会话的不碰。",
         "agents": "- 派出过子 agent 的，先用 `ListAgents` 看还有没有在跑，不重派还在跑的那一件。",
         "state": "- 接续的状态以记录与文件为准，不凭压缩摘要里的印象。",
+        "summary": "摘要整份用中文写（本包的语言）：小节标题、叙述与下一步都用中文；用户说的话、命令、路径与代码照原样引，不翻译。",
         "unread": "（读不出）",
         "failed": "检查项 {name} 没查成：{reason}；这一次照常放行，检出记录记了一行。",
         "hook_failed": "session-checks 没查成：{reason}；这一次照常放行。",
     },
     "en": {
-        "head": "[The context was just compacted; line these up before carrying on]",
-        "language": "- Converse and write in English (this package's language); if the conversation before the compaction drifted into another language, switch back to English from this reply on.",
+        "head": "[The context was just compacted: from this reply on, use English]",
+        "language": "From this reply on, write everything in English (this package's language): replies to the user, notes between tool calls, messages to other sessions and subagents, and text written into files. Whatever language the compaction summary, the system prompt or tool output uses does not count; do not switch languages to follow them.",
+        "align": "Before carrying on, also line these up:",
         "branch": "- Branch {branch}; {count} uncommitted paths in the working tree: check `git status --short` for which are this task's, and leave other sessions' alone.",
         "agents": "- If you dispatched subagents, check with `ListAgents` whether any are still running; do not dispatch again one that still runs.",
         "state": "- Take the state to resume from the records and files, not from impressions in the compaction summary.",
+        "summary": "Write the whole summary in English (this package's language): section headings, narrative and next steps all in English; quote the user's words, commands, paths and code verbatim, untranslated.",
         "unread": "(unreadable)",
         "failed": "Check {name} did not run: {reason}; the session goes on as usual, and one line was added to the detection record.",
         "hook_failed": "session-checks did not run: {reason}; the session goes on as usual.",
     },
     "ja": {
-        "head": "【コンテキストが圧縮されたところです。作業を続ける前に次の点を揃える】",
-        "language": "- 対話と成果物は日本語（本パッケージの言語）で書く。圧縮の前に別の言語になっていたら、この返答から日本語に戻す。",
+        "head": "【コンテキストが圧縮されたところ：この返答から日本語で書く】",
+        "language": "この返答から、ユーザーへの返答、ツール呼び出しの合間の一言、別のセッションやサブエージェントへのメッセージ、ファイルに書く文章は、すべて日本語（本パッケージの言語）で書く。圧縮の要約、システムプロンプト、ツールの出力が何語であっても数えず、それに合わせて言語を変えない。",
+        "align": "作業を続ける前に、次の点も揃える：",
         "branch": "- ブランチ {branch}。作業ツリーの未コミットのパスは {count} 個：`git status --short` でどれがこの作業のものか確かめ、ほかのセッションのものには触れない。",
         "agents": "- サブエージェントを出していたら、まだ動いているものがあるか `ListAgents` で見る。動いているものは出し直さない。",
         "state": "- 続きの状態は記録とファイルで確かめ、圧縮の要約の印象で判断しない。",
+        "summary": "要約はすべて日本語（本パッケージの言語）で書く。節の見出し、叙述、次の手順も日本語にする。ユーザーの発言、コマンド、パス、コードは原文のまま引き、訳さない。",
         "unread": "（読めない）",
         "failed": "検査項目 {name} は実行できなかった：{reason}。今回はそのまま通し、検出記録に一行残した。",
         "hook_failed": "session-checks は実行できなかった：{reason}。今回はそのまま通す。",
@@ -130,7 +141,14 @@ def compact_reminder(project_root: str, language: str) -> str:
     branch = (git_output(project_root, "branch", "--show-current") or "").strip() or text["unread"]
     status = git_output(project_root, "status", "--porcelain")
     count = len([line for line in status.splitlines() if line.strip()]) if status is not None else text["unread"]
-    return "\n".join([text["head"], text["language"], text["branch"].format(branch=branch, count=count), text["agents"], text["state"]])
+    return "\n".join([text["head"], text["language"], "", text["align"], text["branch"].format(branch=branch, count=count), text["agents"], text["state"]])
+
+
+def summary_instructions(language: str) -> str:
+    """PreCompact 的输出：并进写摘要的附加说明，要摘要用本包的语言写。"""
+    if break_switch() == "summary-dropped":
+        return ""
+    return texts(language)["summary"]
 
 
 def checks_directory(project_root: str) -> str:
@@ -237,6 +255,9 @@ def judge_hook(hook_text: str) -> int:
         record(None, None, "-", reason)
         print(texts(language)["hook_failed"].format(reason=reason), file=sys.stderr)
         return EXIT_PASS
+    if hook_input.get("hook_event_name") == "PreCompact":
+        print(summary_instructions(language))
+        return EXIT_PASS
     project_root = os.environ.get("CLAUDE_PROJECT_DIR") or hook_input.get("cwd") or os.getcwd()
     try:
         context = session_context(hook_input, hook_text, project_root, language)
@@ -246,7 +267,7 @@ def judge_hook(hook_text: str) -> int:
         print(texts(language)["hook_failed"].format(reason=reason), file=sys.stderr)
         return EXIT_PASS
     if context:
-        print(context)
+        print(json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": context}}, ensure_ascii=False))
     return EXIT_PASS
 
 
@@ -351,12 +372,16 @@ def run_selftest_cases() -> list:
             recorded = ""
         expect("没查成的记一条检出", "\tstartup\tbroken\t没查成\t" in recorded, recorded or "（没记）")
         compact = context("compact")
-        expect("压缩之后补对齐提示、头一条是对话语言", "上下文刚压缩过" in compact and "对话与产出一律用中文" in compact, compact)
+        expect("压缩之后补对齐提示、头一条是对话语言",
+               compact.startswith("【上下文刚压缩过：从这一条回复起用中文】\n从这一条回复起") and "一律用中文" in compact, compact)
         expect("压缩之后也跑列了 compact 的项", "【compact-only】" in compact, compact)
         english = context("compact", "en")
-        expect("压缩提示用本包的语言（en）", "Converse and write in English" in english, english)
+        expect("压缩提示用本包的语言（en）", "From this reply on, write everything in English" in english, english)
         japanese = context("compact", "ja")
-        expect("压缩提示用本包的语言（ja）", "日本語（本パッケージの言語）" in japanese, japanese)
+        expect("压缩提示用本包的语言（ja）", "すべて日本語（本パッケージの言語）で書く" in japanese, japanese)
+        for language, expected in (("zh", "摘要整份用中文写"), ("en", "Write the whole summary in English"), ("ja", "要約はすべて日本語")):
+            summary = summary_instructions(language)
+            expect(f"压缩之前补摘要说明（{language}）", expected in summary, summary or "（空）")
 
         write_item(items, "slow", "sleep 5", timeout="1")
         slow = context("startup")
@@ -386,8 +411,16 @@ def run_selftest_cases() -> list:
     return misjudged_cases
 
 
-SELFTEST_CASE_COUNT = 16
-HOOK_PATH_COUNT = 3
+SELFTEST_CASE_COUNT = 19
+HOOK_PATH_COUNT = 4
+
+
+def hook_context(stdout: str) -> str:
+    """钩子标准输出里 hookSpecificOutput.additionalContext 的内容；不是这个形状的返回空串。"""
+    try:
+        return json.loads(stdout)["hookSpecificOutput"]["additionalContext"]
+    except (ValueError, KeyError, TypeError):
+        return ""
 
 
 def run_hook_cases() -> list:
@@ -407,7 +440,7 @@ def run_hook_cases() -> list:
                                   text=True, check=False, env=environment)
 
         started = run(json.dumps({"hook_event_name": "SessionStart", "source": "startup", "session_id": "s"}))
-        if started.returncode != 0 or "【report】\n有一件要看" not in started.stdout:
+        if started.returncode != 0 or "【report】\n有一件要看" not in hook_context(started.stdout):
             misjudged_cases.append(("钩子：启动时跑检查项", "0 与 【report】", f"{started.returncode} {started.stdout.strip()}"))
         broken = run("[1, 2]")
         try:
@@ -417,6 +450,10 @@ def run_hook_cases() -> list:
             recorded = ""
         if broken.returncode != 0 or "钩子输入不是 JSON 对象" not in recorded:
             misjudged_cases.append(("钩子：输入解不开照常放行、记一条", "0 与一行检出", f"{broken.returncode} {recorded.strip()}"))
+        precompact = run(json.dumps({"hook_event_name": "PreCompact", "trigger": "auto", "session_id": "s"}))
+        expected_summary = texts(PACKAGE_FAMILY.package_language())["summary"]
+        if precompact.returncode != 0 or precompact.stdout.strip() != expected_summary:
+            misjudged_cases.append(("钩子：压缩之前只写摘要说明、不跑检查项", f"0 与 {expected_summary}", f"{precompact.returncode} {precompact.stdout.strip()}"))
         cleared = run(json.dumps({"hook_event_name": "SessionStart", "source": "clear", "session_id": "s"}))
         if cleared.returncode != 0 or cleared.stdout.strip():
             misjudged_cases.append(("钩子：source 没列的不补", "0 与空输出", f"{cleared.returncode} {cleared.stdout.strip()}"))
@@ -428,7 +465,7 @@ def selftest() -> int:
     if not break_switch():
         misjudged_cases += run_hook_cases()
     exit_code = BREAK_SWITCH_SELFTEST.finish_selftest(__file__, BREAK_ENVIRONMENT_VARIABLE, BREAK_SWITCHES, misjudged_cases,
-                                                      SELFTEST_CASE_COUNT, "session_context / run_item / item_header / check_items_for_gate")
+                                                      SELFTEST_CASE_COUNT, "session_context / summary_instructions / run_item / item_header / check_items_for_gate")
     if exit_code is not None:
         return exit_code
     print(f"  ✓ session-checks 自证：{SELFTEST_CASE_COUNT} 个样本与 {HOOK_PATH_COUNT} 条钩子路径判得对；"

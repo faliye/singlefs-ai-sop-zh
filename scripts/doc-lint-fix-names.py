@@ -172,7 +172,7 @@ def code_spans(line):
 def fixed_text(path, text, short_name_by_identifier, duplicated_registration_counts, registry_line_positions, not_numbers=frozenset()):
     """→ (改后的文本, 补了几处, [补不了的编号], [页内像有定义、没补的编号])。
     反引号里的编号是命令或路径的一段，简称不能补进去：编号是那一段最后一个词时，简称补在闭合反引号后面
-    （`replay.sh E1`（简称）——doc-lint 认这一形态）；夹在中间的不动、列成补不了。"""
+    （`replay.sh E1`（简称）——doc-lint 认这一形态）；夹在中间的 doc-lint 不判，这里不动也不列。"""
     output_lines, fixed_count, unfixable_identifiers = [], 0, []
     locally_defined_identifiers = locally_defined(text) if ENABLED_BREAK_SWITCH != "ignore-local" else set()
     in_fence = False
@@ -199,8 +199,8 @@ def fixed_text(path, text, short_name_by_identifier, duplicated_registration_cou
                 if identifier not in short_name_by_identifier:
                     continue
                 if line[match.end():end - 1].strip() != "":
-                    unfixable_identifiers.append(identifier)
-                elif not line[end:].startswith("（"):
+                    continue   # 夹在中间的：doc-lint 不判，也就不补、不列
+                if not line[end:].startswith("（"):
                     edits.append((end, end, f"（{short_name_by_identifier[identifier]}）"))
                     fixed_count += 1
                 continue
@@ -312,8 +312,8 @@ def selftest():
         code_fixed_text, code_fixed_count, code_unfixable, _ = fixed_text(code_path, code_text, short_name_by_identifier, duplicated_registration_counts, registry_line_positions)
         checked_count += 1
         if (code_fixed_text != "复跑 `bash replay.sh C120`（撤回没回扫） 与 `C121_ROOT=1 run`，别碰 `run C121 now` 与 `已带 C120`（撤回没回扫）。\n"
-                or code_fixed_count != 1 or code_unfixable != ["C121"]):
-            failures.append(f"反引号里收尾的编号把简称补到闭合反引号后面、夹在中间的列成补不了、标识符里的与已带的不动，实际补 {code_fixed_count}、补不了 {code_unfixable}：\n{code_fixed_text}")
+                or code_fixed_count != 1 or code_unfixable != []):
+            failures.append(f"反引号里收尾的编号把简称补到闭合反引号后面、夹在中间的不动也不列、标识符里的与已带的不动，实际补 {code_fixed_count}、补不了 {code_unfixable}：\n{code_fixed_text}")
         nested_path = os.path.join(kb_directory, "nested.md")
         nested_text = "引 C121（D1 之后的又一条） 与 D1。\n"
         nested_fixed_text, nested_fixed_count, _, _ = fixed_text(nested_path, nested_text, short_name_by_identifier, duplicated_registration_counts, registry_line_positions)
@@ -349,7 +349,7 @@ def selftest():
     if failures:
         print("    → 怎么办：看 registry_of() 与 fixed_text()；DOC_LINT_FIX_NAMES_BREAK=touch-registry 设着的话这里本来就该红")
         return 1
-    print(f"  ✓ 自证通过（查了 {checked_count} 项）：两种登记位都认；登记目录照 .claude/kb-directories 收；not-numbers 声明过的不补不列；页内自己定义的编号整页不补、列出来；孤零零的编号补简称，带简称的、别的编号简称括注里的、路径与标识符里的、代码块里的、登记位那一行不动；反引号里收尾的编号把简称补到闭合反引号后面，夹在中间的与没登记的列成补不了")
+    print(f"  ✓ 自证通过（查了 {checked_count} 项）：两种登记位都认；登记目录照 .claude/kb-directories 收；not-numbers 声明过的不补不列；页内自己定义的编号整页不补、列出来；孤零零的编号补简称，带简称的、别的编号简称括注里的、路径与标识符里的、代码块里的、登记位那一行不动；反引号里收尾的编号把简称补到闭合反引号后面，夹在中间的不动也不列，没登记的列成补不了")
     return 0
 
 

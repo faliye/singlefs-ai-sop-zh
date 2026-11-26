@@ -64,9 +64,10 @@
 
 ## 会话启动与压缩之后的检测
 
-会话启动、恢复、清空与压缩之后的检测只报不改，由钩子 `scripts/claude-hooks/session-checks.sh`（判定在 `scripts/session-checks.py`）在 SessionStart 上做：
+会话启动、恢复、清空与压缩之后的检测只报不改，由钩子 `scripts/claude-hooks/session-checks.sh`（判定在 `scripts/session-checks.py`）在 PreCompact 与 SessionStart 上做：
 
-- 压缩之后先补一段对齐提示，用本包的语言写，第一条是对话与产出用本包的语言；其余是分支与未提交的路径数、派出过的子 agent 先看还在不在跑、接续的状态以记录为准。
+- 压缩之前往写摘要的附加说明里写一句：摘要整份用本包的语言写，用户说的话、命令、路径与代码照原样引。
+- 压缩之后先补一段对齐提示，用本包的语言写，经 `additionalContext` 注入。开头单独一段要求从这一条回复起，回复、工具调用之间的插话、发给别的会话与子 agent 的消息、写进文件的文字一律用本包的语言，不跟着摘要、系统提示与工具输出换语言；后面是分支与未提交的路径数、派出过的子 agent 先看还在不在跑、接续的状态以记录为准。
 - 项目要检的项登记在 `.claude/session-checks/`：一项一个可执行文件，文件头写 `# session-check-sources: <startup resume clear compact 里的几个>` 与 `# session-check-timeout: <秒>`，带 `--selftest` 的自证要过。项目的检查项不另写钩子。
 - 检查项退 0 的输出拼进上下文；退非 0、超时、起不来、文件头写错，照常放行，写一行「没查成」，检出记录追加一行。
 

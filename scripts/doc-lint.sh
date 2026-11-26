@@ -330,6 +330,10 @@ is_history_carrier() {
   return 1
 }
 
+# 逐文件的判（A、B、C、D、I、M 与 GLOSSARY、agent 定义）：每份文件互不相干，切成连续的几块各起一个子 shell 并行判。
+# 每块的输出写自己的文件、计数写自己的计数文件，收的时候按切块的顺序回读，输出顺序与单线程一致。
+scan_document_files() { # scan_document_files <计数文件>：从标准输入读文件路径，一行一份
+local counts_path="$1"
 while IFS= read -r document_file; do
   relative_path="${document_file#"$PROJECT_ROOT"/}"
   # CHANGELOG 是规则指定的历史落点（rules/rules-discipline.md 第 3、5 条），整份就是历史，拿历史陈述去扫它是范畴错误。
@@ -685,39 +689,76 @@ while IFS= read -r document_file; do
   else
     failed_file_count=$((failed_file_count+1))
   fi
-done < <(find "$PROJECT_ROOT" -name '*.md' -not -path '*/.git/*' -not -path '*/target/*' \
+done
+printf '%d %d %d\n' "$checked_file_count" "$failed_file_count" "$skipped_file_count" > "$counts_path"
+}
+
+mapfile -t scanned_document_files < <(find "$PROJECT_ROOT" -name '*.md' -not -path '*/.git/*' -not -path '*/target/*' \
                  "${EXCLUDED_PATH_ARGUMENTS[@]}" | sort)
+scan_job_count="${DOC_LINT_JOBS:-$(nproc 2>/dev/null || echo 4)}"
+[[ "$scan_job_count" =~ ^[1-9][0-9]*$ ]] || die "DOC_LINT_JOBS 要写正整数：$scan_job_count" "不设就按 nproc 取；要单线程跑写 DOC_LINT_JOBS=1。"
+(( scan_job_count <= 32 )) || scan_job_count=32
+(( scan_job_count <= ${#scanned_document_files[@]} )) || scan_job_count=${#scanned_document_files[@]}
+(( scan_job_count >= 1 )) || scan_job_count=1
+scan_chunk_size=$(( (${#scanned_document_files[@]} + scan_job_count - 1) / scan_job_count ))
+(( scan_chunk_size >= 1 )) || scan_chunk_size=1
+scan_pids=(); scan_job_total=0
+for (( scan_start = 0; scan_start < ${#scanned_document_files[@]}; scan_start += scan_chunk_size )); do
+  scan_job_total=$((scan_job_total+1))
+  printf '%s\n' "${scanned_document_files[@]:scan_start:scan_chunk_size}" > "$temporary_directory/scan-$scan_job_total.in"
+  scan_document_files "$temporary_directory/scan-$scan_job_total.counts" \
+    < "$temporary_directory/scan-$scan_job_total.in" > "$temporary_directory/scan-$scan_job_total.out" 2>&1 &
+  scan_pids+=($!)
+done
+scan_failed_jobs=0
+for (( scan_job = 1; scan_job <= scan_job_total; scan_job++ )); do
+  scan_job_exit=0; wait "${scan_pids[scan_job-1]}" || scan_job_exit=$?
+  cat "$temporary_directory/scan-$scan_job.out"
+  if [[ $scan_job_exit -ne 0 || ! -s "$temporary_directory/scan-$scan_job.counts" ]]; then scan_failed_jobs=$((scan_failed_jobs+1)); continue; fi
+  read -r scan_checked scan_failed scan_skipped < "$temporary_directory/scan-$scan_job.counts"
+  checked_file_count=$((checked_file_count+scan_checked)); failed_file_count=$((failed_file_count+scan_failed)); skipped_file_count=$((skipped_file_count+scan_skipped))
+done
+(( scan_failed_jobs == 0 )) || die "逐文件判的 $scan_failed_jobs 个并行块没跑完（共 $scan_job_total 块，上面是它们各自的输出）" \
+  "看上面该块最后一行的报错；要单线程复现：DOC_LINT_JOBS=1 bash scripts/doc-lint.sh。"
 
 # E. 引用了不存在的不变量编号（rules/kb-discipline.md 第 3 条「显式记录「不知道」」）：检索只端出那条引用，模型照单全收。
 undefined_reference_count=0
 kb_files="$(kb_markdown_files)"
 if [[ -n "$kb_files" ]]; then
   # 定义 = 表格行首的编号，别处都是引用。围栏与「历史版本」节里的不算：历史节的表是删除记录，不能给引用背书。
-  defined_invariant_ids="$(printf '%s\n' "$kb_files" | while IFS= read -r kb_file; do
-      awk '/^## 历史版本[[:space:]]*$/ { exit }
-           /^[ \t]*```/ { in_fence = !in_fence; next } !in_fence' "$kb_file"
-    done | grep -oE '^\| *I-[0-9]+(\.[0-9]+)+ *\|' | grep -oE 'I-[0-9]+(\.[0-9]+)+' | sort -u || true)"
+  # 两遍 awk 一把过：第一遍收定义，第二遍逐行查引用；逐行起 grep 的写法在大 kb 上占掉整趟的八成时间。
+  defined_invariants_file="$temporary_directory/defined-invariants.txt"
+  mapfile -t kb_file_list <<< "$kb_files"
+  awk '
+    FNR == 1 { in_fence = 0; in_history = 0 }
+    in_history { next }
+    /^## 历史版本[[:space:]]*$/ { in_history = 1; next }
+    /^[ \t]*```/ { in_fence = !in_fence; next }
+    in_fence { next }
+    match($0, /^\| *I-[0-9]+(\.[0-9]+)+ *\|/) { id = substr($0, RSTART, RLENGTH); match(id, /I-[0-9]+(\.[0-9]+)+/); print substr(id, RSTART, RLENGTH) }
+  ' "${kb_file_list[@]}" | sort -u > "$defined_invariants_file"
 
-  while IFS= read -r kb_file; do
+  while IFS=$'\t' read -r kb_file line_number invariant_id; do
+    [[ -n "$kb_file" ]] || continue
     relative_path="${kb_file#"$PROJECT_ROOT"/}"
-    numbered_lines="$(awk '/^[ \t]*```/ { in_fence = !in_fence; next } !in_fence { print FNR "\t" $0 }' "$kb_file" \
-            | grep -vE '\t\| *I-[0-9]+(\.[0-9]+)+ *\|' || true)"
-    [[ -z "$numbered_lines" ]] && continue
-    while IFS= read -r line; do
-      [[ -z "$line" ]] && continue
-      line_number="${line%%$'\t'*}"
-      for invariant_id in $(printf '%s' "$line" | grep -oE 'I-[0-9]+(\.[0-9]+)+' | sort -u); do
-        # 不用 `| grep -q`：$defined_invariant_ids 超过管道缓冲（64 KiB）时 grep 找到就退出，printf 吃 SIGPIPE，pipefail 下整条退 141，检查静默不判。
-        if [[ "$(printf '%s\n' "$defined_invariant_ids" | grep -cx "$invariant_id" || true)" == 0 ]]; then
-          bad "$relative_path:$line_number  引用了没有定义的不变量编号 $invariant_id"
-          howto "要么在 kb/invariants.md 里把 $invariant_id 真的写成一行（可判定的陈述 + 检查状态），" \
-                "要么删掉这处引用。引用一个不存在的编号，检索出来看不出它不存在——" \
-                "而模型不会说找不到，它会补一个（rules/kb-discipline.md 第 3 条）。"
-          undefined_reference_count=$((undefined_reference_count+1))
-        fi
-      done
-    done <<< "$numbered_lines"
-  done <<< "$kb_files"
+    bad "$relative_path:$line_number  引用了没有定义的不变量编号 $invariant_id"
+    howto "要么在 kb/invariants.md 里把 $invariant_id 真的写成一行（可判定的陈述 + 检查状态），" \
+          "要么删掉这处引用。引用一个不存在的编号，检索出来看不出它不存在——" \
+          "而模型不会说找不到，它会补一个（rules/kb-discipline.md 第 3 条）。"
+    undefined_reference_count=$((undefined_reference_count+1))
+  done < <(awk -v defined_path="$defined_invariants_file" '
+    BEGIN { while ((getline defined_line < defined_path) > 0) defined[defined_line] = 1; close(defined_path)
+            PROCINFO["sorted_in"] = "@ind_str_asc" }
+    FNR == 1 { in_fence = 0 }
+    /^[ \t]*```/ { in_fence = !in_fence; next }
+    in_fence { next }
+    /t\| *I-[0-9]+(\.[0-9]+)+ *\|/ { next }
+    {
+      line = $0; delete seen
+      while (match(line, /I-[0-9]+(\.[0-9]+)+/)) { seen[substr(line, RSTART, RLENGTH)] = 1; line = substr(line, RSTART + RLENGTH) }
+      for (id in seen) if (!(id in defined)) printf "%s\t%d\t%s\n", FILENAME, FNR, id
+    }
+  ' "${kb_file_list[@]}")
 fi
 
 # F/G/H. 编号只能做索引，不能做称呼（rules/kb-discipline.md 第 5 条）。登记位只认两种：
@@ -899,10 +940,30 @@ check_numbering_of_language() { # check_numbering_of_language：判 numbering_kb
           else if (character == "）" || character == ")") { depth--; if (depth == 0) return position }
         }
         return 0 }
+      # 简称里带别的编号时，引用处可以给里面的编号也套上简称：比对前把简称里「编号（…）」的内层括注去掉，两边按同一个形态比。
+      function without_inner_names(text,   head, tail, rest, closing_position) {
+        head = ""; tail = text
+        while (match(tail, NUMBER_PATTERN "[（(]")) {
+          head = head substr(tail, 1, RSTART + RLENGTH - 2)
+          rest = substr(tail, RSTART + RLENGTH - 1)
+          closing_position = closing_parenthesis_position(rest)
+          if (closing_position == 0) { return head rest }
+          tail = substr(rest, closing_position + 1)
+        }
+        return head tail }
+      # 行内反引号包着的一段：返回包着 position 的那一段的闭合反引号位置，不在任何一段里（或这一行反引号数是奇数）返回 0。
+      function code_span_end(text, position,   scan_index, tick_count, tick_positions) {
+        tick_count = 0
+        for (scan_index = 1; scan_index <= length(text); scan_index++)
+          if (substr(text, scan_index, 1) == "`") { tick_count++; tick_positions[tick_count] = scan_index }
+        if (tick_count % 2) return 0
+        for (scan_index = 1; scan_index < tick_count; scan_index += 2)
+          if (tick_positions[scan_index] < position && position < tick_positions[scan_index + 1]) return tick_positions[scan_index + 1]
+        return 0 }
       BEGIN { NUMBER_PATTERN = "[A-Z]+-?[0-9]+([.][0-9]+)*"
               while ((getline definition_line < definitions_path) > 0) {
                 split(definition_line, definition_fields, "\037")
-                short_name_by_number[definition_fields[1]] = normalize(definition_fields[2]); raw_short_name_by_number[definition_fields[1]] = definition_fields[2]
+                short_name_by_number[definition_fields[1]] = normalize(without_inner_names(definition_fields[2])); raw_short_name_by_number[definition_fields[1]] = definition_fields[2]
                 if (definition_fields[3] == document_name) number_registered_on_line[definition_fields[4]] = definition_fields[1] }
               close(definitions_path) }
       { file_lines[FNR] = $0 }
@@ -932,6 +993,9 @@ check_numbering_of_language() { # check_numbering_of_language：判 numbering_kb
             if (following_character == "_") continue              # 标识符的一段（编号后面紧跟 _ 的环境变量名、变量名），不是引用
             if (following_character == "." && second_following_character ~ /[0-9]/) continue  # I-6 出现在 I-6.1 里面
             if (!(number in short_name_by_number)) continue
+            # 行内反引号里的编号是命令、路径或照抄的原文的一段：只有它是那一段最后一个词时才算引用（简称补在闭合反引号后面，doc-lint-fix-names.py 补的就是这一形态），夹在中间的不判。
+            span_end = code_span_end(line, number_start)
+            if (span_end > 0 && substr(line, number_start + length(number), span_end - number_start - length(number)) !~ /^[ \t]*$/) continue
             if (line_number in number_registered_on_line) {
               # 登记行/登记标题：放过它登记的那个编号与简称里含的编号（简称再要求带名字是无限递归）；
               # 同一行对别的编号的引用照查，那正是出过事的位置（登记表的「判什么」列）。
@@ -949,7 +1013,7 @@ check_numbering_of_language() { # check_numbering_of_language：判 numbering_kb
                 printf "%d\t括注没闭合\t%s\t%s\n", line_number, number, substr(line, 1, 60)
               } else {
                 written_short_name = substr(text_after_number, 2, closing_position - 2)
-                if (normalize(written_short_name) != short_name_by_number[number])
+                if (normalize(without_inner_names(written_short_name)) != short_name_by_number[number])
                   printf "%d\t名字不符\t%s\t写的是「%s」，登记处是「%s」\n", line_number, number, written_short_name, raw_short_name_by_number[number]
                 # 跳过简称内部：简称里含别的编号时，不跳就成了新的裸引用，补上名字又引出下一个，无限递归。
                 search_position = number_start + length(number) + prefix_length + closing_position

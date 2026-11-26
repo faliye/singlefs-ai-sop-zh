@@ -3,6 +3,20 @@
 规则与门禁的版本历史。`CLAUDE.md` 与 `rules/*.md` 不留历史节（design-doc-discipline），
 历史一律记在这里；逐条改动细节见 `git log`，提交信息即变更说明。
 
+## 0.0.77 — 2026-11-26
+
+**`doc-lint.sh` 在大 kb 上的全仓耗时从 616 秒降到 42 秒；行内反引号里的编号与简称里带别的编号两处误判修掉；压缩前后的会话检测补上压缩之前那一半。**
+
+规则：
+- `kb-discipline.md` 第 5 条：新加两条：行内反引号里的编号只有它是那一段最后一个词时才算引用，简称写在闭合反引号后面，夹在中间的（路径、照抄的原文）不判；登记简称里带着别的编号时，引用处里面的编号带不带简称都行。
+- `communication-discipline.md`「会话启动与压缩之后的检测」：钩子挂 PreCompact 与 SessionStart；压缩之前往摘要说明里写一句摘要用本包语言写；压缩之后的对齐提示开头单独一段要求从这一条回复起一律用本包的语言。
+
+脚本与门禁：
+- `doc-lint.sh`：「引用了不存在的不变量编号」一段从逐行起 grep 改成两遍 awk，单线程耗时降到原来的四分之一；逐文件的判按文件切成连续几块并行（默认取 `nproc`，上限 32，`DOC_LINT_JOBS=1` 退回单线程），输出与单线程逐字相同；编号引用的比对把简称里内层的「编号（简称）」括注去掉再比，反引号里夹在中间的编号不判。
+- `doc-lint-fix-names.py`：夹在反引号中间的编号不再列成补不了，与 `doc-lint.sh` 一致。
+- `fixtures/doc-lint/`：新加样本 `nestedname`（简称里带编号、反引号夹中间，放行）与 `backtickend`（反引号收尾的裸编号，判红）。
+- `claude-hooks/session-checks.sh`、`session-checks.py`：新加 PreCompact 一路与压缩前后的提示；`selftest-repository-gates.sh` 的样本 settings 补上 PreCompact 注册。
+
 ## 0.0.76 — 2026-11-22
 
 **新加规则「一个代码文件不超过 2000 行」，由钩子 `code-length-guard.sh` 在写之前拦、门禁阶段「代码文件长度」在提交前兜底；`naming-lint` 修字节串前缀的误判。**
